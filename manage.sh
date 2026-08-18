@@ -40,6 +40,21 @@ die()  { printf '\n%sError:%s %s\n' "$C_RED" "$C_RESET" "$*" >&2; exit 1; }
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
+# Is there a systemd unit by this name?
+#
+# The output is captured and tested, never piped into `grep -q`. This script
+# runs under `set -o pipefail`, where grep exiting on its first match SIGPIPEs
+# the producer and the pipeline then reports failure — so a match reads as a
+# miss. It cost an install: see the same note in install.sh.
+unit_exists() { # unit_exists NAME
+    have systemctl || return 1
+
+    local units
+    units="$(systemctl list-unit-files --no-legend "$1.service" 2>/dev/null || true)"
+
+    [ -n "$units" ]
+}
+
 usage() {
     cat <<'USAGE'
 Production Tracker — administration
@@ -231,7 +246,7 @@ confirm() {
 web_service() {
     local candidate
     for candidate in apache2 httpd nginx; do
-        if have systemctl && systemctl list-unit-files --no-legend "$candidate.service" 2>/dev/null | grep -q .; then
+        if unit_exists "$candidate"; then
             printf '%s' "$candidate"; return 0
         fi
     done
@@ -241,7 +256,7 @@ web_service() {
 db_service() {
     local candidate
     for candidate in mariadb mysqld mysql; do
-        if have systemctl && systemctl list-unit-files --no-legend "$candidate.service" 2>/dev/null | grep -q .; then
+        if unit_exists "$candidate"; then
             printf '%s' "$candidate"; return 0
         fi
     done
@@ -274,7 +289,7 @@ cmd_status() {
     local svc
     for svc in "$(web_service)" "$(db_service)" php-fpm; do
         [ -n "$svc" ] || continue
-        if have systemctl && systemctl list-unit-files --no-legend "$svc.service" 2>/dev/null | grep -q .; then
+        if unit_exists "$svc"; then
             if systemctl is-active --quiet "$svc"; then ok "$svc is running"; else warn "$svc is NOT running"; fi
         fi
     done
@@ -794,7 +809,7 @@ cmd_restart() {
 
     local fpm
     for fpm in php-fpm php8.4-fpm php8.3-fpm php8.2-fpm php8.1-fpm; do
-        if have systemctl && systemctl list-unit-files --no-legend "$fpm.service" 2>/dev/null | grep -q .; then
+        if unit_exists "$fpm"; then
             systemctl restart "$fpm" && ok "$fpm restarted"
             break
         fi

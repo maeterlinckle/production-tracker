@@ -285,21 +285,59 @@ have() { command -v "$1" >/dev/null 2>&1; }
 
 unit_exists() { # unit_exists NAME — is there a systemd unit by this name?
     have systemctl || return 1
-    systemctl list-unit-files --no-legend "$1.service" 2>/dev/null | grep -q .
+
+    # Captured, not piped into `grep -q`. See the note on the PHP extension
+    # check: with `pipefail`, grep exiting early SIGPIPEs the producer and the
+    # pipeline reports failure even though it matched.
+    local units
+    units="$(systemctl list-unit-files --no-legend "$1.service" 2>/dev/null || true)"
+
+    [ -n "$units" ]
 }
 
 version_ge() { # version_ge HAVE WANT
-    [ "$(printf '%s\n%s\n' "$2" "$1" | sort -V | head -1)" = "$2" ]
+    local lowest
+    lowest="$(printf '%s\n%s\n' "$2" "$1" | sort -V | head -1 || true)"
+
+    [ "$lowest" = "$2" ]
 }
 
+# A password for the database user.
+#
+# Alphanumeric on purpose: it travels through .env, a MariaDB GRANT and a shell
+# without needing a single escape.
+#
+# Note what this does *not* do. The obvious spelling is
+#
+#     tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 28
+#
+# and it is a trap here. /dev/urandom never ends, so `tr` keeps writing after
+# `head` has taken its 28 bytes and closed the pipe; `tr` dies of SIGPIPE, and
+# under `set -o pipefail` the whole pipeline reports failure. Assigned with
+# `x="$(random_password)"` under `set -e`, that aborts the installer — silently,
+# because nothing has printed an error. So the randomness is read in a bounded
+# chunk and filtered in the shell, where there is no pipe to break.
 random_password() {
-    # Alphanumeric on purpose: it travels through .env, a MariaDB GRANT and a
-    # shell without needing a single escape.
+    local raw=""
+
     if have openssl; then
-        openssl rand -base64 48 | tr -dc 'A-Za-z0-9' | head -c 28
-    else
-        tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 28
+        raw="$(openssl rand -base64 64 2>/dev/null || true)"
     fi
+
+    if [ -z "$raw" ]; then
+        # head reads a file here rather than consuming a pipe, so nothing is
+        # left writing into a closed one.
+        raw="$(head -c 256 /dev/urandom 2>/dev/null | base64 2>/dev/null || true)"
+    fi
+
+    [ -n "$raw" ] || die "No source of randomness (no openssl, no readable /dev/urandom) — cannot generate a database password."
+
+    # Pure bash: strip everything that is not alphanumeric, then take 28.
+    raw="${raw//[^A-Za-z0-9]/}"
+
+    [ "${#raw}" -ge 28 ] || die "Could not generate a long enough database password."
+
+    printf '%s' "${raw:0:28}"
 }
 
 # The APP_KEY that encrypts secrets stored in the database (today, the SMTP
@@ -476,7 +514,7 @@ else
 fi
 
 if have composer; then
-    ok "Composer $(composer --version --no-ansi 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+    ok "Composer $(composer --version --no-ansi 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
 else
     info "Composer is not installed"
     PLAN+=("Install Composer, then use it to fetch PHPMailer, dompdf and the QR code library")
@@ -883,17 +921,48 @@ if [ -z "$APP_KEY" ]; then
 fi
 
 step "Checking PHP extensions"
+
+# The module list is read once and matched in the shell, rather than piping
+# `php -m` into `grep -q` per extension.
+#
+# That pipeline is broken under `set -o pipefail`, which is on at the top of
+# this script: `grep -q` exits the instant it matches, PHP is killed by SIGPIPE
+# writing the rest of its output, and the *pipeline* then reports failure — so a
+# match reads as a miss. It depends on where the extension falls in the output,
+# which is why it looked so arbitrary: every module near the start of `php -m`
+# was reported missing while pdo_mysql, near the end, passed. json cannot be
+# missing from PHP 8 at all, and that was the giveaway.
+#
+# Reading it once is also eight fewer PHP startups.
+php_modules=" $("$PHP_BIN" -m 2>/dev/null | tr '[:upper:]' '[:lower:]' | tr '\n' ' ') "
+
+has_module() { # has_module NAME
+    case "$php_modules" in
+        *" $1 "*) return 0 ;;
+        *)        return 1 ;;
+    esac
+}
+
 missing=()
 for ext in pdo pdo_mysql mbstring fileinfo json curl; do
-    if "$PHP_BIN" -m | grep -qix "$ext"; then ok "$ext"; else missing+=("$ext"); warn "$ext is MISSING"; fi
+    if has_module "$ext"; then ok "$ext"; else missing+=("$ext"); warn "$ext is MISSING"; fi
 done
 for ext in gd dom; do
-    if "$PHP_BIN" -m | grep -qix "$ext"; then ok "$ext"; else missing+=("$ext"); warn "$ext is MISSING — delivery notes and QR codes need it"; fi
+    if has_module "$ext"; then ok "$ext"; else missing+=("$ext"); warn "$ext is MISSING — delivery notes and QR codes need it"; fi
 done
 for ext in openssl; do
-    if "$PHP_BIN" -m | grep -qix "$ext"; then ok "$ext"; else warn "$ext is missing — the SMTP password cannot be encrypted at rest"; fi
+    if has_module "$ext"; then ok "$ext"; else warn "$ext is missing — the SMTP password cannot be encrypted at rest"; fi
 done
-[ "${#missing[@]}" -eq 0 ] || die "Required PHP extensions are missing: ${missing[*]}"
+
+if [ "${#missing[@]}" -ne 0 ]; then
+    say ""
+    warn "PHP reports these modules:"
+    say "  ${php_modules}"
+    die "Required PHP extensions are missing: ${missing[*]}
+       Install them and re-run. On Debian/Ubuntu the packages are named
+       php-<extension>; on RHEL/Fedora, php-<extension> too, except pdo_mysql
+       which comes from php-mysqlnd and dom which comes from php-xml."
+fi
 
 # The account the files will be owned by has to exist. On a --web-server=none
 # install there may be no web server package, and so no web user.
@@ -1018,7 +1087,7 @@ db_user_sql="$(sql_quote "$DB_USER")"
 db_pass_sql="$(sql_quote "$DB_PASSWORD")"
 
 db_existed=no
-if db_root -N -B -e "SHOW DATABASES LIKE '${db_name_sql}'" | grep -q .; then
+if [ -n "$(db_root -N -B -e "SHOW DATABASES LIKE '${db_name_sql}'" 2>/dev/null || true)" ]; then
     db_existed=yes
 fi
 
@@ -1351,7 +1420,13 @@ apache_directory_block() {
     </Directory>
 BLOCK
 
-    if [ -n "$PHP_FPM_SOCKET" ] && ! ( "$APACHE_BIN" -M 2>/dev/null | grep -q 'php[0-9_]*_module' ); then
+    # mod_php present? If it is, Apache handles PHP itself and must not also be
+    # pointed at the FPM socket. Captured and matched in the shell rather than
+    # piped into grep, for the pipefail reason noted on the extension check.
+    local apache_modules
+    apache_modules="$("$APACHE_BIN" -M 2>/dev/null || true)"
+
+    if [ -n "$PHP_FPM_SOCKET" ] && ! [[ "$apache_modules" =~ php[0-9_]*_module ]]; then
         cat <<BLOCK
 
     <FilesMatch \.php\$>
@@ -1581,7 +1656,7 @@ if have firewall-cmd && firewall-cmd --state >/dev/null 2>&1; then
     [ "$HTTP_PORT" != "80" ] && firewall-cmd --permanent --add-port="${HTTP_PORT}/tcp" >/dev/null 2>&1 || true
     firewall-cmd --reload >/dev/null 2>&1 || true
     ok "firewalld updated"
-elif have ufw && ufw status 2>/dev/null | grep -q "Status: active"; then
+elif have ufw && [[ "$(ufw status 2>/dev/null || true)" == *"Status: active"* ]]; then
     step "Opening the firewall"
     ufw allow "${HTTP_PORT}/tcp" >/dev/null 2>&1 || true
     [ "$TLS_MODE" = direct-https ] && ufw allow 443/tcp >/dev/null 2>&1 || true

@@ -64,7 +64,13 @@ final class Invoice
             $lines->execute(['id' => $deliveryNoteId]);
 
             foreach ($lines->fetchAll() as $line) {
-                OrderLine::recordInvoice($pdo, (int) $line['order_line_id'], (int) $line['qty']);
+                OrderLine::recordInvoice(
+                    $pdo,
+                    (int) $line['order_line_id'],
+                    (int) $line['qty'],
+                    $raisedBy,
+                    $clearbooksInvoiceNumber
+                );
             }
 
             return $invoiceId;

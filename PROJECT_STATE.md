@@ -145,7 +145,7 @@ constraint (`{token:[a-f0-9]{64}}`) works.
 
 ## 3. Database schema
 
-32 tables. Every table InnoDB/utf8mb4; `uq_`/`idx_`/`fk_`/`chk_` naming
+35 tables. Every table InnoDB/utf8mb4; `uq_`/`idx_`/`fk_`/`chk_` naming
 throughout.
 
 ### Identity and access
@@ -169,7 +169,12 @@ throughout.
 | `part_files`, `part_photos` | Drawings and client photos, disk + reference. |
 | `part_links` | Symmetric "usually ordered with", one row per unordered pair enforced by `chk_part_links_order (part_id < linked_part_id)`. |
 
-`parts.free_issue_relationship` (`none`/`divide`/`multiply`) +
+`parts.has_free_issue` is the explicit yes/no, and `chk_parts_free_issue_toggle`
+stops a part that has none carrying a ratio for it. Everything that shows, asks
+for or chases free-issue material reads `Part::hasFreeIssue()` and hides itself
+when the answer is no, rather than rendering empty fields.
+
+Alongside it: `free_issue_relationship` (`none`/`divide`/`multiply`) +
 `free_issue_factor` (2–10, enforced by `chk_parts_free_issue_factor`) +
 `free_issue_updated_by`/`_at`. **Set by the client** from the quote stage,
 overridable by staff, with the override attributed.
@@ -178,36 +183,60 @@ overridable by staff, with the override attributed.
 
 | Table | Notes |
 |---|---|
-| `orders` | `order_number` unique, PO document required at placement. |
+| `orders` | `order_number` unique, `po_number` required at placement, PO document required too. |
+| `order_po_documents` | The running history of PO paperwork — amended and additional POs are added, never substituted. |
 | `order_lines` | The heart of it — see below. |
-| `production_status_log` | Every stage change, with who and why. |
+| `order_line_quantities` | Where a line's quantity actually sits: one row per stage. |
+| `order_line_stage_moves` | Every movement of quantity, including the ones that create and destroy it. |
+| `order_line_change_requests` | Client-requested quantity changes, `pending`/`applied`/`declined`. |
 | `free_issue_receipts` | One row per check-in event, with `discrepancy_type` (`none`/`shortfall`/`excess`/`wrong_item`), notes, and `resolved_at`/`resolved_by`. |
-| `route_cards` | Generated PDF per line; the row is only written after the PDF exists. |
-| `delivery_notes`, `delivery_note_lines` | `type` = `free_issue_in` or `goods_out`. |
+| `free_issue_rejections` | Material that arrived and could not be used, with the return note out and the replacement request in. |
+| `delivery_notes`, `delivery_note_lines` | `type` = `free_issue_in`, `goods_out` or `material_return`. |
 | `invoices` | Clear Books reference + amount, per delivery note. |
 | `order_notes`, `order_queries`, `order_query_replies` | Timestamped log and threaded queries. |
 | `order_photos` | Staff-only progress/setup photos. |
 
-**`order_lines` is where the status model lives.** A coarse `stage` enum
-(`awaiting_free_issue`, `ready_for_production`, `in_production`, `complete`,
-`closed`) sits alongside four orthogonal quantity pairs:
+**A line does not have a status.** Its quantity is distributed across stages, and
+the status a person reads is written out from that distribution. Nobody sets it,
+and there is nowhere it could be set — `order_lines.stage` was dropped in
+migration `005`.
+
+The stages are the flow —
 
 ```
-qty_free_issue_required / qty_free_issue_received
-qty_ordered / qty_completed
-qty_ordered / qty_delivered
-qty_delivered / qty_invoiced
+awaiting_free_issue → ready_for_production → in_production → complete → delivered → invoiced
 ```
 
-This is the central design decision and everything else follows from it: partial
-receipt, partial completion and batched despatch are *quantities*, not states,
-so none of them needs its own enum value and they can all be true at once.
-`OrderLine::statusLabel()` renders the combination
-("In production — part complete (12 of 20)").
+— plus two places quantity ends up when it does not finish: `failed` and
+`cancelled`.
 
-`setStage()` to `complete`/`closed` raises `qty_completed` to `qty_ordered`, so
-the enum and the counter cannot disagree — migration `004` repairs rows that
-predate that.
+**The invariant everything rests on:** the `order_line_quantities` rows for a
+line sum to `order_lines.qty_ordered`. Every part ordered is somewhere. Quantity
+is created only by placing an order or increasing one, and destroyed only by
+reducing one — both of which move `qty_ordered` by the same amount in the same
+transaction.
+
+`failed` and `cancelled` are buckets rather than counters for a reason. A failed
+part is not a smaller order, it is a part that has to be made again; parking it
+somewhere visible is what stops it being quietly forgotten, and returning it to
+the flow once replacement material arrives is an ordinary backward move.
+
+The one place the free-issue and no-free-issue paths differ is where quantity
+enters: `awaiting_free_issue` for a part built from client material,
+`ready_for_production` for one that is not. Everything downstream is the same
+code — a line with no material to wait for simply never has anything in the
+first bucket.
+
+`qty_completed` / `qty_delivered` / `qty_invoiced` / `qty_failed` /
+`qty_cancelled` are still on `order_lines`, and are still what the reports, the
+despatch screen and the ageing queries read, but nothing writes to them by hand:
+`recalculateTotals()` derives all five from the distribution after every move.
+They are a maintained projection, not a second source of truth.
+
+Booking free-issue material in moves no parts. What arrived and what the
+workshop is ready to start on are separate decisions, and staff make the second
+one explicitly — automatic advancement was the old behaviour and it made partial
+receipts unusable, because everything moved or nothing did.
 
 ### Configuration and operations
 
@@ -229,6 +258,11 @@ predate that.
 | `002_feature_expansion.sql` | Roles/permissions, settings, part links, free-issue ratio, photos, notes/queries, discrepancies, notification preferences. Renamed `users.role` → `users.side`. |
 | `003_invites_templates_reminders.sql` | `email_templates`, `user_invites`, `reminder_runs`, `users.password_set_at`, free-issue attribution columns and the 2–10 factor CHECK. |
 | `004_backfill_completed_quantities.sql` | Data repair: `qty_completed` on lines marked complete before `setStage()` kept them in step. |
+| `005_quantity_workflow.sql` | The quantity distribution and its movement log; `parts.has_free_issue`; `orders.po_number` and `order_po_documents`; `order_line_change_requests`; `free_issue_rejections` and the `material_return` note type; close-down columns. Backfills the distribution from the old columns, migrates `production_status_log` into the movement log and drops it, drops `order_lines.stage` and drops `route_cards`. |
+
+`005` is the one migration that is genuinely forward-only: it reads
+`production_status_log` and then drops it, so a second run has nothing to read.
+The `migrations` table is what stops that happening.
 
 ---
 
@@ -258,8 +292,8 @@ predate that.
 | 3 | Client-editable parts, archive, delete-if-unused | Done |
 | 4 | Free-issue divisor/multiplier on a part | Done — now client-set, 2–10 either way |
 | 5 | AJAX part search on the order form, auto free-issue qty | Done — and recalculated server-side |
-| 6 | Free-issue delivery notes with QR check-in, discrepancies | Done — discrepancies block advancement until resolved |
-| 7 | Cumulative parts-completed per line | Done |
+| 6 | Free-issue delivery notes with QR check-in, discrepancies | Done — a flagged discrepancy is shown on the line and on the report until resolved |
+| 7 | Cumulative parts-completed per line | Superseded by the quantity distribution |
 | 8 | Order notes and threaded queries | Done |
 | 9 | Delivery notes grouped on the order page | Done |
 | 10 | Seven roles, multi-role, pricing hidden entirely | Done |
@@ -296,6 +330,48 @@ predate that.
 | `/health` endpoint | Done — unauthenticated, deliberately uninformative |
 | Clear Books verified against the spec | Done — see below; the previous implementation was wrong in every guessed part |
 | GitHub repository | <https://github.com/maeterlinckle/production-tracker> |
+
+---
+
+### Quantity workflow round (18 August 2026)
+
+| # | Item | Status |
+|---|---|---|
+| 1 | Staff can raise a part on a client's behalf | Done — `staff.quoting`, same fields, indistinguishable afterwards |
+| 2 | Explicit free-issue toggle on the part forms | Done — hidden, not blank, everywhere free issue would otherwise appear |
+| 3 | Route cards built on request, no regenerate button | Done — nothing stored; `route_cards` dropped |
+| 4 | Order page delivery notes listed by CPN, not type | Done — free-issue, returns and goods-out are three lists, each with the CPN |
+| 5 | Free-issue note: "Quantity Required" + blank "Actual Quantity Sent" | Done |
+| 6 | Quantity-driven production workflow | Done — see §3; includes failures with reasons, rejection vs shortage, and close-down |
+| 7 | Free-issue notes ask for what is still outstanding | Done — living document, rendered fresh, never stored |
+| 8 | Client-requested quantity changes with PO history | Done — staff apply or decline; a decrease cannot eat into what is made |
+| 9 | PO number on the order, through to Clear Books | Done — the invoice `reference` field |
+
+**The two decisions left open, and how they were taken.**
+
+*Stage names.* The Prompt 1 vocabulary was kept where it fitted, and the two
+stages the old model handled with columns rather than states — `delivered` and
+`invoiced` — became stages of their own, so that a quantity's whole life is one
+sequence. `closed` was dropped: it meant "nothing left to do", which the
+distribution now says by itself.
+
+**One earlier behaviour was deliberately reversed.** Under the old model an
+unresolved free-issue discrepancy *blocked* a line from advancing, because
+advancement was automatic and a gate was the only way to stop it. Advancement is
+now a decision somebody makes, one quantity at a time, so a hard block would
+mean refusing a staff instruction — and the model exists precisely to let staff
+push forward what they can while something else is unresolved. The discrepancy
+is instead shown on the line, on the check-in screen and on the parts-on-order
+report until it is cleared, and a rejection now has real machinery behind it
+rather than only a flag.
+
+*Where a rejection's replacement request goes.* It reissues the free-issue note
+that is already out for that line rather than raising a second one. There is at
+most one outstanding request per line by design — two notes asking for
+overlapping material is the state in which somebody sends twice, or sends
+nothing because they assume the other note covers it. If no note is open, one is
+created. Only failed or rejected quantity triggers this; an ordinary shortage is
+already covered by the note that is out, and does nothing.
 
 ---
 

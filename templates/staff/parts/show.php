@@ -2,6 +2,8 @@
 /** @var array $part */ /** @var array $files */ /** @var array $photos */ /** @var array $altNumbers */
 /** @var array $freeIssueMaterials */ /** @var array $linkedParts */ /** @var array $orderLines */
 use App\Core\Auth;
+use App\Models\OrderLine;
+use App\Models\Part;
 ?>
 <div class="card-header">
     <div>
@@ -24,8 +26,12 @@ use App\Core\Auth;
             <h3>Alternate numbers</h3>
             <ul><?php foreach ($altNumbers as $n): ?><li><?= e($n['number']) ?><?= $n['label'] ? ' (' . e($n['label']) . ')' : '' ?></li><?php endforeach; ?></ul>
         <?php endif; ?>
-        <?php if ($freeIssueMaterials !== []): ?>
-            <h3>Free-issue material</h3>
+        <h3>Free-issue material</h3>
+        <?php if (!Part::hasFreeIssue($part)): ?>
+            <p class="text-muted">No free-issue material required.</p>
+        <?php elseif ($freeIssueMaterials === []): ?>
+            <p class="text-muted">Free-issue, but no source material has been named yet.</p>
+        <?php else: ?>
             <ul><?php foreach ($freeIssueMaterials as $m): ?><li><?= e($m['reference']) ?><?= $m['notes'] ? ' — ' . e($m['notes']) : '' ?></li><?php endforeach; ?></ul>
         <?php endif; ?>
 
@@ -89,9 +95,11 @@ use App\Core\Auth;
                     <div class="field"><label for="material_cost">Material cost</label><input type="number" step="0.01" min="0" id="material_cost" name="material_cost" value="<?= e((string) ($part['material_cost'] ?? '')) ?>"></div>
                 <?php endif; ?>
 
-                <?= partial('partials/free-issue-relationship', [
+                <?= partial('partials/free-issue-fields', [
+                    'hasFreeIssue' => Part::hasFreeIssue($part),
                     'relationship' => $part['free_issue_relationship'],
                     'factor' => (int) $part['free_issue_factor'],
+                    'materials' => $freeIssueMaterials,
                     'idPrefix' => 'staff_fi',
                     'showOverrideNote' => true,
                 ]) ?>
@@ -113,7 +121,7 @@ use App\Core\Auth;
             <h2 class="mt-0">Order history</h2>
             <ul class="file-list">
                 <?php foreach ($orderLines as $line): ?>
-                    <li><span><?= e($line['order_number']) ?> — qty <?= (int) $line['qty_ordered'] ?></span> <?= status_badge($line['stage']) ?></li>
+                    <li><span><?= e($line['order_number']) ?> — qty <?= (int) $line['qty_ordered'] ?></span> <?= status_badge(OrderLine::headlineStage($line)) ?></li>
                 <?php endforeach; ?>
             </ul>
         </div>

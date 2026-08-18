@@ -33,6 +33,11 @@
     <div class="card">
         <h2 class="mt-0">Purchase order</h2>
         <div class="field">
+            <label for="po_number">Purchase order number</label>
+            <input type="text" id="po_number" name="po_number" required maxlength="60">
+            <div class="hint">Your own PO number. It goes on the invoice, so it is worth getting right.</div>
+        </div>
+        <div class="field">
             <label for="po">Purchase order document</label>
             <input type="file" id="po" name="po" required>
             <div class="hint">PDF, image or Word document, up to 15 MB.</div>

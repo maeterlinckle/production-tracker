@@ -29,7 +29,12 @@ final class Order
 
     /**
      * Creates an order with its lines in one transaction. $lines is a list of
-     * ['part_id', 'qty_ordered', 'unit_price', 'qty_free_issue_required', 'notes'].
+     * ['part_id', 'qty_ordered', 'unit_price', 'qty_free_issue_required', 'needs_free_issue'].
+     *
+     * Each line's whole quantity is seeded into the distribution at its entry
+     * stage -- 'awaiting free issue' for a part built from client material,
+     * 'ready for production' for one that is not. That single choice is the
+     * only place the two paths differ; from then on they are the same code.
      */
     public static function createWithLines(array $order, array $lines): int
     {
@@ -37,12 +42,13 @@ final class Order
             $orderNumber = ReferenceNumber::next('ORD', $pdo);
 
             $statement = $pdo->prepare(
-                'INSERT INTO orders (client_id, order_number, po_file_path, po_original_filename, placed_by, notes)
-                 VALUES (:client_id, :order_number, :po_file_path, :po_original_filename, :placed_by, :notes)'
+                'INSERT INTO orders (client_id, order_number, po_number, po_file_path, po_original_filename, placed_by, notes)
+                 VALUES (:client_id, :order_number, :po_number, :po_file_path, :po_original_filename, :placed_by, :notes)'
             );
             $statement->execute([
                 'client_id' => $order['client_id'],
                 'order_number' => $orderNumber,
+                'po_number' => $order['po_number'],
                 'po_file_path' => $order['po_file_path'],
                 'po_original_filename' => $order['po_original_filename'],
                 'placed_by' => $order['placed_by'],
@@ -50,18 +56,28 @@ final class Order
             ]);
             $orderId = (int) $pdo->lastInsertId();
 
+            $pdo->prepare(
+                'INSERT INTO order_po_documents (order_id, po_number, file_path, original_filename, is_original, uploaded_by)
+                 VALUES (:order_id, :po_number, :file_path, :original_filename, 1, :uploaded_by)'
+            )->execute([
+                'order_id' => $orderId,
+                'po_number' => $order['po_number'],
+                'file_path' => $order['po_file_path'],
+                'original_filename' => $order['po_original_filename'],
+                'uploaded_by' => $order['placed_by'],
+            ]);
+
             $lineStatement = $pdo->prepare(
                 'INSERT INTO order_lines (
-                    order_id, part_id, line_no, qty_ordered, unit_price, stage, qty_free_issue_required
+                    order_id, part_id, line_no, qty_ordered, unit_price, qty_free_issue_required
                 ) VALUES (
-                    :order_id, :part_id, :line_no, :qty_ordered, :unit_price, :stage, :qty_free_issue_required
+                    :order_id, :part_id, :line_no, :qty_ordered, :unit_price, :qty_free_issue_required
                 )'
             );
 
             $lineNo = 1;
             foreach ($lines as $line) {
                 $freeIssueRequired = (int) ($line['qty_free_issue_required'] ?? 0);
-                $stage = $freeIssueRequired > 0 ? 'awaiting_free_issue' : 'ready_for_production';
 
                 $lineStatement->execute([
                     'order_id' => $orderId,
@@ -69,9 +85,17 @@ final class Order
                     'line_no' => $lineNo,
                     'qty_ordered' => $line['qty_ordered'],
                     'unit_price' => $line['unit_price'],
-                    'stage' => $stage,
                     'qty_free_issue_required' => $freeIssueRequired,
                 ]);
+
+                OrderLine::seedDistribution(
+                    $pdo,
+                    (int) $pdo->lastInsertId(),
+                    (int) $line['qty_ordered'],
+                    !empty($line['needs_free_issue']) ? 'awaiting_free_issue' : 'ready_for_production',
+                    (int) $order['placed_by']
+                );
+
                 $lineNo++;
             }
 
@@ -79,46 +103,86 @@ final class Order
         });
     }
 
-    /** Coarse rollup status for the client-facing simplified view. */
+    public static function setPoNumber(int $id, string $poNumber): void
+    {
+        Database::query('UPDATE orders SET po_number = :po_number WHERE id = :id', ['po_number' => $poNumber, 'id' => $id]);
+    }
+
+    /**
+     * Close the order down: every line's outstanding quantity is cancelled off.
+     *
+     * @return int how much quantity was cancelled across the order
+     */
+    public static function closeDown(int $id, int $userId, string $reason): int
+    {
+        $cancelled = 0;
+
+        foreach (OrderLine::forOrder($id) as $line) {
+            $cancelled += OrderLine::closeDown((int) $line['id'], $userId, $reason);
+        }
+
+        Database::query(
+            'UPDATE orders SET closed_at = NOW(), closed_by = :user, close_reason = :reason WHERE id = :id',
+            ['user' => $userId, 'reason' => $reason, 'id' => $id]
+        );
+
+        return $cancelled;
+    }
+
+    public static function isClosed(array $order): bool
+    {
+        return !empty($order['closed_at']);
+    }
+
+    /**
+     * A single status for an order made of many lines, for listings and the
+     * page heading.
+     *
+     * The rule is "report the least advanced thing still outstanding", because
+     * that is what somebody scanning a list of orders wants to know: an order is
+     * not delivered while any of it is still on a machine. Cancelled and failed
+     * quantity is ignored unless it is all there is.
+     *
+     * @param array<int,array<string,mixed>> $lines lines with distributions attached
+     */
     public static function rollupStatus(array $lines): string
     {
         if ($lines === []) {
             return 'ordered';
         }
 
-        $stages = array_column($lines, 'stage');
+        $totals = array_fill_keys(OrderLine::STAGES, 0);
 
-        if (count(array_unique($stages)) === 1 && $stages[0] === 'closed') {
-            return 'closed';
-        }
-        if (in_array('awaiting_free_issue', $stages, true)) {
-            return 'awaiting_free_issue';
-        }
-
-        $anyDelivered = false;
-        $allFullyDelivered = true;
         foreach ($lines as $line) {
-            if ((int) $line['qty_delivered'] > 0) {
-                $anyDelivered = true;
-            }
-            if ((int) $line['qty_delivered'] < (int) $line['qty_ordered']) {
-                $allFullyDelivered = false;
+            foreach (OrderLine::STAGES as $stage) {
+                $totals[$stage] += OrderLine::qtyAt($line, $stage);
             }
         }
 
-        if ($anyDelivered && !$allFullyDelivered) {
-            return 'partially_delivered';
+        $inFlow = 0;
+        foreach (OrderLine::FLOW_STAGES as $stage) {
+            $inFlow += $totals[$stage];
         }
-        if ($allFullyDelivered) {
+
+        if ($inFlow === 0) {
+            return $totals['cancelled'] > 0 ? 'cancelled' : 'closed';
+        }
+
+        foreach (['awaiting_free_issue', 'ready_for_production', 'in_production', 'complete'] as $stage) {
+            if ($totals[$stage] > 0) {
+                // Something has gone out already, but not all of it.
+                if ($totals['delivered'] + $totals['invoiced'] > 0) {
+                    return 'partially_delivered';
+                }
+
+                return $stage;
+            }
+        }
+
+        if ($totals['delivered'] > 0) {
             return 'delivered';
         }
-        if (in_array('in_production', $stages, true)) {
-            return 'in_production';
-        }
-        if (in_array('complete', $stages, true)) {
-            return 'complete';
-        }
 
-        return 'ready_for_production';
+        return 'closed';
     }
 }

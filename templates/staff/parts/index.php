@@ -1,9 +1,14 @@
-<?php /** @var array $parts */ /** @var bool $onlyUnquoted */ ?>
+<?php /** @var array $parts */ /** @var bool $onlyUnquoted */
+use App\Core\Auth;
+?>
 <div class="card-header">
     <h1 class="mt-0 mb-0">Parts</h1>
     <div style="display:flex; gap: var(--space-2)">
         <a href="<?= url('/staff/parts') ?>" class="btn <?= !$onlyUnquoted ? 'btn-primary' : '' ?> btn-sm">All</a>
         <a href="<?= url('/staff/parts?filter=unquoted') ?>" class="btn <?= $onlyUnquoted ? 'btn-primary' : '' ?> btn-sm">Awaiting price</a>
+        <?php if (Auth::can('create_client_parts')): ?>
+            <a href="<?= url('/staff/parts/new') ?>" class="btn btn-sm">New part</a>
+        <?php endif; ?>
     </div>
 </div>
 

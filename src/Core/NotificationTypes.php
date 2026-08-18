@@ -29,10 +29,13 @@ final class NotificationTypes
         'order_in_production'    => ['An order line has started production', 'both', null],
         'free_issue_note_issued' => ['A free-issue delivery note has been issued', 'both', null],
         'free_issue_checked_in'  => ['Free-issue material has been checked in', 'both', null],
+        'material_rejected'      => ['Free-issue material has been rejected and is being returned', 'both', null],
         'delivery_note_issued'   => ['A delivery note has been issued', 'both', null],
         'invoice_raised'         => ['An invoice has been raised', 'both', 'view_pricing'],
         'query_raised'           => ['A new query has been raised on an order', 'both', null],
         'query_answered'         => ['A query you raised has been answered', 'both', null],
+        'quantity_change_requested' => ['A client has asked to change a quantity', 'staff', null],
+        'quantity_change_decided'   => ['A quantity change request has been decided', 'both', null],
         'parts_outstanding'      => ['The scheduled digest of parts still outstanding', 'staff', null],
     ];
 

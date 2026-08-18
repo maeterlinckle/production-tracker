@@ -18,7 +18,7 @@
                 <?php foreach ($notes as $note): ?>
                     <tr>
                         <td><?= e($note['reference']) ?></td>
-                        <td><?= $note['type'] === 'free_issue_in' ? 'Free issue in' : 'Goods out' ?></td>
+                        <td><?= e(\App\Models\DeliveryNote::TYPE_LABELS[$note['type']] ?? $note['type']) ?></td>
                         <td><?= e($note['client_name']) ?></td>
                         <td><?= format_date($note['issued_at']) ?></td>
                         <td>

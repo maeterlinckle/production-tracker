@@ -8,6 +8,7 @@ use App\Core\Auth;
 use App\Core\Request;
 use App\Core\View;
 use App\Models\Client;
+use App\Models\OrderLine;
 use App\Services\PartsOnOrder;
 use App\Services\Reminders;
 
@@ -79,7 +80,7 @@ final class ReportController
         $row([
             'Client', 'Part number', 'Part name', 'Material', 'Order', 'Purchase order',
             'Placed', 'Days open', 'Ordered', 'Completed', 'Outstanding', 'Delivered',
-            'Stage', 'Held up by',
+            'Failed', 'Status', 'Held up by',
         ]);
 
         foreach ($lines as $line) {
@@ -89,14 +90,15 @@ final class ReportController
                 $line['part_name'],
                 $line['base_material'] ?? '',
                 $line['order_number'],
-                $line['po_original_filename'],
+                $line['po_number'] !== '' ? $line['po_number'] : $line['po_original_filename'],
                 date('Y-m-d', strtotime((string) $line['placed_at'])),
                 (int) $line['days_open'],
                 (int) $line['qty_ordered'],
                 (int) $line['qty_completed'],
                 (int) $line['qty_outstanding'],
                 (int) $line['qty_delivered'],
-                $line['stage'],
+                (int) $line['qty_failed'],
+                OrderLine::statusLabel($line),
                 PartsOnOrder::holdReason($line),
             ]);
         }

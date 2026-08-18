@@ -56,22 +56,11 @@
 
     <div class="card">
         <h2 class="mt-0">Free-issue material</h2>
-        <p class="text-muted">Saving replaces the full list below.</p>
-        <?php $fiRows = $freeIssueMaterials !== [] ? $freeIssueMaterials : [['reference' => '', 'notes' => '']]; ?>
-        <?php foreach ($fiRows as $m): ?>
-            <div class="form-row">
-                <div class="field"><input type="text" name="free_issue_ref[]" value="<?= e($m['reference']) ?>" placeholder="Material reference"></div>
-                <div class="field"><input type="text" name="free_issue_notes[]" value="<?= e($m['notes'] ?? '') ?>" placeholder="Notes (optional)"></div>
-            </div>
-        <?php endforeach; ?>
-        <div class="form-row">
-            <div class="field"><input type="text" name="free_issue_ref[]" placeholder="Material reference"></div>
-            <div class="field"><input type="text" name="free_issue_notes[]" placeholder="Notes (optional)"></div>
-        </div>
-
-        <?= partial('partials/free-issue-relationship', [
+        <?= partial('partials/free-issue-fields', [
+            'hasFreeIssue' => (bool) $part['has_free_issue'],
             'relationship' => $part['free_issue_relationship'],
             'factor' => (int) $part['free_issue_factor'],
+            'materials' => $freeIssueMaterials,
             'idPrefix' => 'client_fi',
         ]) ?>
     </div>

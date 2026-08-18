@@ -219,6 +219,9 @@ if (!function_exists('status_badge')) {
             'complete' => 'Complete',
             'partially_delivered' => 'Partially delivered',
             'delivered' => 'Delivered',
+            'invoiced' => 'Invoiced',
+            'failed' => 'Failed',
+            'cancelled' => 'Cancelled',
             'closed' => 'Closed',
         ];
 
@@ -232,6 +235,9 @@ if (!function_exists('status_badge')) {
             'complete' => 'badge-ok',
             'partially_delivered' => 'badge-warn',
             'delivered' => 'badge-ok',
+            'invoiced' => 'badge-ok',
+            'failed' => 'badge-danger',
+            'cancelled' => 'badge-muted',
             'closed' => 'badge-ok',
         ];
 

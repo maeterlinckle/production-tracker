@@ -34,7 +34,10 @@ $staffLinks = [
         ['label' => 'Delivery notes', 'href' => '/staff/delivery-notes', 'permission' => 'view_orders'],
     ]],
 
-    ['label' => 'Parts', 'href' => '/staff/parts', 'permission' => null],
+    ['label' => 'Parts', 'href' => '/staff/parts', 'permission' => null, 'children' => [
+        ['label' => 'New part',  'href' => '/staff/parts/new', 'permission' => 'create_client_parts'],
+        ['label' => 'All parts', 'href' => '/staff/parts',     'permission' => null],
+    ]],
 
     ['label' => 'Reports', 'href' => '/staff/reports', 'permission' => 'view_orders'],
 

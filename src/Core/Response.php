@@ -75,6 +75,27 @@ final class Response
     }
 
     /**
+     * The same thing for a document that was never written to disk.
+     *
+     * Route cards are built from the order line every time they are asked for,
+     * so there is no file to point at — and writing one out purely to serve it
+     * back would recreate the stale copy the on-the-fly generation exists to
+     * avoid.
+     */
+    public static function inlineBytes(string $bytes, string $displayName, string $mimeType): void
+    {
+        header_remove('Content-Security-Policy');
+        header("Content-Security-Policy: default-src 'none'; object-src 'self'; img-src 'self' data:; style-src 'unsafe-inline'");
+        header('Content-Type: ' . $mimeType);
+        header('Content-Disposition: inline; filename="' . str_replace(['"', "\r", "\n"], '', $displayName) . '"');
+        header('Content-Length: ' . (string) strlen($bytes));
+        header('X-Content-Type-Options: nosniff');
+        header('Cache-Control: no-store');
+
+        echo $bytes;
+    }
+
+    /**
      * The stored MIME type is whatever the browser claimed at upload time, so
      * it is a hint rather than an answer: octet-stream and an empty string both
      * turn up. finfo reads the file, and the extension is the last resort for

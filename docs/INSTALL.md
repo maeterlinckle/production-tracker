@@ -365,6 +365,12 @@ out from a ratio held on the **part**:
 
 N runs from 2 to 10 either way.
 
+All of this only applies to a part with **"This part is made from free-issue
+material" ticked**. With the box clear there is no material to work out, and
+every free-issue field, column and reminder is absent for that part rather than
+shown empty — on the part page, the order form, the order page, the check-in
+screen and the route card alike.
+
 **The client sets it**, on the part, from the quote stage — they know how many
 parts come out of a length of their own bar. Junction can correct it from
 **Parts → a part → Junction-only workshop details**; whoever last changed it
@@ -377,10 +383,72 @@ do — but cannot post a smaller number and quietly produce a line that waits fo
 no material at all.
 
 Receipt is not a yes/no. Each check-in records what actually arrived, and a
-shortfall, an excess or a wrong item is flagged as a discrepancy that **blocks
-the line from advancing to production until it is resolved** — even if a later
-delivery makes the quantities add up, because "the numbers match" is not the
-same as "the material is right".
+shortfall, an excess or a wrong item is flagged as a discrepancy, shown on the
+line and on the parts-on-order report until somebody clears it — because "the
+numbers match" is not the same as "the material is right".
+
+Checking material in **does not start any parts**. It records what arrived;
+somebody then decides how many parts to advance, on the order page. That is
+what makes a partial delivery useful: five bars turning up is enough to get five
+bars' worth of work going without waiting for the rest.
+
+**Rejecting** material is a separate action, and it is not the same as a
+shortage:
+
+| | What it means | What happens |
+|---|---|---|
+| Shortage | It has not arrived yet | Nothing. The free-issue note that is already out still asks for it. |
+| Rejection | It arrived and cannot be used | A return note is raised for what goes back, the same quantity is added to what the line still needs, and the note that is already out asks for it again. |
+
+The free-issue note is a **standing request, not a shipment record**. It is
+rendered fresh every time it is opened and shows what is outstanding *today* —
+"8 of 20 already received — 12 still required" — so reprinting it is always
+right and reusing an old printout never is. The printable note has a blank
+**Actual Quantity Sent** column for the client to fill in by hand when packing.
+
+### The quantity workflow
+
+An order line's quantity is spread across stages rather than sitting at one:
+
+```
+awaiting free issue → ready for production → in production → complete → delivered → invoiced
+```
+
+Staff move any number of parts one stage at a time, forwards or back, from the
+order page. A line reads "12 awaiting free issue, 5 ready for production, 3 in
+production" because that is what is true; there is no status field anywhere.
+
+Two more places quantity can end up:
+
+- **Failed** — with a reason, and a record of which stage it failed at. Failed
+  parts are still owed, so they stay in the outstanding figure. Where the part
+  is free-issue, **Request replacement material** adds the material for them to
+  what the line needs; once it arrives, move them back into the flow.
+- **Cancelled** — **Close the line down** (or the whole order) cancels off
+  everything still to be issued, received or made. It is recorded with a reason,
+  not deleted, and stops counting as outstanding from that point. Parts already
+  made still have to go out and still have to be invoiced.
+
+Parts become *delivered* by appearing on a delivery note and *invoiced* by
+appearing on an invoice — never by anybody typing the quantity in. A second way
+of saying the same thing would disagree with the first within a week.
+
+### Quantity changes
+
+A client can ask for a different quantity on a line that is already running,
+from the order page, attaching an amended or additional purchase order if they
+have one. The request changes nothing by itself: staff apply or decline it, and
+applying it is what moves the order.
+
+An increase drops the extra parts in at whichever stage the line starts at. A
+decrease comes out of the least advanced stages first and **cannot go below what
+has already been made, delivered or invoiced** — the review screen says where
+that floor is before anybody commits, and the attempt is refused if it would
+cross it.
+
+Purchase order documents are a history. An amended PO is added alongside the
+original, never in place of it, because the original is what the price was
+agreed against.
 
 ## 10. Backups
 
@@ -392,9 +460,11 @@ sudo tracker backup /mnt/nas   # or wherever
 Three files per run, and **all three are needed for a working restore**:
 
 - the database dump;
-- `storage/uploads/` — drawings, purchase orders, and the generated delivery
-  note and route card PDFs. The database only holds relative paths into this
-  directory, so a dump without it restores a site full of broken links;
+- `storage/uploads/` — drawings, purchase orders, and the delivery-note PDFs
+  that record a movement (goods out, material returned). The database only holds
+  relative paths into this directory, so a dump without it restores a site full
+  of broken links. Route cards and free-issue notes are not in there and do not
+  need to be: both are built from live data whenever they are opened;
 - `.env` — because it carries `APP_KEY`, and without that the stored SMTP
   password will not decrypt.
 

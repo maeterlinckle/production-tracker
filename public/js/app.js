@@ -178,6 +178,17 @@
         if (multiply) multiply.hidden = select.value !== 'multiply';
     });
 
+    // Checkbox that shows or hides a block of fields — the free-issue toggle on
+    // the part forms. Without JavaScript the block is simply always visible and
+    // the checkbox still decides what gets saved, so the form keeps working.
+    document.addEventListener('change', function (event) {
+        var toggle = event.target.closest('[data-toggle-panel]');
+        if (!toggle) return;
+
+        var panel = document.getElementById(toggle.getAttribute('data-toggle-panel'));
+        if (panel) panel.hidden = !toggle.checked;
+    });
+
     /**
      * Generic AJAX search combobox. Markup:
      *   <div data-combobox data-url="/search-endpoint">

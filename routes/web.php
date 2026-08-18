@@ -77,10 +77,16 @@ $router->group(['auth'], function (Router $router): void {
     $router->post('/orders/{id:\d+}/queries', [OrderInteractionController::class, 'raiseQuery'], ['csrf']);
     $router->post('/orders/{id:\d+}/queries/{queryId:\d+}/reply', [OrderInteractionController::class, 'replyQuery'], ['csrf']);
 
+    // Asking for a different quantity, and the purchase order paperwork that
+    // usually comes with it (item 8). Neither changes the order by itself.
+    $router->post('/orders/{id:\d+}/lines/{lineId:\d+}/change-request', [OrderController::class, 'requestQuantityChange'], ['csrf']);
+    $router->post('/orders/{id:\d+}/po-documents', [OrderController::class, 'uploadPoDocument'], ['csrf']);
+
     $router->get('/delivery-notes/{id:\d+}/pdf', [DeliveryNoteController::class, 'downloadPdf']);
 
     $router->get('/files/drawings/{id:\d+}', [FileController::class, 'drawing']);
     $router->get('/files/po/{id:\d+}', [FileController::class, 'po']);
+    $router->get('/files/po-documents/{id:\d+}', [FileController::class, 'poDocument']);
     $router->get('/files/part-photos/{id:\d+}', [FileController::class, 'partPhoto']);
     $router->get('/files/order-photos/{id:\d+}', [FileController::class, 'orderPhoto']);
 
@@ -107,21 +113,38 @@ $router->group(['staff'], function (Router $router): void {
     $router->post('/staff/clients/{id:\d+}/users/{userId:\d+}/reinvite', [StaffClientController::class, 'reinviteUser'], ['csrf']);
 
     $router->get('/staff/parts', [StaffPartController::class, 'index']);
+    // Registered before the {id} route so "new" is not read as an id (item 1).
+    $router->get('/staff/parts/new', [StaffPartController::class, 'create']);
+    $router->post('/staff/parts', [StaffPartController::class, 'store'], ['csrf']);
     $router->get('/staff/parts/{id:\d+}', [StaffPartController::class, 'show']);
     $router->post('/staff/parts/{id:\d+}/price', [StaffPartController::class, 'setPrice'], ['csrf']);
     $router->post('/staff/parts/{id:\d+}/workshop-fields', [StaffPartController::class, 'updateWorkshopFields'], ['csrf']);
 
     $router->get('/staff/orders', [StaffOrderController::class, 'index']);
     $router->get('/staff/orders/{id:\d+}', [StaffOrderController::class, 'show']);
-    $router->post('/staff/lines/{id:\d+}/stage', [StaffOrderController::class, 'setStage'], ['csrf']);
-    $router->post('/staff/lines/{id:\d+}/route-card', [StaffOrderController::class, 'generateRouteCard'], ['csrf']);
-    $router->get('/staff/route-cards/{id:\d+}/pdf', [StaffOrderController::class, 'downloadRouteCard']);
-    $router->post('/staff/lines/{id:\d+}/completion', [StaffOrderController::class, 'recordCompletion'], ['csrf']);
+    // The quantity workflow (item 6). One move action covers advancing, moving
+    // back and failing, because they are the same operation with a different
+    // destination.
+    $router->post('/staff/lines/{id:\d+}/move', [StaffOrderController::class, 'moveQuantity'], ['csrf']);
+    $router->post('/staff/lines/{id:\d+}/replacement-material', [StaffOrderController::class, 'requestReplacementMaterial'], ['csrf']);
+    $router->post('/staff/lines/{id:\d+}/close', [StaffOrderController::class, 'closeLine'], ['csrf']);
+    $router->post('/staff/lines/{id:\d+}/reopen', [StaffOrderController::class, 'reopenLine'], ['csrf']);
+    $router->post('/staff/orders/{id:\d+}/close', [StaffOrderController::class, 'closeOrder'], ['csrf']);
+
+    // Built from the order line every time it is asked for, so there is one
+    // action rather than a generate/regenerate pair (item 3).
+    $router->get('/staff/lines/{id:\d+}/route-card', [StaffOrderController::class, 'routeCard']);
+
+    $router->post('/staff/orders/{id:\d+}/change-requests/{requestId:\d+}/apply', [StaffOrderController::class, 'applyChangeRequest'], ['csrf']);
+    $router->post('/staff/orders/{id:\d+}/change-requests/{requestId:\d+}/decline', [StaffOrderController::class, 'declineChangeRequest'], ['csrf']);
+    $router->post('/staff/orders/{id:\d+}/po-documents', [StaffOrderController::class, 'uploadPoDocument'], ['csrf']);
+    $router->post('/staff/orders/{id:\d+}/po-number', [StaffOrderController::class, 'updatePoNumber'], ['csrf']);
     $router->post('/staff/orders/{id:\d+}/photos', [StaffOrderController::class, 'uploadPhoto'], ['csrf']);
     $router->post('/staff/orders/{id:\d+}/photos/{photoId:\d+}/delete', [StaffOrderController::class, 'deletePhoto'], ['csrf']);
 
     $router->get('/staff/lines/{id:\d+}/check-in', [StaffCheckInController::class, 'show']);
     $router->post('/staff/lines/{id:\d+}/check-in', [StaffCheckInController::class, 'store'], ['csrf']);
+    $router->post('/staff/lines/{id:\d+}/check-in/reject', [StaffCheckInController::class, 'reject'], ['csrf']);
     $router->post('/staff/lines/{id:\d+}/check-in/discrepancy/{receiptId:\d+}/resolve', [StaffCheckInController::class, 'resolveDiscrepancy'], ['csrf']);
 
     $router->get('/staff/clients/{clientId:\d+}/free-issue-note/new', [StaffDeliveryNoteController::class, 'createFreeIssue']);

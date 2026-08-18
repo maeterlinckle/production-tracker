@@ -50,7 +50,11 @@ final class StaffInvoiceController
         ], $lines);
 
         try {
-            $result = ClearBooksClient::createSalesInvoice($client['clearbooks_entity_id'], $invoiceLines, $note['reference']);
+            $result = ClearBooksClient::createSalesInvoice(
+                $client['clearbooks_entity_id'],
+                $invoiceLines,
+                $this->invoiceReference($note, $lines)
+            );
         } catch (\Throwable $e) {
             Flash::error('Could not raise the Clear Books invoice: ' . $e->getMessage());
             Response::redirect('/staff/delivery-notes/' . $deliveryNoteId);
@@ -61,5 +65,33 @@ final class StaffInvoiceController
 
         Flash::success('Invoice ' . $result['number'] . ' raised in Clear Books.');
         Response::redirect('/staff/delivery-notes/' . $deliveryNoteId);
+    }
+
+    /**
+     * What goes in the Clear Books invoice's `reference` field (item 9).
+     *
+     * The client's PO number, because that is what they will match the invoice
+     * against when it lands in their accounts payable — a Junction delivery note
+     * number means nothing at their end.
+     *
+     * A note can cover lines from more than one order, so more than one PO can
+     * apply; all of them go in rather than an arbitrary first. The delivery note
+     * reference is the fallback for orders placed before PO numbers were
+     * recorded, so an invoice never goes out with an empty reference.
+     *
+     * @param array<int,array<string,mixed>> $lines
+     */
+    private function invoiceReference(array $note, array $lines): string
+    {
+        $poNumbers = array_values(array_unique(array_filter(
+            array_map(static fn (array $line): string => trim((string) ($line['po_number'] ?? '')), $lines),
+            static fn (string $poNumber): bool => $poNumber !== ''
+        )));
+
+        if ($poNumbers === []) {
+            return (string) $note['reference'];
+        }
+
+        return implode(', ', $poNumbers);
     }
 }

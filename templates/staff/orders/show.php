@@ -1,15 +1,35 @@
 <?php
-/** @var array $order */ /** @var array $client */ /** @var array $lines */ /** @var array $routeCards */
-/** @var array $deliveryNotes */ /** @var array $invoicesByDn */ /** @var array $photos */
-/** @var array $notes */ /** @var array $queries */ /** @var string $rollupStatus */
+/** @var array $order */ /** @var array $client */ /** @var array $lines */ /** @var array $lineDetail */
+/** @var array $deliveryNotes */ /** @var array $invoicesByDn */ /** @var array $poDocuments */
+/** @var array $photos */ /** @var array $notes */ /** @var array $queries */ /** @var string $rollupStatus */
 use App\Core\Auth;
+use App\Models\DeliveryNote;
+use App\Models\Order;
 use App\Models\OrderLine;
+use App\Models\OrderLineChangeRequest;
+use App\Models\Part;
+use App\Services\RouteCardService;
+
 $showPricing = Auth::can('view_pricing');
+$canProduce = Auth::can('production_control');
+$canApprove = Auth::can('approve_quantity_changes');
+$canClose = Auth::can('close_orders');
+$orderClosed = Order::isClosed($order);
+
+$freeIssueNotes = array_values(array_filter($deliveryNotes, static fn ($dn) => $dn['type'] === 'free_issue_in'));
+$returnNotes = array_values(array_filter($deliveryNotes, static fn ($dn) => $dn['type'] === 'material_return'));
+$goodsOutNotes = array_values(array_filter($deliveryNotes, static fn ($dn) => $dn['type'] === 'goods_out'));
 ?>
 <div class="card-header">
     <div>
         <h1 class="mt-0 mb-0"><?= e($order['order_number']) ?> <?= status_badge($rollupStatus) ?></h1>
-        <p class="text-muted mb-0"><?= e($client['name']) ?> &middot; Placed <?= format_date($order['placed_at']) ?></p>
+        <p class="text-muted mb-0">
+            <?= e($client['name']) ?> &middot; Placed <?= format_date($order['placed_at']) ?>
+            &middot; PO <?= $order['po_number'] !== '' ? e($order['po_number']) : '<span class="text-muted">not recorded</span>' ?>
+        </p>
+        <?php if ($orderClosed): ?>
+            <p class="text-muted mb-0">Closed down <?= format_date($order['closed_at']) ?><?= $order['close_reason'] ? ' — ' . e($order['close_reason']) : '' ?></p>
+        <?php endif; ?>
     </div>
     <div style="display:flex; gap: var(--space-2)">
         <a href="<?= url('/files/po/' . $order['id']) ?>" class="btn" target="_blank" rel="noopener">View PO</a>
@@ -19,7 +39,19 @@ $showPricing = Auth::can('view_pricing');
     </div>
 </div>
 
-<?php foreach ($lines as $line): $routeCard = $routeCards[$line['id']] ?? null; ?>
+<?php foreach ($lines as $line):
+    $detail = $lineDetail[$line['id']] ?? [];
+    $part = Part::find((int) $line['part_id']);
+    $needsFreeIssue = Part::hasFreeIssue($part ?? []);
+    $lineClosed = OrderLine::isClosed($line);
+    $pendingChange = null;
+    foreach ($detail['change_requests'] ?? [] as $candidate) {
+        if ($candidate['status'] === 'pending') {
+            $pendingChange = $candidate;
+            break;
+        }
+    }
+    ?>
     <div class="card">
         <div class="card-header">
             <div>
@@ -27,94 +59,340 @@ $showPricing = Auth::can('view_pricing');
                 <p class="text-muted mb-0">
                     Qty ordered: <?= (int) $line['qty_ordered'] ?>
                     <?php if ($showPricing): ?> &middot; Unit price: <?= format_money($line['unit_price']) ?><?php endif; ?>
+                    <?php if ($lineClosed): ?> &middot; <span class="badge badge-muted">Closed down</span><?php endif; ?>
                 </p>
             </div>
-            <a href="<?= url('/staff/parts/' . $line['part_id']) ?>" class="btn btn-sm">View part</a>
-        </div>
-
-        <?= partial('partials/stepper', ['line' => $line]) ?>
-        <p><?= status_badge($line['stage']) ?> <span class="text-muted"><?= e(OrderLine::statusLabel($line)) ?></span></p>
-
-        <div class="grid grid-2" style="margin: var(--space-4) 0">
-            <?php if ((int) $line['qty_free_issue_required'] > 0): ?>
-                <?= partial('partials/qty-bar', ['label' => 'Free issue received', 'done' => $line['qty_free_issue_received'], 'total' => $line['qty_free_issue_required']]) ?>
-            <?php endif; ?>
-            <?= partial('partials/qty-bar', ['label' => 'Completed', 'done' => $line['qty_completed'], 'total' => $line['qty_ordered']]) ?>
-            <?= partial('partials/qty-bar', ['label' => 'Delivered', 'done' => $line['qty_delivered'], 'total' => $line['qty_ordered']]) ?>
-            <?php if ($showPricing): ?>
-                <?= partial('partials/qty-bar', ['label' => 'Invoiced', 'done' => $line['qty_invoiced'], 'total' => $line['qty_delivered']]) ?>
-            <?php endif; ?>
-        </div>
-
-        <?php if (Auth::can('production_control')): ?>
-        <div class="grid grid-3">
-            <?php if ((int) $line['qty_free_issue_required'] > (int) $line['qty_free_issue_received']): ?>
-                <div>
-                    <label style="display:block; font-weight:600; margin-bottom: var(--space-1); font-size:0.9rem">Free issue</label>
-                    <a href="<?= url('/staff/lines/' . $line['id'] . '/check-in') ?>" class="btn btn-sm">Check in free issue</a>
-                </div>
-            <?php endif; ?>
-
-            <?php if ($line['stage'] === 'in_production' && (int) $line['qty_completed'] < (int) $line['qty_ordered']): ?>
-                <form method="post" action="<?= url('/staff/lines/' . $line['id'] . '/completion') ?>">
-                    <?= csrf_field() ?>
-                    <div class="field">
-                        <label>Record parts completed</label>
-                        <input type="number" min="1" max="<?= (int) $line['qty_ordered'] - (int) $line['qty_completed'] ?>" name="qty" required placeholder="Qty completed">
-                    </div>
-                    <button type="submit" class="btn btn-sm">Record completion</button>
-                </form>
-            <?php endif; ?>
-
-            <form method="post" action="<?= url('/staff/lines/' . $line['id'] . '/stage') ?>">
-                <?= csrf_field() ?>
-                <div class="field">
-                    <label>Update production status</label>
-                    <select name="stage">
-                        <?php foreach (OrderLine::STAGES as $stage): ?>
-                            <option value="<?= e($stage) ?>" <?= $line['stage'] === $stage ? 'selected' : '' ?>><?= e(OrderLine::STAGE_LABELS[$stage]) ?></option>
-                        <?php endforeach; ?>
-                    </select>
-                </div>
-                <button type="submit" class="btn btn-sm">Update status</button>
-            </form>
-
-            <div>
-                <label style="display:block; font-weight:600; margin-bottom: var(--space-1); font-size:0.9rem">Route card</label>
-                <?php if ($routeCard !== null): ?>
-                    <a href="<?= url('/staff/route-cards/' . $routeCard['id'] . '/pdf') ?>" class="btn btn-sm" target="_blank" rel="noopener"><?= e($routeCard['reference']) ?> PDF</a>
+            <div style="display:flex; gap: var(--space-2)">
+                <a href="<?= url('/staff/parts/' . $line['part_id']) ?>" class="btn btn-sm">View part</a>
+                <?php if ($canProduce): ?>
+                    <a href="<?= url('/staff/lines/' . $line['id'] . '/route-card') ?>" class="btn btn-sm" target="_blank" rel="noopener">
+                        View/print route card
+                    </a>
                 <?php endif; ?>
-                <form method="post" action="<?= url('/staff/lines/' . $line['id'] . '/route-card') ?>" style="margin-top: var(--space-2)">
-                    <?= csrf_field() ?>
-                    <button type="submit" class="btn btn-sm"><?= $routeCard !== null ? 'Regenerate' : 'Generate' ?> route card</button>
-                </form>
             </div>
         </div>
+
+        <p class="mb-0"><?= status_badge(OrderLine::headlineStage($line)) ?>
+            <span class="text-muted"><?= e(OrderLine::statusLabel($line)) ?></span></p>
+        <?= partial('partials/stepper', ['line' => $line]) ?>
+
+        <?php if ($lineClosed): ?>
+            <p class="text-muted">
+                Closed down <?= format_date($line['closed_at']) ?><?= $line['close_reason'] ? ' — ' . e($line['close_reason']) : '' ?>.
+                Cancelled quantity no longer counts as outstanding.
+            </p>
+        <?php endif; ?>
+
+        <?php if ($canProduce): ?>
+            <?= partial('partials/stage-moves', ['line' => $line]) ?>
+        <?php endif; ?>
+
+        <?php // -- Free issue: shown only for parts that actually have any (item 2) ?>
+        <div style="margin-top: var(--space-5)">
+            <h4 class="mt-0 mb-2">Free-issue material</h4>
+            <?php if (!$needsFreeIssue): ?>
+                <p class="text-muted">No free-issue material required.</p>
+            <?php else: $outstanding = OrderLine::freeIssueOutstanding($line); ?>
+                <?= partial('partials/qty-bar', [
+                    'label' => 'Material received',
+                    'done' => (int) $line['qty_free_issue_received'] - (int) $line['qty_free_issue_rejected'],
+                    'total' => (int) $line['qty_free_issue_required'],
+                ]) ?>
+                <p class="text-muted"><?= e(OrderLine::freeIssueStatusSentence($line)) ?></p>
+
+                <?php if (($detail['open_discrepancy'] ?? null) !== null): ?>
+                    <p><span class="badge badge-warn">Discrepancy unresolved</span>
+                        <?= e(OrderLine::DISCREPANCY_LABELS[$detail['open_discrepancy']['discrepancy_type']]) ?>
+                        <?= $detail['open_discrepancy']['discrepancy_notes'] ? '— ' . e($detail['open_discrepancy']['discrepancy_notes']) : '' ?>
+                    </p>
+                <?php endif; ?>
+
+                <?php if (($detail['rejections'] ?? []) !== []): ?>
+                    <div class="table-wrap">
+                        <table>
+                            <thead><tr><th>Rejected</th><th>Qty</th><th>Reason</th><th>Return note</th><th>Replacement asked for on</th></tr></thead>
+                            <tbody>
+                            <?php foreach ($detail['rejections'] as $rejection): ?>
+                                <tr>
+                                    <td><?= format_date($rejection['rejected_at']) ?></td>
+                                    <td><?= (int) $rejection['qty_rejected'] ?></td>
+                                    <td><?= e($rejection['reason']) ?></td>
+                                    <td><?= $rejection['return_reference'] ? e($rejection['return_reference']) : '—' ?></td>
+                                    <td><?= $rejection['replacement_reference'] ? e($rejection['replacement_reference']) : '—' ?></td>
+                                </tr>
+                            <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                    </div>
+                <?php endif; ?>
+
+                <?php if ($canProduce): ?>
+                    <a href="<?= url('/staff/lines/' . $line['id'] . '/check-in') ?>" class="btn btn-sm">
+                        Check in or reject material
+                    </a>
+                <?php endif; ?>
+            <?php endif; ?>
+        </div>
+
+        <?php // -- Failed quantity and replacement material (item 6) ?>
+        <?php if (OrderLine::qtyAt($line, 'failed') > 0): ?>
+            <div style="margin-top: var(--space-5)">
+                <h4 class="mt-0 mb-2"><?= OrderLine::qtyAt($line, 'failed') ?> failed</h4>
+                <p class="text-muted">
+                    Still owed on this line: failed parts are parked rather than deducted, and go back into the
+                    flow once there is something to remake them from.
+                </p>
+                <?php if (($detail['failures'] ?? []) !== []): ?>
+                    <ul class="plain-list">
+                        <?php foreach ($detail['failures'] as $failure): ?>
+                            <li>
+                                <?= (int) $failure['qty'] ?> at <?= e(OrderLine::STAGE_SENTENCE_LABELS[$failure['from_stage']] ?? 'an unknown stage') ?>
+                                — <?= e($failure['reason'] ?? 'no reason recorded') ?>
+                                <span class="text-muted">(<?= e($failure['moved_by_name']) ?>, <?= format_date($failure['moved_at']) ?>)</span>
+                            </li>
+                        <?php endforeach; ?>
+                    </ul>
+                <?php endif; ?>
+
+                <?php if ($canProduce && $needsFreeIssue): ?>
+                    <form method="post" action="<?= url('/staff/lines/' . $line['id'] . '/replacement-material') ?>" class="inline-form">
+                        <?= csrf_field() ?>
+                        <div class="field">
+                            <label for="replace_<?= (int) $line['id'] ?>">Ask for material to remake</label>
+                            <input type="number" id="replace_<?= (int) $line['id'] ?>" name="qty"
+                                   min="1" max="<?= OrderLine::qtyAt($line, 'failed') ?>"
+                                   value="<?= OrderLine::qtyAt($line, 'failed') ?>" required>
+                        </div>
+                        <button type="submit" class="btn btn-sm">Request replacement material</button>
+                    </form>
+                <?php endif; ?>
+            </div>
+        <?php endif; ?>
+
+        <?php // -- Quantity change requests (item 8) ?>
+        <?php if (($detail['change_requests'] ?? []) !== []): ?>
+            <div style="margin-top: var(--space-5)">
+                <h4 class="mt-0 mb-2">Quantity change requests</h4>
+                <?php foreach ($detail['change_requests'] as $request): ?>
+                    <div class="callout">
+                        <p class="mb-1">
+                            <strong><?= (int) $request['qty_at_request'] ?> → <?= (int) $request['qty_requested'] ?></strong>
+                            <span class="badge <?= $request['status'] === 'pending' ? 'badge-warn' : ($request['status'] === 'applied' ? 'badge-ok' : 'badge-muted') ?>">
+                                <?= e(ucfirst($request['status'])) ?>
+                            </span>
+                            <span class="text-muted">asked by <?= e($request['requested_by_name']) ?>, <?= format_date($request['requested_at']) ?></span>
+                        </p>
+                        <?php if ($request['reason']): ?><p class="mb-1"><?= nl2br(e($request['reason'])) ?></p><?php endif; ?>
+                        <?php if ($request['reviewed_by_name']): ?>
+                            <p class="text-muted mb-0">
+                                <?= e(ucfirst($request['status'])) ?> by <?= e($request['reviewed_by_name']) ?>,
+                                <?= format_date($request['reviewed_at']) ?><?= $request['review_notes'] ? ' — ' . e($request['review_notes']) : '' ?>
+                            </p>
+                        <?php endif; ?>
+
+                        <?php if ($request['status'] === 'pending' && $canApprove):
+                            $limits = OrderLineChangeRequest::reducibleQty($line);
+                            $isDecrease = (int) $request['qty_requested'] < (int) $line['qty_ordered'];
+                            $tooLow = $isDecrease && (int) $request['qty_requested'] < $limits['floor'];
+                            ?>
+                            <?php if ($isDecrease): ?>
+                                <p class="<?= $tooLow ? 'error' : 'text-muted' ?>">
+                                    <?= (int) $line['qty_completed'] ?> of this line has already been made,
+                                    <?= (int) $line['qty_delivered'] ?> delivered and <?= (int) $line['qty_invoiced'] ?> invoiced.
+                                    The lowest this line can go is <?= (int) $limits['floor'] ?>.
+                                    <?= $tooLow ? 'Applying this request would take it below that and will be refused.' : '' ?>
+                                </p>
+                            <?php endif; ?>
+
+                            <div style="display:flex; flex-wrap:wrap; gap: var(--space-2); align-items:flex-end">
+                                <form method="post" action="<?= url('/staff/orders/' . $order['id'] . '/change-requests/' . $request['id'] . '/apply') ?>" class="inline-form">
+                                    <?= csrf_field() ?>
+                                    <div class="field">
+                                        <label for="apply_notes_<?= (int) $request['id'] ?>" class="sr-only">Note to the client</label>
+                                        <input type="text" id="apply_notes_<?= (int) $request['id'] ?>" name="review_notes" placeholder="Note to the client (optional)">
+                                    </div>
+                                    <button type="submit" class="btn btn-sm btn-primary" <?= $tooLow ? 'disabled' : '' ?>>Apply</button>
+                                </form>
+                                <form method="post" action="<?= url('/staff/orders/' . $order['id'] . '/change-requests/' . $request['id'] . '/decline') ?>" class="inline-form">
+                                    <?= csrf_field() ?>
+                                    <div class="field">
+                                        <label for="decline_notes_<?= (int) $request['id'] ?>" class="sr-only">Reason for declining</label>
+                                        <input type="text" id="decline_notes_<?= (int) $request['id'] ?>" name="review_notes" placeholder="Why not (optional)">
+                                    </div>
+                                    <button type="submit" class="btn btn-sm">Decline</button>
+                                </form>
+                            </div>
+                        <?php endif; ?>
+                    </div>
+                <?php endforeach; ?>
+            </div>
+        <?php endif; ?>
+
+        <?php // -- Close down (item 6) ?>
+        <?php if ($canClose): ?>
+            <div style="margin-top: var(--space-5)">
+                <?php if ($lineClosed): ?>
+                    <form method="post" action="<?= url('/staff/lines/' . $line['id'] . '/reopen') ?>">
+                        <?= csrf_field() ?>
+                        <button type="submit" class="btn btn-sm">Reopen line</button>
+                    </form>
+                <?php else: ?>
+                    <form method="post" action="<?= url('/staff/lines/' . $line['id'] . '/close') ?>" class="inline-form">
+                        <?= csrf_field() ?>
+                        <div class="field">
+                            <label for="close_<?= (int) $line['id'] ?>">Close this line down</label>
+                            <input type="text" id="close_<?= (int) $line['id'] ?>" name="reason"
+                                   placeholder="Why — this is the record of it" required>
+                        </div>
+                        <button type="submit" class="btn btn-sm">Cancel what is left</button>
+                    </form>
+                <?php endif; ?>
+            </div>
+        <?php endif; ?>
+
+        <?php if (($detail['moves'] ?? []) !== []): ?>
+            <details style="margin-top: var(--space-4)">
+                <summary>Movement history (<?= count($detail['moves']) ?>)</summary>
+                <div class="table-wrap" style="margin-top: var(--space-2)">
+                    <table>
+                        <thead><tr><th>When</th><th>Qty</th><th>From</th><th>To</th><th>Reason</th><th>By</th></tr></thead>
+                        <tbody>
+                        <?php foreach (array_reverse($detail['moves']) as $move): ?>
+                            <tr>
+                                <td><?= format_datetime($move['moved_at']) ?></td>
+                                <td><?= (int) $move['qty'] ?></td>
+                                <td><?= $move['from_stage'] ? e(OrderLine::STAGE_LABELS[$move['from_stage']]) : '<span class="text-muted">added to the line</span>' ?></td>
+                                <td><?= $move['to_stage'] ? e(OrderLine::STAGE_LABELS[$move['to_stage']]) : '<span class="text-muted">removed from the line</span>' ?></td>
+                                <td><?= e($move['reason'] ?? '') ?></td>
+                                <td><?= e($move['moved_by_name']) ?></td>
+                            </tr>
+                        <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+            </details>
         <?php endif; ?>
     </div>
 <?php endforeach; ?>
 
+<?php // -- Purchase orders (items 8 and 9) ?>
 <div class="card">
-    <h2 class="mt-0">Delivery notes</h2>
-    <p class="text-muted">Free-issue material in, and finished goods out, for this order.</p>
-    <?php if ($deliveryNotes === []): ?>
-        <p class="empty-state">None yet.</p>
+    <h2 class="mt-0">Purchase orders</h2>
+    <p class="text-muted">Every PO document sent for this order, oldest first. Nothing is ever replaced — an amended PO is added alongside the original.</p>
+    <div class="table-wrap">
+        <table>
+            <thead><tr><th>PO number</th><th>Document</th><th>Added</th><th>By</th><th>Note</th></tr></thead>
+            <tbody>
+            <?php foreach ($poDocuments as $document): ?>
+                <tr>
+                    <td><?= $document['po_number'] !== '' ? e($document['po_number']) : '—' ?></td>
+                    <td>
+                        <a href="<?= url('/files/po-documents/' . $document['id']) ?>" target="_blank" rel="noopener"><?= e($document['original_filename']) ?></a>
+                        <?php if ((bool) $document['is_original']): ?><span class="badge badge-muted">Original</span><?php endif; ?>
+                    </td>
+                    <td><?= format_date($document['uploaded_at']) ?></td>
+                    <td><?= e($document['uploaded_by_name']) ?></td>
+                    <td><?= e($document['note'] ?? '') ?></td>
+                </tr>
+            <?php endforeach; ?>
+            </tbody>
+        </table>
+    </div>
+
+    <?php if ($canApprove): ?>
+        <form method="post" action="<?= url('/staff/orders/' . $order['id'] . '/po-number') ?>" class="inline-form" style="margin-top: var(--space-4)">
+            <?= csrf_field() ?>
+            <div class="field">
+                <label for="po_number">PO number on this order</label>
+                <input type="text" id="po_number" name="po_number" value="<?= e($order['po_number']) ?>" required>
+                <div class="hint">Sent to Clear Books as the invoice reference.</div>
+            </div>
+            <button type="submit" class="btn btn-sm">Save PO number</button>
+        </form>
+
+        <form method="post" action="<?= url('/staff/orders/' . $order['id'] . '/po-documents') ?>" enctype="multipart/form-data" style="margin-top: var(--space-4)">
+            <?= csrf_field() ?>
+            <div class="form-row">
+                <div class="field"><label for="new_po_number">PO number (optional)</label><input type="text" id="new_po_number" name="po_number"></div>
+                <div class="field"><label for="po_note">Note (optional)</label><input type="text" id="po_note" name="note"></div>
+            </div>
+            <div class="field">
+                <label for="po">Add a purchase order document</label>
+                <input type="file" id="po" name="po">
+            </div>
+            <button type="submit" class="btn">Add document</button>
+        </form>
+    <?php endif; ?>
+</div>
+
+<?php // -- Free-issue notes, with the CPN in place of the type (item 4) ?>
+<div class="card">
+    <h2 class="mt-0">Free-issue material notes</h2>
+    <p class="text-muted">Standing requests for material the client has to send in. Each one asks for whatever is still outstanding today.</p>
+    <?php if ($freeIssueNotes === []): ?>
+        <p class="empty-state">None — nothing on this order is made from free-issue material.</p>
     <?php else: ?>
         <div class="table-wrap">
             <table>
-                <thead><tr><th>Reference</th><th>Type</th><th>Issued</th><th>Invoiced</th><th></th></tr></thead>
+                <thead><tr><th>Reference</th><th>CPN</th><th>Issued</th><th></th></tr></thead>
                 <tbody>
-                <?php foreach ($deliveryNotes as $dn): $invoice = $invoicesByDn[$dn['id']] ?? null; ?>
+                <?php foreach ($freeIssueNotes as $dn): ?>
                     <tr>
                         <td><?= e($dn['reference']) ?></td>
-                        <td><?= $dn['type'] === 'free_issue_in' ? 'Free issue in' : 'Goods out' ?></td>
+                        <td><?= e($dn['cpns'] ?? '—') ?></td>
+                        <td><?= format_date($dn['issued_at']) ?></td>
+                        <td><a href="<?= url('/staff/delivery-notes/' . $dn['id']) ?>">View</a></td>
+                    </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+    <?php endif; ?>
+</div>
+
+<?php if ($returnNotes !== []): ?>
+<div class="card">
+    <h2 class="mt-0">Material returned</h2>
+    <p class="text-muted">Free-issue material that arrived and could not be used, sent back. A replacement was asked for at the same time.</p>
+    <div class="table-wrap">
+        <table>
+            <thead><tr><th>Reference</th><th>CPN</th><th>Qty</th><th>Issued</th><th></th></tr></thead>
+            <tbody>
+            <?php foreach ($returnNotes as $dn): ?>
+                <tr>
+                    <td><?= e($dn['reference']) ?></td>
+                    <td><?= e($dn['cpns'] ?? '—') ?></td>
+                    <td><?= (int) $dn['qty_total'] ?></td>
+                    <td><?= format_date($dn['issued_at']) ?></td>
+                    <td><a href="<?= url('/staff/delivery-notes/' . $dn['id']) ?>">View</a></td>
+                </tr>
+            <?php endforeach; ?>
+            </tbody>
+        </table>
+    </div>
+</div>
+<?php endif; ?>
+
+<div class="card">
+    <h2 class="mt-0">Goods out</h2>
+    <p class="text-muted">Finished parts despatched against this order.</p>
+    <?php if ($goodsOutNotes === []): ?>
+        <p class="empty-state">Nothing despatched yet.</p>
+    <?php else: ?>
+        <div class="table-wrap">
+            <table>
+                <thead><tr><th>Reference</th><th>CPN</th><th>Qty</th><th>Issued</th><th>Invoiced</th><th></th></tr></thead>
+                <tbody>
+                <?php foreach ($goodsOutNotes as $dn): $invoice = $invoicesByDn[$dn['id']] ?? null; ?>
+                    <tr>
+                        <td><?= e($dn['reference']) ?></td>
+                        <td><?= e($dn['cpns'] ?? '—') ?></td>
+                        <td><?= (int) $dn['qty_total'] ?></td>
                         <td><?= format_date($dn['issued_at']) ?></td>
                         <td>
-                            <?php if ($dn['type'] === 'goods_out'): ?>
-                                <span class="badge <?= $dn['invoiced'] ? 'badge-ok' : 'badge-warn' ?>"><?= $dn['invoiced'] ? 'Invoiced' : 'Not invoiced' ?></span>
-                            <?php else: ?>
-                                <span class="text-muted">—</span>
-                            <?php endif; ?>
+                            <span class="badge <?= $dn['invoiced'] ? 'badge-ok' : 'badge-warn' ?>">
+                                <?= $dn['invoiced'] ? ($invoice['clearbooks_invoice_number'] ?? 'Invoiced') : 'Not invoiced' ?>
+                            </span>
                         </td>
                         <td><a href="<?= url('/staff/delivery-notes/' . $dn['id']) ?>">View</a></td>
                     </tr>
@@ -125,20 +403,39 @@ $showPricing = Auth::can('view_pricing');
     <?php endif; ?>
 </div>
 
+<?php if ($canClose && !$orderClosed): ?>
+<div class="card">
+    <h2 class="mt-0">Close the order down</h2>
+    <p class="text-muted">
+        Cancels off everything still to be issued, received or made, across every line. It is recorded as
+        cancelled, not deleted, and stops counting as outstanding from that point. Parts already made still
+        have to go out and still have to be invoiced.
+    </p>
+    <form method="post" action="<?= url('/staff/orders/' . $order['id'] . '/close') ?>" class="inline-form">
+        <?= csrf_field() ?>
+        <div class="field">
+            <label for="close_order_reason">Reason</label>
+            <input type="text" id="close_order_reason" name="reason" required placeholder="e.g. Client cancelled the programme">
+        </div>
+        <button type="submit" class="btn">Close the order down</button>
+    </form>
+</div>
+<?php endif; ?>
+
 <div class="card">
     <h2 class="mt-0">Photos</h2>
     <p class="text-muted">Progress and setup/tooling photos, staff-only.</p>
     <?php if ($photos === []): ?>
         <p class="text-muted">No photos uploaded yet.</p>
     <?php else: ?>
-        <div style="display:flex; flex-wrap:wrap; gap: var(--space-3)">
+        <div class="photo-grid">
             <?php foreach ($photos as $photo): ?>
-                <div style="text-align:center; max-width:120px">
+                <div class="photo-tile">
                     <a href="<?= url('/files/order-photos/' . $photo['id']) ?>" target="_blank" rel="noopener">
-                        <img src="<?= url('/files/order-photos/' . $photo['id']) ?>" alt="" style="width:110px;height:110px;object-fit:cover;border-radius:var(--radius-sm);border:1px solid var(--border)">
+                        <img src="<?= url('/files/order-photos/' . $photo['id']) ?>" alt="">
                     </a>
-                    <?php if ($photo['caption']): ?><div class="text-muted" style="font-size:0.8rem"><?= e($photo['caption']) ?></div><?php endif; ?>
-                    <?php if (Auth::can('production_control')): ?>
+                    <?php if ($photo['caption']): ?><div class="photo-caption"><?= e($photo['caption']) ?></div><?php endif; ?>
+                    <?php if ($canProduce): ?>
                         <form method="post" action="<?= url('/staff/orders/' . $order['id'] . '/photos/' . $photo['id'] . '/delete') ?>">
                             <?= csrf_field() ?>
                             <button type="submit" class="btn btn-sm">Remove</button>
@@ -149,7 +446,7 @@ $showPricing = Auth::can('view_pricing');
         </div>
     <?php endif; ?>
 
-    <?php if (Auth::can('production_control')): ?>
+    <?php if ($canProduce): ?>
         <form method="post" action="<?= url('/staff/orders/' . $order['id'] . '/photos') ?>" enctype="multipart/form-data" style="margin-top: var(--space-4)">
             <?= csrf_field() ?>
             <div class="form-row">

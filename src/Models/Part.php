@@ -33,18 +33,25 @@ final class Part
     }
 
     /**
-     * The relationship and factor as posted by either part form.
+     * The free-issue toggle, relationship and factor as posted by any of the
+     * part forms.
      *
-     * There is one dropdown per direction so a chosen number survives switching
-     * between them, which means the reader has to pick the one the direction
-     * calls for rather than trusting a single field. Anything out of range, or a
-     * direction of "none", collapses to a factor of 1 — the same value the CHECK
-     * constraint in migration 003 insists on.
+     * The toggle comes first and overrules the rest: with the box unchecked
+     * there is no material, so there is no ratio for material either, and the
+     * hidden dropdowns still sitting in the form are ignored rather than
+     * silently saved. Anything out of range, or a direction of "none",
+     * collapses to a factor of 1 — the value the CHECK constraint insists on.
      *
-     * @return array{free_issue_relationship:string,free_issue_factor:int}
+     * @return array{has_free_issue:bool,free_issue_relationship:string,free_issue_factor:int}
      */
     public static function readFreeIssueInput(): array
     {
+        $none = ['has_free_issue' => false, 'free_issue_relationship' => 'none', 'free_issue_factor' => 1];
+
+        if (!\App\Core\Request::post('has_free_issue')) {
+            return $none;
+        }
+
         $relationship = (string) \App\Core\Request::post('free_issue_relationship', 'none');
 
         if (!in_array($relationship, self::FREE_ISSUE_RELATIONSHIPS, true)) {
@@ -52,7 +59,7 @@ final class Part
         }
 
         if ($relationship === 'none') {
-            return ['free_issue_relationship' => 'none', 'free_issue_factor' => 1];
+            return ['has_free_issue' => true, 'free_issue_relationship' => 'none', 'free_issue_factor' => 1];
         }
 
         $factor = (int) \App\Core\Request::post(
@@ -61,32 +68,44 @@ final class Part
         );
 
         if ($factor < self::FREE_ISSUE_FACTOR_MIN || $factor > self::FREE_ISSUE_FACTOR_MAX) {
-            return ['free_issue_relationship' => 'none', 'free_issue_factor' => 1];
+            return ['has_free_issue' => true, 'free_issue_relationship' => 'none', 'free_issue_factor' => 1];
         }
 
-        return ['free_issue_relationship' => $relationship, 'free_issue_factor' => $factor];
+        return ['has_free_issue' => true, 'free_issue_relationship' => $relationship, 'free_issue_factor' => $factor];
     }
 
     /**
-     * Set the relationship, recording who did it.
+     * Set the toggle and relationship together, recording who did it.
      *
      * Both sides come through here — the client setting it at quote time and
      * Junction correcting it later — so "who last touched this" is answerable
-     * whichever of them it was.
+     * whichever of them it was. Turning the toggle off also clears the source
+     * materials: leaving them behind would put a part in the odd position of
+     * listing material it does not use.
+     *
+     * @param array{has_free_issue:bool,free_issue_relationship:string,free_issue_factor:int} $input
      */
-    public static function setFreeIssueRelationship(int $id, string $relationship, int $factor, int $userId): void
+    public static function setFreeIssue(int $id, array $input, int $userId): void
     {
         Database::query(
-            'UPDATE parts SET free_issue_relationship = :relationship, free_issue_factor = :factor,
+            'UPDATE parts SET has_free_issue = :has_free_issue,
+                    free_issue_relationship = :relationship, free_issue_factor = :factor,
                     free_issue_updated_by = :user_id, free_issue_updated_at = NOW()
              WHERE id = :id',
             [
                 'id' => $id,
-                'relationship' => $relationship,
-                'factor' => $relationship === 'none' ? 1 : $factor,
+                'has_free_issue' => $input['has_free_issue'] ? 1 : 0,
+                'relationship' => $input['has_free_issue'] ? $input['free_issue_relationship'] : 'none',
+                'factor' => $input['has_free_issue'] && $input['free_issue_relationship'] !== 'none'
+                    ? $input['free_issue_factor']
+                    : 1,
                 'user_id' => $userId,
             ]
         );
+
+        if (!$input['has_free_issue']) {
+            self::clearFreeIssueMaterials($id);
+        }
     }
 
     public static function forClient(int $clientId, bool $includeArchived = false): array
@@ -154,7 +173,7 @@ final class Part
             'cpn' => $part['cpn'],
             'name' => $part['name'],
             'unit_price' => $part['quoted_price'] !== null ? (float) $part['quoted_price'] : null,
-            'has_free_issue' => (int) $part['id'] > 0 && self::freeIssueMaterials((int) $part['id']) !== [],
+            'has_free_issue' => (bool) $part['has_free_issue'],
             'free_issue_relationship' => $part['free_issue_relationship'],
             'free_issue_factor' => (int) $part['free_issue_factor'],
         ];
@@ -278,11 +297,19 @@ final class Part
 
     /**
      * Free-issue quantity required for a given order quantity, from the
-     * part's relationship/factor (item 4/5). Division always rounds up --
-     * you can't send a fractional piece of material.
+     * part's relationship/factor. Division always rounds up -- you can't send
+     * a fractional piece of material.
+     *
+     * A part with the toggle off needs none, whatever the other columns still
+     * happen to say: the toggle is the answer to "is there free issue here",
+     * and every caller asks this one function rather than reading the columns.
      */
     public static function freeIssueQtyFor(array $part, int $orderQty): int
     {
+        if (!self::hasFreeIssue($part)) {
+            return 0;
+        }
+
         $factor = max(1, (int) ($part['free_issue_factor'] ?? 1));
 
         return match ($part['free_issue_relationship'] ?? 'none') {
@@ -290,6 +317,12 @@ final class Part
             'multiply' => $orderQty * $factor,
             default => $orderQty,
         };
+    }
+
+    /** The single question every free-issue field on every screen is gated on (item 2). */
+    public static function hasFreeIssue(array $part): bool
+    {
+        return (bool) ($part['has_free_issue'] ?? false);
     }
 
     // -- Alternate numbers --------------------------------------------------

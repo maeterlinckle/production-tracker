@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Controllers\Staff;
 
 use App\Core\Auth;
+use App\Core\Config;
 use App\Core\Flash;
 use App\Core\Request;
 use App\Core\Response;
@@ -15,14 +16,16 @@ use App\Models\DeliveryNote;
 use App\Models\Invoice;
 use App\Models\Order;
 use App\Models\OrderLine;
+use App\Models\OrderLineChangeRequest;
 use App\Models\OrderNote;
 use App\Models\OrderPhoto;
+use App\Models\OrderPoDocument;
 use App\Models\OrderQuery;
 use App\Models\Part;
-use App\Models\RouteCard;
+use App\Services\FreeIssueNoteService;
 use App\Services\Notifications;
-use App\Services\PdfService;
-use App\Services\QrCodeService;
+use App\Services\RouteCardService;
+use RuntimeException;
 
 final class StaffOrderController
 {
@@ -43,9 +46,18 @@ final class StaffOrderController
         $client = Client::find((int) $order['client_id']);
         $lines = OrderLine::forOrder($order['id']);
 
-        $routeCards = [];
+        // Everything the per-line panel needs, gathered once rather than from
+        // inside the template's loop.
+        $lineDetail = [];
         foreach ($lines as $line) {
-            $routeCards[$line['id']] = RouteCard::latestForLine((int) $line['id']);
+            $lineId = (int) $line['id'];
+            $lineDetail[$lineId] = [
+                'change_requests' => OrderLineChangeRequest::forLine($lineId),
+                'rejections' => OrderLine::rejections($lineId),
+                'failures' => OrderLine::failureHistory($lineId),
+                'moves' => OrderLine::stageMoves($lineId),
+                'open_discrepancy' => OrderLine::openDiscrepancy($lineId),
+            ];
         }
 
         $deliveryNotes = DeliveryNote::forOrder($order['id']);
@@ -65,9 +77,10 @@ final class StaffOrderController
             'order' => $order,
             'client' => $client,
             'lines' => $lines,
-            'routeCards' => $routeCards,
+            'lineDetail' => $lineDetail,
             'deliveryNotes' => $deliveryNotes,
             'invoicesByDn' => $invoicesByDn,
+            'poDocuments' => OrderPoDocument::forOrder($order['id']),
             'photos' => OrderPhoto::forOrder($order['id']),
             'notes' => OrderNote::forOrder($order['id']),
             'queries' => $queries,
@@ -75,112 +88,344 @@ final class StaffOrderController
         ]);
     }
 
-    public function setStage(string $id): void
+    // -- The quantity workflow (item 6) --------------------------------------
+
+    /**
+     * Move a staff-entered number of parts between stages.
+     *
+     * One action covers advancing, moving back, and failing, because they are
+     * the same operation with a different destination -- and having one of them
+     * take a reason but not the others is how a reason ends up optional in
+     * practice.
+     */
+    public function moveQuantity(string $id): void
     {
         Auth::authorize('production_control');
-        $line = OrderLine::find((int) $id);
+        $line = $this->findLine((int) $id);
         if ($line === null) {
-            View::renderError(404, 'Line not found', 'That order line does not exist.');
-
             return;
         }
 
-        $stage = (string) Request::post('stage', '');
-        if (!in_array($stage, OrderLine::STAGES, true)) {
-            Flash::error('Unknown stage.');
+        $from = (string) Request::post('from_stage', '');
+        $to = (string) Request::post('to_stage', '');
+        $qty = (int) Request::post('qty', 0);
+        $reason = trim((string) Request::post('reason', '')) ?: null;
+
+        $allowed = OrderLine::manualDestinations($line, $from);
+        if (!in_array($to, $allowed, true)) {
+            Flash::error('Parts cannot be moved from ' . ($from ?: 'nowhere') . ' to ' . ($to ?: 'nowhere') . ' by hand.');
             Response::redirect('/staff/orders/' . $line['order_id']);
         }
 
-        $wasInProduction = $line['stage'] === 'in_production';
-        OrderLine::setStage((int) $id, $stage, (int) Auth::id(), Request::post('notes') ?: null);
+        if ($to === 'failed' && $reason === null) {
+            Flash::error('Say why the parts failed — that reason is the only record of it.');
+            Response::redirect('/staff/orders/' . $line['order_id']);
+        }
 
-        if ($stage === 'in_production' && !$wasInProduction) {
+        try {
+            OrderLine::move((int) $id, $from, $to, $qty, (int) Auth::id(), $reason);
+        } catch (RuntimeException $e) {
+            Flash::error($e->getMessage());
+            Response::redirect('/staff/orders/' . $line['order_id']);
+        }
+
+        if ($to === 'in_production' && OrderLine::qtyAt($line, 'in_production') === 0) {
             $order = Order::find((int) $line['order_id']);
             if ($order !== null) {
                 Notifications::orderLineInProduction($line, $order, (int) $order['client_id']);
             }
         }
 
-        Flash::success('Status updated.');
+        Flash::success($this->moveMessage($from, $to, $qty));
         Response::redirect('/staff/orders/' . $line['order_id']);
     }
 
-    public function recordCompletion(string $id): void
+    private function moveMessage(string $from, string $to, int $qty): string
+    {
+        if ($to === 'failed') {
+            return $qty . ' marked as failed at ' . OrderLine::STAGE_SENTENCE_LABELS[$from]
+                 . '. They are still owed on this line — ask for replacement material if the part needs it.';
+        }
+
+        if ($to === 'cancelled') {
+            return $qty . ' cancelled off this line.';
+        }
+
+        return $qty . ' moved to ' . OrderLine::STAGE_SENTENCE_LABELS[$to] . '.';
+    }
+
+    /**
+     * Ask the client for replacement material for parts that failed.
+     *
+     * Only ever reached from failed quantity. An ordinary shortage does not come
+     * through here -- there the material has not arrived yet and the free-issue
+     * note that is already out is the request for it.
+     */
+    public function requestReplacementMaterial(string $id): void
     {
         Auth::authorize('production_control');
-        $line = OrderLine::find((int) $id);
+        $line = $this->findLine((int) $id);
         if ($line === null) {
-            View::renderError(404, 'Line not found', 'That order line does not exist.');
-
             return;
         }
 
-        $qty = (int) Request::post('qty', 0);
-        if ($qty <= 0) {
-            Flash::error('Enter a quantity completed.');
+        $part = Part::find((int) $line['part_id']);
+        if ($part === null || !Part::hasFreeIssue($part)) {
+            Flash::error('This part is not made from free-issue material, so there is nothing to ask for.');
             Response::redirect('/staff/orders/' . $line['order_id']);
         }
 
-        OrderLine::recordCompletion((int) $id, $qty, (int) Auth::id());
+        $qtyParts = (int) Request::post('qty', 0);
+        $failed = OrderLine::qtyAt($line, 'failed');
 
-        Flash::success('Completion recorded.');
+        if ($qtyParts <= 0 || $qtyParts > $failed) {
+            Flash::error('Enter how many of the ' . $failed . ' failed parts need replacement material.');
+            Response::redirect('/staff/orders/' . $line['order_id']);
+        }
+
+        $materialQty = Part::freeIssueQtyFor($part, $qtyParts);
+        $noteId = FreeIssueNoteService::requestReplacementForFailures((int) $id, $materialQty, (int) Auth::id());
+
+        Notifications::freeIssueNoteIssued(DeliveryNote::find($noteId), (int) $line['client_id']);
+
+        Flash::success(
+            'Asked for ' . $materialQty . ' more to replace ' . $qtyParts . ' failed part(s). '
+            . 'It is on free-issue note ' . DeliveryNote::find($noteId)['reference'] . '.'
+        );
         Response::redirect('/staff/orders/' . $line['order_id']);
     }
 
-    public function generateRouteCard(string $id): void
+    /** Close a line down: outstanding quantity is cancelled off, not deleted. */
+    public function closeLine(string $id): void
     {
-        Auth::authorize('production_control');
-        $line = OrderLine::find((int) $id);
+        Auth::authorize('close_orders');
+        $line = $this->findLine((int) $id);
         if ($line === null) {
-            View::renderError(404, 'Line not found', 'That order line does not exist.');
+            return;
+        }
+
+        $reason = trim((string) Request::post('reason', ''));
+        if ($reason === '') {
+            Flash::error('Say why the line is being closed down.');
+            Response::redirect('/staff/orders/' . $line['order_id']);
+        }
+
+        $cancelled = OrderLine::closeDown((int) $id, (int) Auth::id(), $reason);
+
+        Flash::success($cancelled > 0
+            ? $cancelled . ' cancelled off this line. It no longer counts as outstanding anywhere.'
+            : 'Line closed down. There was nothing outstanding to cancel.');
+        Response::redirect('/staff/orders/' . $line['order_id']);
+    }
+
+    public function reopenLine(string $id): void
+    {
+        Auth::authorize('close_orders');
+        $line = $this->findLine((int) $id);
+        if ($line === null) {
+            return;
+        }
+
+        OrderLine::reopen((int) $id);
+        Flash::success('Line reopened. Cancelled quantity stays cancelled until it is moved back by hand.');
+        Response::redirect('/staff/orders/' . $line['order_id']);
+    }
+
+    public function closeOrder(string $id): void
+    {
+        Auth::authorize('close_orders');
+        $order = Order::find((int) $id);
+        if ($order === null) {
+            View::renderError(404, 'Order not found', 'That order does not exist.');
 
             return;
         }
 
-        $order = Order::find((int) $line['order_id']);
-        $part = Part::find((int) $line['part_id']);
-        $client = Client::find((int) $order['client_id']);
-        $reference = RouteCard::nextReference();
+        $reason = trim((string) Request::post('reason', ''));
+        if ($reason === '') {
+            Flash::error('Say why the order is being closed down.');
+            Response::redirect('/staff/orders/' . $id);
+        }
 
-        $qr = QrCodeService::pngDataUri(QrCodeService::jobUrl('/staff/orders/' . $order['id']));
-        $relativePath = PdfService::renderAndStore(
-            'pdf/route-card',
-            [
-                'routeCard' => ['reference' => $reference, 'generated_at' => date('Y-m-d H:i:s')],
-                'line' => $line,
-                'order' => $order,
-                'part' => $part,
-                'client' => $client,
-                'qrDataUri' => $qr,
-            ],
-            'route-cards/' . $order['id'],
-            $reference . '.pdf'
+        $cancelled = Order::closeDown((int) $id, (int) Auth::id(), $reason);
+
+        Flash::success($cancelled . ' cancelled off across the order. Parts already made still have to go out.');
+        Response::redirect('/staff/orders/' . $id);
+    }
+
+    // -- Quantity change requests (item 8) -----------------------------------
+
+    public function applyChangeRequest(string $id, string $requestId): void
+    {
+        Auth::authorize('approve_quantity_changes');
+        $request = OrderLineChangeRequest::find((int) $requestId);
+        if ($request === null || (int) $request['order_id'] !== (int) $id) {
+            View::renderError(404, 'Request not found', 'That change request does not exist on this order.');
+
+            return;
+        }
+
+        $part = Part::find((int) $request['part_id']);
+        $notes = trim((string) Request::post('review_notes', '')) ?: null;
+
+        try {
+            OrderLineChangeRequest::apply(
+                (int) $requestId,
+                (int) Auth::id(),
+                $notes,
+                static fn (int $qty): int => Part::freeIssueQtyFor($part ?? [], $qty)
+            );
+        } catch (RuntimeException $e) {
+            Flash::error($e->getMessage());
+            Response::redirect('/staff/orders/' . $id);
+        }
+
+        $this->announceDecision((int) $requestId, 'applied');
+
+        Flash::success('Quantity change applied.');
+        Response::redirect('/staff/orders/' . $id);
+    }
+
+    public function declineChangeRequest(string $id, string $requestId): void
+    {
+        Auth::authorize('approve_quantity_changes');
+        $request = OrderLineChangeRequest::find((int) $requestId);
+        if ($request === null || (int) $request['order_id'] !== (int) $id) {
+            View::renderError(404, 'Request not found', 'That change request does not exist on this order.');
+
+            return;
+        }
+
+        OrderLineChangeRequest::decline(
+            (int) $requestId,
+            (int) Auth::id(),
+            trim((string) Request::post('review_notes', '')) ?: null
         );
 
-        RouteCard::createWithPdf((int) $id, $reference, (int) Auth::id(), $relativePath);
+        $this->announceDecision((int) $requestId, 'declined');
 
-        Flash::success('Route card generated.');
-        Response::redirect('/staff/orders/' . $line['order_id']);
+        Flash::success('Quantity change declined.');
+        Response::redirect('/staff/orders/' . $id);
     }
 
-    public function downloadRouteCard(string $id): void
+    private function announceDecision(int $requestId, string $outcome): void
     {
-        $routeCard = RouteCard::find((int) $id);
-        if ($routeCard === null) {
-            View::renderError(404, 'Route card not found', 'That route card does not exist.');
-
+        $request = OrderLineChangeRequest::find($requestId);
+        if ($request === null) {
             return;
         }
 
-        $absolute = Upload::absolutePath($routeCard['pdf_file_path']);
-        if ($absolute === null || !is_file($absolute)) {
-            View::renderError(404, 'File not found', 'The route card PDF is missing from storage.');
+        $line = OrderLine::find((int) $request['order_line_id']);
+        $order = Order::find((int) $request['order_id']);
 
-            return;
+        if ($line !== null && $order !== null) {
+            Notifications::quantityChangeDecided(
+                $request,
+                $line,
+                $order,
+                $outcome,
+                (string) Auth::name(),
+                (int) $order['client_id']
+            );
         }
-
-        Response::file($absolute, $routeCard['reference'] . '.pdf', 'application/pdf');
     }
+
+    // -- Purchase order paperwork (items 8 and 9) ----------------------------
+
+    public function uploadPoDocument(string $id): void
+    {
+        Auth::authorize('approve_quantity_changes');
+        $order = Order::find((int) $id);
+        if ($order === null) {
+            View::renderError(404, 'Order not found', 'That order does not exist.');
+
+            return;
+        }
+
+        $this->storePoDocument($order, '/staff/orders/' . $id);
+    }
+
+    /** Shared with the client-side upload: the same document history, either way in. */
+    public function storePoDocument(array $order, string $redirectTo): void
+    {
+        $file = Upload::files('po')[0] ?? null;
+        if ($file === null) {
+            Flash::error('Choose a purchase order document to add.');
+            Response::redirect($redirectTo);
+        }
+
+        $error = Upload::validate($file, Config::get('uploads.po.extensions'), (int) Config::get('uploads.po.max_bytes'));
+        if ($error !== null) {
+            Flash::error($error);
+            Response::redirect($redirectTo);
+        }
+
+        $relativePath = Upload::store($file, 'pos/' . $order['client_id']);
+        $absolutePath = Upload::absolutePath($relativePath);
+        $poNumber = trim((string) Request::post('po_number', ''));
+
+        OrderPoDocument::create([
+            'order_id' => $order['id'],
+            'po_number' => $poNumber,
+            'file_path' => $relativePath,
+            'original_filename' => Upload::displayName((string) $file['name']),
+            'mime_type' => $absolutePath !== null ? Upload::detectMime($absolutePath) : null,
+            'file_size' => (int) $file['size'],
+            'is_original' => false,
+            'note' => trim((string) Request::post('note', '')) ?: null,
+            'uploaded_by' => Auth::id(),
+        ]);
+
+        // An amended PO usually carries a new number, and the order should quote
+        // whichever one the next invoice will be raised against.
+        if ($poNumber !== '') {
+            Order::setPoNumber((int) $order['id'], $poNumber);
+        }
+
+        Flash::success('Purchase order document added. The original is still on file.');
+        Response::redirect($redirectTo);
+    }
+
+    public function updatePoNumber(string $id): void
+    {
+        Auth::authorize('approve_quantity_changes');
+        $order = Order::find((int) $id);
+        if ($order === null) {
+            View::renderError(404, 'Order not found', 'That order does not exist.');
+
+            return;
+        }
+
+        $poNumber = trim((string) Request::post('po_number', ''));
+        if ($poNumber === '') {
+            Flash::error('Enter a PO number.');
+            Response::redirect('/staff/orders/' . $id);
+        }
+
+        Order::setPoNumber((int) $id, $poNumber);
+        Flash::success('PO number updated. It is what the next Clear Books invoice for this order will quote.');
+        Response::redirect('/staff/orders/' . $id);
+    }
+
+    // -- Route cards (item 3) ------------------------------------------------
+
+    /**
+     * View or print the route card. Built now, from the line as it stands --
+     * there is nothing stored, so there is nothing to regenerate.
+     */
+    public function routeCard(string $id): void
+    {
+        Auth::authorize('production_control');
+        $line = $this->findLine((int) $id);
+        if ($line === null) {
+            return;
+        }
+
+        $card = RouteCardService::render((int) $id);
+        Response::inlineBytes($card['bytes'], $card['filename'], 'application/pdf');
+    }
+
+    // -- Photos ---------------------------------------------------------------
 
     public function uploadPhoto(string $id): void
     {
@@ -192,8 +437,8 @@ final class StaffOrderController
             return;
         }
 
-        $allowed = \App\Core\Config::get('uploads.photo.extensions');
-        $maxBytes = (int) \App\Core\Config::get('uploads.photo.max_bytes');
+        $allowed = Config::get('uploads.photo.extensions');
+        $maxBytes = (int) Config::get('uploads.photo.max_bytes');
         $lineId = (int) Request::post('order_line_id', 0) ?: null;
         $caption = trim((string) Request::post('caption', '')) ?: null;
 
@@ -234,5 +479,17 @@ final class StaffOrderController
         }
 
         Response::redirect('/staff/orders/' . $id);
+    }
+
+    private function findLine(int $id): ?array
+    {
+        $line = OrderLine::find($id);
+        if ($line === null) {
+            View::renderError(404, 'Line not found', 'That order line does not exist.');
+
+            return null;
+        }
+
+        return $line;
     }
 }

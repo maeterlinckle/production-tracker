@@ -82,7 +82,7 @@ final class PartController
 
         $this->saveAltNumbers($partId);
         $this->saveFreeIssueMaterials($partId);
-        $this->saveFreeIssueRelationship($partId);
+        $this->saveFreeIssue($partId);
         $this->handleFileUploads($partId);
 
         Flash::success('Part created. Junction will review it and set a quoted price.');
@@ -153,7 +153,7 @@ final class PartController
 
         Part::clearFreeIssueMaterials($part['id']);
         $this->saveFreeIssueMaterials($part['id']);
-        $this->saveFreeIssueRelationship($part['id']);
+        $this->saveFreeIssue((int) $part['id']);
 
         Flash::success('Part updated.');
         Response::redirect('/parts/' . $id);
@@ -329,24 +329,22 @@ final class PartController
     }
 
     /**
-     * The client's own free-issue ratio, set from the quote stage onwards.
+     * The client's own free-issue answer: whether there is any, and if so what
+     * the ratio is.
      *
      * It lives with the part rather than with an order because it is a property
      * of how the part is made, not of one purchase order — and it has to be
      * known before the first order so the free-issue quantity can be worked out
      * as the order is built. Junction can correct it later from the workshop
      * details; whoever last touched it is recorded either way.
+     *
+     * Called after the source materials are saved: turning the toggle off clears
+     * them, so a form submitted with the box unchecked cannot leave a part
+     * listing material it does not use.
      */
-    private function saveFreeIssueRelationship(int $partId): void
+    private function saveFreeIssue(int $partId): void
     {
-        $freeIssue = Part::readFreeIssueInput();
-
-        Part::setFreeIssueRelationship(
-            $partId,
-            $freeIssue['free_issue_relationship'],
-            $freeIssue['free_issue_factor'],
-            (int) Auth::id()
-        );
+        Part::setFreeIssue($partId, Part::readFreeIssueInput(), (int) Auth::id());
     }
 
     private function handleFileUploads(int $partId): void

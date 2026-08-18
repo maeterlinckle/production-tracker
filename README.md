@@ -21,30 +21,36 @@ companies from the first migration.
 Two things about job-shop work that most order trackers get wrong:
 
 **Free-issue material.** Clients supply the stock Junction works on. It arrives
-late, short, or as the wrong grade. Every order line tracks what is required
-against what has actually been booked in, and each check-in records a
-discrepancy — shortfall, excess, wrong item — that **blocks the line from
-starting until somebody resolves it**, even if a later delivery makes the
-numbers add up. "The quantities match" is not the same as "the material is
-right".
+late, short, or as the wrong grade — and those are not the same problem. A
+shortage is material that has not turned up yet, already covered by the request
+that is out; nothing needs doing. A **rejection** is material that turned up and
+cannot be used: it goes back on a return note, the same quantity is added to
+what the line still needs, and the request that is already out asks for it
+again. One outstanding request per line, reissued rather than duplicated,
+because two notes asking for overlapping material is how a client sends twice.
 
 How much material an order needs is worked out from a ratio the client sets on
 the part: one length of bar might yield eight parts (divide by 8), or a
 weldment might take three castings (multiply by 3). Junction can correct it, and
 the correction is recorded against whoever made it.
 
-**Partial everything.** Parts come off a machine in batches and go out in
-batches. So ordered, made, delivered and invoiced are four independent running
-totals on each order line rather than one status:
+**A line does not have a status.** Its quantity is spread across stages, and the
+status you read is written out from that spread:
 
 ```
-qty_free_issue_required / qty_free_issue_received
-qty_ordered / qty_completed / qty_delivered / qty_invoiced
+awaiting_free_issue → ready_for_production → in_production → complete → delivered → invoiced
 ```
 
-A line can be part-made, part-delivered and part-invoiced at once, and the
-interface says so — "In production — part complete (12 of 20)" — instead of
-rounding it to whichever status is least wrong.
+So a line reads "12 awaiting free issue, 5 ready for production, 3 in
+production" — because that is what is true. Staff move whatever number of parts
+they choose, one stage at a time, forwards or back. Nobody sets a status and
+there is nowhere one could be set.
+
+Everything ordered is somewhere: the stages sum to the quantity ordered. Parts
+that fail are parked in a bucket of their own with the reason and the stage they
+failed at, so they keep showing as owed until they are remade rather than
+quietly vanishing from the total. Parts that will never be made are cancelled
+off, recorded as cancelled, and drop out of what is outstanding.
 
 ---
 
@@ -58,7 +64,14 @@ rounding it to whichever status is least wrong.
   own. Client administrators invite their own colleagues.
 - **Paperwork that works on paper.** Delivery notes and route cards render to
   PDF; every free-issue note carries a QR code that opens the check-in screen
-  for that exact order line on a phone in the goods-in bay.
+  for that exact order line on a phone in the goods-in bay. Route cards and
+  free-issue notes are built at the moment they are asked for, from live data —
+  a saved copy of either is out of date as soon as anybody moves anything.
+- **Changes of mind, handled.** A client can ask to change a quantity on a line
+  that is already running, with the amended purchase order attached; Junction
+  applies or declines it. A reduction cannot eat into what has already been
+  made, delivered or invoiced, and the screen says where the floor is before
+  anybody commits.
 - **Editable email.** Every message the tracker sends can be reworded in the
   interface, with documented merge fields and a preview. The editor refuses to
   save a placeholder the sending code does not supply.

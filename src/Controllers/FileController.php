@@ -10,6 +10,7 @@ use App\Core\Upload;
 use App\Core\View;
 use App\Models\Order;
 use App\Models\OrderPhoto;
+use App\Models\OrderPoDocument;
 use App\Models\Part;
 use App\Models\PartFile;
 use App\Models\PartPhoto;
@@ -83,6 +84,19 @@ final class FileController
         }
 
         $this->stream($order['po_file_path'], $order['po_original_filename'], null);
+    }
+
+    /** Any document in an order's purchase order history, including the original. */
+    public function poDocument(string $id): void
+    {
+        $document = OrderPoDocument::find((int) $id);
+        if ($document === null || (!Auth::isStaff() && (int) $document['client_id'] !== Auth::clientId())) {
+            View::renderError(404, 'File not found', 'That file does not exist or is not available to you.');
+
+            return;
+        }
+
+        $this->stream($document['file_path'], $document['original_filename'], $document['mime_type'] ?? null);
     }
 
     private function stream(string $relativePath, string $displayName, ?string $mimeType): void

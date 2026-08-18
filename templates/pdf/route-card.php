@@ -43,7 +43,21 @@
         <tr><td class="label">Base material</td><td><?= e($part['base_material'] ?: '—') ?></td></tr>
         <tr><td class="label">Material source</td><td><?= e($part['material_source'] ?: '—') ?></td></tr>
         <tr><td class="label">Build time (est.)</td><td><?= $part['build_time_minutes'] ? e((string) $part['build_time_minutes']) . ' minutes' : '—' ?></td></tr>
-        <tr><td class="label">Free issue required</td><td><?= (int) $line['qty_free_issue_required'] > 0 ? (int) $line['qty_free_issue_required'] . ' (received: ' . (int) $line['qty_free_issue_received'] . ')' : 'No' ?></td></tr>
+        <tr>
+            <td class="label">Free issue</td>
+            <td>
+                <?php if (!\App\Models\Part::hasFreeIssue($part)): ?>
+                    No free-issue material required
+                <?php else: ?>
+                    <?= (int) $line['qty_free_issue_required'] ?> required,
+                    <?= (int) $line['qty_free_issue_received'] - (int) $line['qty_free_issue_rejected'] ?> usable on site
+                <?php endif; ?>
+            </td>
+        </tr>
+        <tr>
+            <td class="label">Where the quantity is</td>
+            <td><?= e(\App\Models\OrderLine::statusLabel($line)) ?></td>
+        </tr>
     </table>
 
     <div><strong>Internal notes:</strong><br><?= nl2br(e($part['internal_notes'] ?: '—')) ?></div>

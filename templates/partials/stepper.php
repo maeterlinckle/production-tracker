@@ -1,24 +1,33 @@
 <?php
-/** @var array $line order_line row (stage, qty_free_issue_required, qty_ordered, qty_delivered, qty_invoiced) */
-$steps = [];
-if ((int) $line['qty_free_issue_required'] > 0) {
-    $steps[] = 'awaiting_free_issue';
-}
-$steps[] = 'ready_for_production';
-$steps[] = 'in_production';
-$steps[] = 'complete';
-$steps[] = 'closed';
+/**
+ * Where a line's quantity actually is, as one bar.
+ *
+ * This replaced the stepper of dots. A stepper can only show one position, and
+ * a line that is twelve awaiting material and eight in production does not have
+ * one — showing the furthest-on dot overstated progress and showing the
+ * furthest-back understated it. A bar divided in proportion says both at once.
+ *
+ * @var array $line an order line with its distribution attached
+ */
+use App\Models\OrderLine;
 
-$currentIndex = array_search($line['stage'], $steps, true);
-if ($currentIndex === false) {
-    $currentIndex = 0;
-}
+$occupied = OrderLine::occupiedStages($line);
+$total = array_sum($occupied);
 ?>
-<div class="stepper">
-    <?php foreach ($steps as $i => $step): ?>
-        <div class="step <?= $i < $currentIndex ? 'done' : ($i === $currentIndex ? 'current' : '') ?>">
-            <span class="step-dot"><?= $i < $currentIndex ? '&check;' : $i + 1 ?></span>
-            <span class="step-label"><?= e(\App\Models\OrderLine::STAGE_LABELS[$step]) ?></span>
-        </div>
-    <?php endforeach; ?>
-</div>
+<?php if ($total > 0): ?>
+    <div class="stage-bar" title="<?= e(OrderLine::statusLabel($line)) ?>">
+        <?php foreach ($occupied as $stage => $qty): ?>
+            <div class="stage-bar-segment"
+                 data-stage="<?= e($stage) ?>"
+                 style="width: <?= round(($qty / $total) * 100, 2) ?>%"></div>
+        <?php endforeach; ?>
+    </div>
+    <div class="stage-key">
+        <?php foreach ($occupied as $stage => $qty): ?>
+            <span class="stage-key-item">
+                <span class="stage-key-dot stage-bar-segment" data-stage="<?= e($stage) ?>"></span>
+                <?= (int) $qty ?> <?= e(OrderLine::STAGE_SENTENCE_LABELS[$stage]) ?>
+            </span>
+        <?php endforeach; ?>
+    </div>
+<?php endif; ?>

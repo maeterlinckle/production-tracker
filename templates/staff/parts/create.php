@@ -1,8 +1,27 @@
-<?php /** @var array $errors */ /** @var array $old */ ?>
+<?php
+/** @var array $clients */ /** @var array $errors */ /** @var array $old */
+?>
 <h1 class="mt-0">New part</h1>
+<p class="text-muted">Raising a part on a client's behalf. It becomes an ordinary part on their account — they can see it, edit it and order against it exactly as if they had entered it themselves.</p>
 
-<form method="post" action="<?= url('/parts') ?>" enctype="multipart/form-data">
+<form method="post" action="<?= url('/staff/parts') ?>">
     <?= csrf_field() ?>
+
+    <div class="card">
+        <h2 class="mt-0">Client</h2>
+        <div class="field">
+            <label for="client_id">Client</label>
+            <select id="client_id" name="client_id" required>
+                <option value="">Choose a client…</option>
+                <?php foreach ($clients as $client): ?>
+                    <option value="<?= (int) $client['id'] ?>" <?= (int) ($old['client_id'] ?? 0) === (int) $client['id'] ? 'selected' : '' ?>>
+                        <?= e($client['name']) ?>
+                    </option>
+                <?php endforeach; ?>
+            </select>
+            <?php if (isset($errors['client_id'])): ?><div class="error"><?= e($errors['client_id']) ?></div><?php endif; ?>
+        </div>
+    </div>
 
     <div class="card">
         <h2 class="mt-0">Details</h2>
@@ -10,6 +29,7 @@
             <div class="field">
                 <label for="cpn">Client part number (CPN)</label>
                 <input type="text" id="cpn" name="cpn" value="<?= old($old, 'cpn') ?>" required>
+                <div class="hint">Their number for the part, as it appears on their drawing or purchase order.</div>
                 <?php if (isset($errors['cpn'])): ?><div class="error"><?= e($errors['cpn']) ?></div><?php endif; ?>
             </div>
             <div class="field">
@@ -30,12 +50,13 @@
             <div class="field">
                 <label for="target_price">Previous / target price</label>
                 <input type="number" step="0.01" min="0" id="target_price" name="target_price" value="<?= old($old, 'target_price') ?>">
-                <div class="hint">Informational — Junction will still set the official quoted price.</div>
+                <div class="hint">The client-visible target, not the quoted price — set that from the part page once it exists.</div>
             </div>
         </div>
         <div class="field">
             <label for="notes">Notes</label>
             <textarea id="notes" name="notes"><?= old($old, 'notes') ?></textarea>
+            <div class="hint">Client-visible. Workshop-only notes go on the part page after it is created.</div>
         </div>
     </div>
 
@@ -58,21 +79,12 @@
             'relationship' => $old['free_issue_relationship'] ?? 'none',
             'factor' => (int) ($old['free_issue_factor'] ?? 1),
             'materials' => [],
-            'idPrefix' => 'client_fi',
+            'idPrefix' => 'staff_new_fi',
         ]) ?>
-    </div>
-
-    <div class="card">
-        <h2 class="mt-0">Drawing(s)</h2>
-        <div class="field">
-            <label for="drawings">Upload drawing file(s)</label>
-            <input type="file" id="drawings" name="drawings[]" multiple>
-            <div class="hint">PDF, DWG, DXF, STEP, IGES or image files, up to 25 MB each.</div>
-        </div>
     </div>
 
     <div class="form-actions">
         <button type="submit" class="btn btn-primary">Create part</button>
-        <a href="<?= url('/parts') ?>" class="btn">Cancel</a>
+        <a href="<?= url('/staff/parts') ?>" class="btn">Cancel</a>
     </div>
 </form>

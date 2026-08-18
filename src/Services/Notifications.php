@@ -116,6 +116,75 @@ final class Notifications
         );
     }
 
+    /**
+     * Material that arrived and cannot be used, going back.
+     *
+     * Deliberately its own message rather than a variation on the check-in one:
+     * a rejection asks the client to do something (send more), where a check-in
+     * only tells them something.
+     */
+    public static function materialRejected(array $line, array $order, array $returnNote, int $qty, string $reason, int $clientId): void
+    {
+        self::notifyClientUsers(
+            $clientId,
+            'material_rejected',
+            [
+                'order_number'     => (string) $order['order_number'],
+                'cpn'              => (string) $line['cpn'],
+                'part_name'        => (string) $line['part_name'],
+                'qty_rejected'     => (string) $qty,
+                'reason'           => $reason,
+                'return_reference' => (string) $returnNote['reference'],
+                'qty_outstanding'  => (string) OrderLine::freeIssueOutstanding($line),
+                'return_note_url'  => absolute_url('/delivery-notes/' . $returnNote['id'] . '/pdf'),
+            ],
+            'delivery_note',
+            (int) $returnNote['id']
+        );
+    }
+
+    /** A client asking to change a quantity. Goes to Junction, since Junction decides. */
+    public static function quantityChangeRequested(array $request, array $line, array $order, string $requestedBy): void
+    {
+        $fields = [
+            'order_number'  => (string) $order['order_number'],
+            'cpn'           => (string) $line['cpn'],
+            'part_name'     => (string) $line['part_name'],
+            'requested_by'  => $requestedBy,
+            'qty_current'   => (string) (int) $request['qty_at_request'],
+            'qty_requested' => (string) (int) $request['qty_requested'],
+            'reason'        => trim((string) ($request['reason'] ?? '')) ?: 'No reason given.',
+            'order_url'     => absolute_url('/staff/orders/' . $order['id']),
+        ];
+
+        foreach (User::allStaff() as $user) {
+            self::notifyUser((int) $user['id'], 'quantity_change_requested', $fields, 'order', (int) $order['id']);
+        }
+    }
+
+    public static function quantityChangeDecided(array $request, array $line, array $order, string $outcome, string $decidedBy, int $clientId): void
+    {
+        $notes = trim((string) ($request['review_notes'] ?? ''));
+
+        self::notifyClientUsers(
+            $clientId,
+            'quantity_change_decided',
+            [
+                'order_number'   => (string) $order['order_number'],
+                'cpn'            => (string) $line['cpn'],
+                'part_name'      => (string) $line['part_name'],
+                'qty_current'    => (string) (int) $request['qty_at_request'],
+                'qty_requested'  => (string) (int) $request['qty_requested'],
+                'outcome'        => $outcome,
+                'decided_by'     => $decidedBy,
+                'decision_notes' => $notes,
+                'order_url'      => absolute_url('/orders/' . $order['id']),
+            ],
+            'order',
+            (int) $order['id']
+        );
+    }
+
     public static function deliveryNoteIssued(array $deliveryNote, int $clientId): void
     {
         $items = [];

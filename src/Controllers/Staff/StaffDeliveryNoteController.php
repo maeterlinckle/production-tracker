@@ -13,9 +13,8 @@ use App\Core\View;
 use App\Models\Client;
 use App\Models\DeliveryNote;
 use App\Models\OrderLine;
+use App\Services\FreeIssueNoteService;
 use App\Services\Notifications;
-use App\Services\PdfService;
-use App\Services\QrCodeService;
 
 final class StaffDeliveryNoteController
 {
@@ -43,14 +42,22 @@ final class StaffDeliveryNoteController
             return;
         }
 
+        // Outstanding rather than "required > received": rejected material has
+        // arrived and been sent back, so it is owed again even though the
+        // received counter says it came.
         $lines = array_values(array_filter(
             \App\Core\Database::all(
-                "SELECT ol.*, o.order_number, p.cpn, p.name AS part_name FROM order_lines ol
-                 JOIN orders o ON o.id = ol.order_id JOIN parts p ON p.id = ol.part_id
-                 WHERE o.client_id = :client_id AND ol.qty_free_issue_required > ol.qty_free_issue_received
-                 ORDER BY o.order_number",
+                "SELECT ol.*, o.order_number, o.po_number, p.cpn, p.name AS part_name, p.has_free_issue
+                   FROM order_lines ol
+                   JOIN orders o ON o.id = ol.order_id
+                   JOIN parts p ON p.id = ol.part_id
+                  WHERE o.client_id = :client_id
+                    AND p.has_free_issue = 1
+                    AND ol.closed_at IS NULL
+                  ORDER BY o.order_number",
                 ['client_id' => $client['id']]
-            )
+            ),
+            static fn (array $line): bool => OrderLine::freeIssueOutstanding($line) > 0
         ));
 
         View::render('staff/delivery-notes/create-free-issue', ['title' => 'New free-issue note', 'client' => $client, 'lines' => $lines]);
@@ -73,7 +80,6 @@ final class StaffDeliveryNoteController
         }
 
         $id = DeliveryNote::createFreeIssueNote((int) $clientId, $lines, (int) Auth::id(), Request::post('notes') ?: null);
-        $this->buildPdf($id);
         Notifications::freeIssueNoteIssued(DeliveryNote::find($id), (int) $clientId);
 
         Flash::success('Free-issue delivery note generated.');
@@ -156,11 +162,24 @@ final class StaffDeliveryNoteController
         ]);
     }
 
+    /**
+     * A free-issue note is a standing request, so it is rendered fresh every
+     * time: what it asks for is whatever the line still needs today. The notes
+     * that record a movement -- goods out, material returned -- keep the copy
+     * that was made when the movement happened.
+     */
     public function downloadPdf(string $id): void
     {
         $note = DeliveryNote::find((int) $id);
         if ($note === null) {
             View::renderError(404, 'Delivery note not found', 'That delivery note does not exist.');
+
+            return;
+        }
+
+        if ($note['type'] === 'free_issue_in') {
+            $rendered = FreeIssueNoteService::renderLive((int) $id);
+            Response::inlineBytes($rendered['bytes'], $rendered['filename'], 'application/pdf');
 
             return;
         }
@@ -182,19 +201,6 @@ final class StaffDeliveryNoteController
 
     private function buildPdf(int $deliveryNoteId): void
     {
-        $note = DeliveryNote::find($deliveryNoteId);
-        $client = Client::find((int) $note['client_id']);
-        $lines = DeliveryNote::lines($deliveryNoteId);
-
-        $qr = QrCodeService::pngDataUri(QrCodeService::jobUrl('/staff/delivery-notes/' . $deliveryNoteId));
-
-        $relativePath = PdfService::renderAndStore(
-            'pdf/delivery-note',
-            ['deliveryNote' => $note, 'client' => $client, 'lines' => $lines, 'qrDataUri' => $qr],
-            'delivery-notes/' . $note['client_id'],
-            $note['reference'] . '.pdf'
-        );
-
-        DeliveryNote::setPdfPath($deliveryNoteId, $relativePath);
+        FreeIssueNoteService::buildStoredPdf($deliveryNoteId, '/staff/delivery-notes/' . $deliveryNoteId);
     }
 }

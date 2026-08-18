@@ -93,7 +93,7 @@ $csvQuery = 'format=csv' . ($clientId !== null ? '&client_id=' . $clientId : '')
                             <th class="align-right">Made</th>
                             <th class="align-right">Outstanding</th>
                             <th class="align-right">Despatched</th>
-                            <th>Stage</th>
+                            <th>Status</th>
                             <th></th>
                         </tr>
                     </thead>
@@ -117,7 +117,10 @@ $csvQuery = 'format=csv' . ($clientId !== null ? '&client_id=' . $clientId : '')
                             <td class="align-right"><?= (int) $line['qty_completed'] ?></td>
                             <td class="align-right"><strong><?= (int) $line['qty_outstanding'] ?></strong></td>
                             <td class="align-right"><?= (int) $line['qty_delivered'] ?></td>
-                            <td><?= status_badge($line['stage']) ?></td>
+                            <td>
+                                <?= status_badge(\App\Models\OrderLine::headlineStage($line)) ?>
+                                <div class="cell-sub"><?= e(\App\Models\OrderLine::statusLabel($line)) ?></div>
+                            </td>
                             <td class="actions">
                                 <a href="<?= url('/staff/parts/' . $line['part_id']) ?>" class="btn btn-sm">Part</a>
                             </td>
@@ -143,6 +146,13 @@ $csvQuery = 'format=csv' . ($clientId !== null ? '&client_id=' . $clientId : '')
                 <p class="field-hint mb-0">
                     <?= (int) $part['qty_awaiting_despatch'] ?> already made and waiting to go out — raise a
                     delivery note rather than making more.
+                </p>
+            <?php endif; ?>
+
+            <?php if ((int) $part['qty_failed'] > 0): ?>
+                <p class="field-hint mb-0">
+                    <?= (int) $part['qty_failed'] ?> failed and counted in the outstanding figure above — they
+                    are still owed and still have to be made again.
                 </p>
             <?php endif; ?>
         </div>

@@ -42,13 +42,17 @@ use App\Core\Auth;
             </ul>
         <?php endif; ?>
 
-        <?php if ($freeIssueMaterials !== []): ?>
-            <h3>Free-issue material</h3>
-            <ul>
-                <?php foreach ($freeIssueMaterials as $m): ?>
-                    <li><?= e($m['reference']) ?><?= $m['notes'] ? ' — ' . e($m['notes']) : '' ?></li>
-                <?php endforeach; ?>
-            </ul>
+        <h3>Free-issue material</h3>
+        <?php if (!\App\Models\Part::hasFreeIssue($part)): ?>
+            <p class="text-muted">No free-issue material required — Junction supplies the material for this part.</p>
+        <?php else: ?>
+            <?php if ($freeIssueMaterials !== []): ?>
+                <ul>
+                    <?php foreach ($freeIssueMaterials as $m): ?>
+                        <li><?= e($m['reference']) ?><?= $m['notes'] ? ' — ' . e($m['notes']) : '' ?></li>
+                    <?php endforeach; ?>
+                </ul>
+            <?php endif; ?>
             <p class="text-muted">
                 <?php if ($part['free_issue_relationship'] === 'divide'): ?>
                     1 piece of free-issue material makes <?= (int) $part['free_issue_factor'] ?> of this part.

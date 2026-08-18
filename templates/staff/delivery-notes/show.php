@@ -1,26 +1,50 @@
 <?php /** @var array $note */ /** @var array $client */ /** @var array $lines */ /** @var array|null $invoice */
 use App\Core\Auth;
+use App\Models\DeliveryNote;
+use App\Services\FreeIssueNoteService;
+
+$isFreeIssue = $note['type'] === 'free_issue_in';
 ?>
 <div class="card-header">
     <div>
         <h1 class="mt-0 mb-0"><?= e($note['reference']) ?></h1>
-        <p class="text-muted mb-0"><?= e($client['name']) ?> &middot; <?= format_date($note['issued_at']) ?> &middot; <?= $note['type'] === 'free_issue_in' ? 'Free issue in' : 'Goods out' ?></p>
+        <p class="text-muted mb-0"><?= e($client['name']) ?> &middot; <?= format_date($note['issued_at']) ?> &middot; <?= e(DeliveryNote::TYPE_LABELS[$note['type']] ?? $note['type']) ?></p>
     </div>
     <a href="<?= url('/staff/delivery-notes/' . $note['id'] . '/pdf') ?>" class="btn btn-primary" target="_blank" rel="noopener">View PDF</a>
 </div>
 
 <div class="card">
     <h2 class="mt-0">Lines</h2>
+    <?php if ($isFreeIssue): ?>
+        <p class="text-muted">
+            A standing request: the quantity is worked out fresh every time the note is printed, so it
+            always asks for whatever the line still needs today.
+        </p>
+    <?php endif; ?>
     <div class="table-wrap">
         <table>
-            <thead><tr><th>Order</th><th>CPN</th><th>Part</th><th>Quantity</th></tr></thead>
+            <thead>
+                <tr>
+                    <th>Order</th><th>CPN</th><th>Part</th>
+                    <?php if ($isFreeIssue): ?>
+                        <th>Still required</th><th>Received against this line</th>
+                    <?php else: ?>
+                        <th>Quantity</th>
+                    <?php endif; ?>
+                </tr>
+            </thead>
             <tbody>
             <?php foreach ($lines as $line): ?>
                 <tr>
                     <td><?= e($line['order_number']) ?></td>
                     <td><?= e($line['cpn']) ?></td>
                     <td class="wrap"><?= e($line['part_name']) ?></td>
-                    <td><?= (int) $line['qty'] ?></td>
+                    <?php if ($isFreeIssue): $figures = FreeIssueNoteService::noteLineFigures($line); ?>
+                        <td><?= (int) $figures['required'] ?> <span class="cell-sub">of <?= (int) $figures['original'] ?> asked for</span></td>
+                        <td><?= e($figures['outstanding_sentence']) ?></td>
+                    <?php else: ?>
+                        <td><?= (int) $line['qty'] ?></td>
+                    <?php endif; ?>
                 </tr>
             <?php endforeach; ?>
             </tbody>

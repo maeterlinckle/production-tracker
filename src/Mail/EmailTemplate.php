@@ -216,6 +216,51 @@ HTML,
             ],
         ],
 
+        'material_rejected' => [
+            'name'        => 'Free-issue material rejected',
+            'description' => 'Sent when material that arrived cannot be used. Carries the return note for what is coming back, and says that a replacement has been asked for — which is what makes a rejection different from material simply not having turned up yet.',
+            'group'       => 'Free issue',
+            'subject'     => 'Free-issue material returned for {{order_number}} — {{app_name}}',
+            'body'        => <<<'HTML'
+<p>Hello {{recipient_name}},</p>
+
+<p>{{qty_rejected}} of the free-issue material sent for
+<strong>{{cpn}} — {{part_name}}</strong> on order {{order_number}} could not be
+used and is being returned to you.</p>
+
+<div class="items">
+  Reason: {{reason}}<br>
+  Return note: {{return_reference}}<br>
+  Still required for this line: {{qty_outstanding}}
+</div>
+
+<p>We have asked for replacement material for the same quantity — it is on the
+free-issue note that is already out for this line.</p>
+
+<p><a href="{{return_note_url}}">View the return note</a></p>
+HTML,
+            'fields' => [
+                'order_number'     => 'The Junction order number',
+                'cpn'              => 'The client part number',
+                'part_name'        => 'The part name',
+                'qty_rejected'     => 'How much material was rejected',
+                'reason'           => 'Why it was rejected',
+                'return_reference' => 'The reference of the return note',
+                'qty_outstanding'  => 'How much material the line still needs in total',
+                'return_note_url'  => 'A direct link to the return note',
+            ],
+            'sample' => [
+                'order_number'     => 'ORD-2026-0004',
+                'cpn'              => 'ACME-100',
+                'part_name'        => 'Spindle housing',
+                'qty_rejected'     => '3',
+                'reason'           => 'Bar stock cracked along the length on three of the pieces',
+                'return_reference' => 'RTN-2026-0001',
+                'qty_outstanding'  => '3',
+                'return_note_url'  => 'https://tracker.example.com/delivery-notes/8/pdf',
+            ],
+        ],
+
         // -- Despatch and invoicing ------------------------------------------
         'delivery_note_issued' => [
             'name'        => 'Goods-out delivery note issued',
@@ -336,6 +381,91 @@ HTML,
                 'reply'        => 'EN1A is fine for this one — we will note it on the route card.',
                 'answered_by'  => 'Nick at Junction',
                 'order_url'    => 'https://tracker.example.com/orders/4',
+            ],
+        ],
+
+        // -- Quantity changes --------------------------------------------------
+        'quantity_change_requested' => [
+            'name'        => 'Quantity change requested',
+            'description' => 'Sent to Junction staff when a client asks to change the quantity on a line that is already running. The request changes nothing by itself — somebody has to apply it.',
+            'group'       => 'Quantity changes',
+            'subject'     => 'Quantity change requested on {{order_number}} — {{app_name}}',
+            'body'        => <<<'HTML'
+<p>Hello {{recipient_name}},</p>
+
+<p>{{requested_by}} has asked to change the quantity on
+<strong>{{cpn}} — {{part_name}}</strong>, order {{order_number}}.</p>
+
+<div class="items">
+  Currently ordered: {{qty_current}}<br>
+  Requested: {{qty_requested}}<br>
+  Reason: {{reason}}
+</div>
+
+<p><a href="{{order_url}}">Review the request</a></p>
+HTML,
+            'fields' => [
+                'order_number'  => 'The Junction order number',
+                'cpn'           => 'The client part number',
+                'part_name'     => 'The part name',
+                'requested_by'  => 'Who asked',
+                'qty_current'   => 'What the line says today',
+                'qty_requested' => 'What they have asked for',
+                'reason'        => 'Their reason, or a note that none was given',
+                'order_url'     => 'A direct link to the order',
+            ],
+            'sample' => [
+                'order_number'  => 'ORD-2026-0004',
+                'cpn'           => 'ACME-100',
+                'part_name'     => 'Spindle housing',
+                'requested_by'  => 'Jane at Acme Engineering',
+                'qty_current'   => '20',
+                'qty_requested' => '32',
+                'reason'        => 'Follow-on order from our customer, same drawing revision.',
+                'order_url'     => 'https://tracker.example.com/staff/orders/4',
+            ],
+        ],
+
+        'quantity_change_decided' => [
+            'name'        => 'Quantity change decided',
+            'description' => 'Sent to the client when Junction applies or declines a quantity change.',
+            'group'       => 'Quantity changes',
+            'subject'     => 'Your quantity change on {{order_number}} was {{outcome}} — {{app_name}}',
+            'body'        => <<<'HTML'
+<p>Hello {{recipient_name}},</p>
+
+<p>Your request to change <strong>{{cpn}} — {{part_name}}</strong> on order
+{{order_number}} from {{qty_current}} to {{qty_requested}} was
+<strong>{{outcome}}</strong>.</p>
+
+<div class="items">
+  Decided by: {{decided_by}}<br>
+  {{decision_notes}}
+</div>
+
+<p><a href="{{order_url}}">View the order</a></p>
+HTML,
+            'fields' => [
+                'order_number'   => 'The Junction order number',
+                'cpn'            => 'The client part number',
+                'part_name'      => 'The part name',
+                'qty_current'    => 'What the line said when the request was made',
+                'qty_requested'  => 'What was asked for',
+                'outcome'        => 'applied or declined',
+                'decided_by'     => 'Who decided',
+                'decision_notes' => 'Any note they left, or blank',
+                'order_url'      => 'A direct link to the order',
+            ],
+            'sample' => [
+                'order_number'   => 'ORD-2026-0004',
+                'cpn'            => 'ACME-100',
+                'part_name'      => 'Spindle housing',
+                'qty_current'    => '20',
+                'qty_requested'  => '32',
+                'outcome'        => 'applied',
+                'decided_by'     => 'Nick at Junction',
+                'decision_notes' => 'The extra twelve go on the same setup — no change to the price.',
+                'order_url'      => 'https://tracker.example.com/orders/4',
             ],
         ],
 

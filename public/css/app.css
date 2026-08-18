@@ -1802,3 +1802,88 @@ td.wrap, th.wrap { white-space: normal; min-width: 14rem; }
 @media (max-width: 640px) {
     .step-label { display: none; }
 }
+
+/* ---------------------------------------------------------------------------
+   The quantity distribution (Prompt 4, item 6)
+   --------------------------------------------------------------------------- */
+
+/* A checkbox and its wording read as one control, so they are one target. */
+.checkbox-label {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-2);
+    font-weight: 500;
+    cursor: pointer;
+}
+.checkbox-label input[type="checkbox"] { margin-top: 0.2rem; flex: 0 0 auto; }
+
+/* One bar per line, divided in proportion to where its quantity sits. This is
+   the whole model in one glance: no single colour means no single status. */
+.stage-bar {
+    display: flex;
+    width: 100%;
+    height: 12px;
+    border-radius: 999px;
+    overflow: hidden;
+    background: var(--bg-sunken);
+    border: 1px solid var(--border);
+}
+.stage-bar-segment { height: 100%; }
+.stage-bar-segment[data-stage="awaiting_free_issue"]  { background: var(--warn); }
+.stage-bar-segment[data-stage="ready_for_production"] { background: var(--info); }
+.stage-bar-segment[data-stage="in_production"]        { background: var(--accent); }
+.stage-bar-segment[data-stage="complete"]             { background: var(--ok); }
+.stage-bar-segment[data-stage="delivered"]            { background: var(--ok); opacity: 0.72; }
+.stage-bar-segment[data-stage="invoiced"]             { background: var(--ok); opacity: 0.45; }
+.stage-bar-segment[data-stage="failed"]               { background: var(--danger); }
+.stage-bar-segment[data-stage="cancelled"]            { background: var(--text-muted); opacity: 0.5; }
+
+.stage-key { display: flex; flex-wrap: wrap; gap: var(--space-3); margin-top: var(--space-2); }
+.stage-key-item { display: flex; align-items: center; gap: var(--space-1); font-size: 0.82rem; color: var(--text-muted); }
+.stage-key-dot { width: 10px; height: 10px; border-radius: 3px; flex: 0 0 auto; }
+
+/* One row per occupied stage, each with the move it can make from there. */
+.stage-rows { display: grid; gap: var(--space-2); margin-top: var(--space-4); }
+.stage-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-raised);
+}
+.stage-row-name { font-weight: 600; min-width: 11rem; }
+.stage-row-qty { font-variant-numeric: tabular-nums; min-width: 3rem; }
+.stage-row form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--space-2); margin: 0; }
+.stage-row .field { margin: 0; }
+.stage-row input[type="number"] { width: 6rem; }
+.stage-row input[type="text"] { min-width: 12rem; }
+
+@media (max-width: 640px) {
+    .stage-row-name { min-width: 100%; }
+    .stage-row input[type="text"] { min-width: 100%; }
+}
+
+.mb-1 { margin-bottom: var(--space-1); }
+.mb-2 { margin-bottom: var(--space-2); }
+
+/* A bordered block for one item in a list of decisions — a change request and
+   the buttons that resolve it — where a full card would be too heavy. */
+.callout {
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: var(--radius-sm);
+    background: var(--bg-raised);
+    padding: var(--space-3);
+    margin-bottom: var(--space-3);
+}
+
+/* An inline form that carries a labelled field is a row, not a phrase. */
+.inline-form:has(.field) {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: var(--space-2);
+}

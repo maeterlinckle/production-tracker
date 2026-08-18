@@ -35,11 +35,14 @@ final class PartsOnOrder
      */
     public static function lines(?int $clientId = null): array
     {
-        // Two conditions, not one. The counter is the real measure, but a line
-        // whose stage says complete or closed is finished as far as the workshop
-        // is concerned whatever the counter says — and historic rows exist where
-        // the two disagree, from before setStage() started keeping them in step.
-        $where = ["ol.stage NOT IN ('complete', 'closed')", 'ol.qty_completed < ol.qty_ordered'];
+        // Outstanding is what is neither made nor cancelled. Cancelled quantity
+        // drops out here and nowhere else is needed: closing a line down is
+        // supposed to stop it appearing on this report, and this is the report.
+        //
+        // Failed quantity stays in. A scrapped part is still a part the client
+        // is owed, and the whole reason failures are parked rather than deducted
+        // is so they keep showing up here until they are remade.
+        $where = ['ol.qty_completed + ol.qty_cancelled < ol.qty_ordered'];
         $params = [];
 
         if ($clientId !== null) {
@@ -47,13 +50,14 @@ final class PartsOnOrder
             $params['client_id'] = $clientId;
         }
 
-        return Database::all(
-            'SELECT ol.id, ol.order_id, ol.part_id, ol.stage, ol.qty_ordered, ol.qty_completed,
-                    ol.qty_delivered, ol.qty_free_issue_required, ol.qty_free_issue_received,
-                    ol.qty_ordered - ol.qty_completed AS qty_outstanding,
-                    o.order_number, o.placed_at, o.po_original_filename,
+        $rows = Database::all(
+            'SELECT ol.id, ol.order_id, ol.part_id, ol.qty_ordered, ol.qty_completed,
+                    ol.qty_delivered, ol.qty_failed, ol.qty_cancelled,
+                    ol.qty_free_issue_required, ol.qty_free_issue_received, ol.qty_free_issue_rejected,
+                    ol.qty_ordered - ol.qty_completed - ol.qty_cancelled AS qty_outstanding,
+                    o.order_number, o.placed_at, o.po_number, o.po_original_filename,
                     DATEDIFF(NOW(), o.placed_at) AS days_open,
-                    p.cpn, p.name AS part_name, p.base_material,
+                    p.cpn, p.name AS part_name, p.base_material, p.has_free_issue,
                     c.id AS client_id, c.name AS client_name,
                     (SELECT COUNT(*) FROM free_issue_receipts fir
                       WHERE fir.order_line_id = ol.id
@@ -67,6 +71,17 @@ final class PartsOnOrder
            ORDER BY p.cpn, o.placed_at',
             $params
         );
+
+        // The report shows the same derived status as the order page, so it
+        // needs the same distribution behind it -- one extra query for the whole
+        // report rather than one per row.
+        $distributions = \App\Models\OrderLine::distributionsFor(array_column($rows, 'id'));
+
+        return array_map(static function (array $row) use ($distributions): array {
+            $row['quantities'] = $distributions[(int) $row['id']] ?? \App\Models\OrderLine::emptyDistribution();
+
+            return $row;
+        }, $rows);
     }
 
     /**
@@ -94,6 +109,8 @@ final class PartsOnOrder
                     'qty_completed' => 0,
                     'qty_outstanding' => 0,
                     'qty_awaiting_despatch' => 0,
+                    'qty_failed' => 0,
+                    'qty_cancelled' => 0,
                     'order_count' => 0,
                     'oldest_days' => 0,
                     'blocked' => false,
@@ -105,6 +122,8 @@ final class PartsOnOrder
             $parts[$key]['qty_completed'] += (int) $line['qty_completed'];
             $parts[$key]['qty_outstanding'] += (int) $line['qty_outstanding'];
             $parts[$key]['qty_awaiting_despatch'] += (int) $line['qty_completed'] - (int) $line['qty_delivered'];
+            $parts[$key]['qty_failed'] += (int) $line['qty_failed'];
+            $parts[$key]['qty_cancelled'] += (int) $line['qty_cancelled'];
             $parts[$key]['order_count']++;
             $parts[$key]['oldest_days'] = max($parts[$key]['oldest_days'], (int) $line['days_open']);
             $parts[$key]['blocked'] = $parts[$key]['blocked'] || self::isBlocked($line);
@@ -125,7 +144,7 @@ final class PartsOnOrder
             return true;
         }
 
-        return (int) $line['qty_free_issue_required'] > (int) $line['qty_free_issue_received'];
+        return \App\Models\OrderLine::freeIssueOutstanding($line) > 0;
     }
 
     /** A one-line description of why a line has not moved, for the report and the digest. */
@@ -135,10 +154,13 @@ final class PartsOnOrder
             return 'Free-issue discrepancy unresolved';
         }
 
-        if ((int) $line['qty_free_issue_required'] > (int) $line['qty_free_issue_received']) {
-            $short = (int) $line['qty_free_issue_required'] - (int) $line['qty_free_issue_received'];
+        $short = \App\Models\OrderLine::freeIssueOutstanding($line);
+        if ($short > 0) {
+            $rejected = (int) $line['qty_free_issue_rejected'];
 
-            return 'Awaiting free issue (' . $short . ' short)';
+            return $rejected > 0
+                ? 'Awaiting free issue (' . $short . ' short, ' . $rejected . ' rejected)'
+                : 'Awaiting free issue (' . $short . ' short)';
         }
 
         return '';

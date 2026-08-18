@@ -763,7 +763,11 @@ ensure_composer() {
     # The path goes in as an argument, not interpolated into the code string: a
     # temp path is not attacker-controlled, but building code by string
     # concatenation is a habit worth not having.
-    expected="$(fetch_url 'https://composer.github.io/installer.sig' 2>/dev/null | tr -d '[:space:]')"
+    # `|| true` because this is an assignment from a pipeline under `set -e`:
+    # with no network, fetch_url fails, the pipeline fails, and the installer
+    # would abort here rather than reaching the signature check below that is
+    # written to handle exactly this.
+    expected="$(fetch_url 'https://composer.github.io/installer.sig' 2>/dev/null | tr -d '[:space:]' || true)"
     actual="$("$PHP_BIN" -r 'echo hash_file("sha384", $argv[1]);' "$setup" 2>/dev/null)"
 
     if [ -z "$expected" ] || [ -z "$actual" ] || [ "$expected" != "$actual" ]; then
@@ -934,7 +938,7 @@ step "Checking PHP extensions"
 # missing from PHP 8 at all, and that was the giveaway.
 #
 # Reading it once is also eight fewer PHP startups.
-php_modules=" $("$PHP_BIN" -m 2>/dev/null | tr '[:upper:]' '[:lower:]' | tr '\n' ' ') "
+php_modules=" $("$PHP_BIN" -m 2>/dev/null | tr '[:upper:]' '[:lower:]' | tr '\n' ' ' || true) "
 
 has_module() { # has_module NAME
     case "$php_modules" in
@@ -1364,7 +1368,7 @@ for dir in /etc/php/*/apache2/conf.d /etc/php/*/fpm/conf.d /etc/php/*/cli/conf.d
 done
 
 if [ "$ini_written" -eq 0 ]; then
-    scan_dir="$("$PHP_BIN" -i 2>/dev/null | awk -F'=> ' '/Scan this dir/ {print $2}' | tr -d ' ')"
+    scan_dir="$("$PHP_BIN" -i 2>/dev/null | awk -F'=> ' '/Scan this dir/ {print $2}' | tr -d ' ' || true)"
     if [ -n "$scan_dir" ] && [ -d "$scan_dir" ]; then
         php_ini_body > "$scan_dir/99-production-tracker.ini"
         ok "$scan_dir/99-production-tracker.ini"

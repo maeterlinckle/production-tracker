@@ -534,10 +534,13 @@ cmd_install_composer() {
 
     [ -s "$setup" ] || { rm -rf "$tmp"; die "Could not download the Composer installer."; }
 
+    # `|| true` on both: these are assignments from a pipeline under `set -e`,
+    # so without it a network failure aborts the script silently instead of
+    # reaching the signature check below, which reports it properly.
     if have curl; then
-        expected="$(curl -fsSL --max-time 60 https://composer.github.io/installer.sig | tr -d '[:space:]')"
+        expected="$(curl -fsSL --max-time 60 https://composer.github.io/installer.sig | tr -d '[:space:]' || true)"
     else
-        expected="$(wget -qO- --timeout=60 https://composer.github.io/installer.sig | tr -d '[:space:]')"
+        expected="$(wget -qO- --timeout=60 https://composer.github.io/installer.sig | tr -d '[:space:]' || true)"
     fi
 
     actual="$("$PHP_BIN" -r 'echo hash_file("sha384", $argv[1]);' "$setup")"

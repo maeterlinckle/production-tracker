@@ -1,0 +1,640 @@
+<?php
+
+declare(strict_types=1);
+
+/*
+ * General admin CLI. Run `php bin/console.php` with no arguments for the
+ * command list.
+ *
+ * This is where anything that touches the database lives, so that manage.sh
+ * never writes SQL of its own: every account change, setting and lookup goes
+ * through the application's own models, prepared statements and validation.
+ * manage.sh handles the things that need root instead — services, ownership,
+ * backups and cron.
+ */
+
+if (PHP_SAPI !== 'cli') {
+    http_response_code(403);
+    exit("This script must be run from the command line.\n");
+}
+
+require dirname(__DIR__) . '/src/bootstrap.php';
+
+use App\Core\Capabilities;
+use App\Core\Config;
+use App\Core\Database;
+use App\Mail\EmailTemplate;
+use App\Mail\Mailer;
+use App\Models\EmailLog;
+use App\Models\Invite;
+use App\Models\Role;
+use App\Models\Setting;
+use App\Models\User;
+use App\Services\ClearBooksClient;
+use App\Services\Reminders;
+
+function option(array $argv, string $name, ?string $default = null): ?string
+{
+    foreach ($argv as $arg) {
+        if (str_starts_with($arg, "--{$name}=")) {
+            return substr($arg, strlen($name) + 3);
+        }
+    }
+
+    return $default;
+}
+
+function cliFlag(array $argv, string $name): bool
+{
+    return in_array("--{$name}", $argv, true);
+}
+
+function fail(string $message, int $code = 1): never
+{
+    fwrite(STDERR, $message . "\n");
+    exit($code);
+}
+
+/**
+ * Read a secret from stdin rather than from the command line.
+ *
+ * An argument is visible in `ps` and lands in the shell history; a piped value
+ * is neither. install.sh uses this for the first administrator's password.
+ */
+function readStdin(): string
+{
+    $value = stream_get_contents(STDIN);
+
+    return $value === false ? '' : trim($value);
+}
+
+function table(array $headers, array $rows): void
+{
+    $widths = array_map('strlen', $headers);
+    foreach ($rows as $row) {
+        foreach ($row as $i => $cell) {
+            $widths[$i] = max($widths[$i], strlen((string) $cell));
+        }
+    }
+
+    $printRow = static function (array $cells) use ($widths): void {
+        $parts = [];
+        foreach ($cells as $i => $cell) {
+            $parts[] = str_pad((string) $cell, $widths[$i]);
+        }
+        echo rtrim(implode('  ', $parts)) . "\n";
+    };
+
+    $printRow($headers);
+    echo str_repeat('-', array_sum($widths) + 2 * (count($widths) - 1)) . "\n";
+    foreach ($rows as $row) {
+        $printRow($row);
+    }
+    echo "\n" . count($rows) . " row(s).\n";
+}
+
+// ---------------------------------------------------------------------------
+// Checking
+// ---------------------------------------------------------------------------
+
+function cmdDoctor(array $argv): int
+{
+    $checks = [];
+    $failed = 0;
+
+    $checks[] = ['PHP version', version_compare(PHP_VERSION, '8.1.0', '>=') ? 'ok' : 'fail', PHP_VERSION];
+
+    foreach (['pdo_mysql', 'json', 'mbstring', 'fileinfo', 'gd', 'curl', 'openssl'] as $ext) {
+        $checks[] = ["ext-{$ext}", extension_loaded($ext) ? 'ok' : 'fail', ''];
+    }
+
+    $checks[] = ['APP_KEY set', Config::get('app.key') !== '' ? 'ok' : 'warn', Config::get('app.key') === '' ? 'run key:generate' : ''];
+    $checks[] = ['APP_URL set', Config::get('app.url') !== '' ? 'ok' : 'warn', (string) Config::get('app.url')];
+
+    try {
+        Database::connection();
+        $checks[] = ['Database connection', 'ok', (string) Config::get('database.database')];
+
+        $applied = (int) Database::scalar('SELECT COUNT(*) FROM migrations');
+        $onDisk = count(glob(Config::get('app.root') . '/database/migrations/*.sql') ?: []);
+        $checks[] = [
+            'Migrations',
+            $applied >= $onDisk ? 'ok' : 'warn',
+            "{$applied} applied of {$onDisk} on disk" . ($applied < $onDisk ? ' — run migrate' : ''),
+        ];
+
+        $staff = (int) Database::scalar(
+            "SELECT COUNT(*) FROM users u
+               JOIN user_roles ur ON ur.user_id = u.id
+               JOIN roles r ON r.id = ur.role_id
+              WHERE r.slug = 'staff.admin' AND u.is_active = 1"
+        );
+        $checks[] = ['Active staff admins', $staff > 0 ? 'ok' : 'fail', (string) $staff];
+    } catch (\Throwable $e) {
+        $checks[] = ['Database connection', 'fail', $e->getMessage()];
+    }
+
+    foreach (['storage.uploads', 'storage.logs'] as $key) {
+        $path = (string) Config::get($key);
+        $checks[] = [$key, is_dir($path) && is_writable($path) ? 'ok' : 'fail', $path];
+    }
+
+    $checks[] = ['Composer packages', class_exists(\PHPMailer\PHPMailer\PHPMailer::class) ? 'ok' : 'warn',
+        class_exists(\PHPMailer\PHPMailer\PHPMailer::class) ? '' : 'run composer install — email and PDFs need it'];
+
+    $mailProblems = Mailer::problems();
+    $checks[] = ['Email', Mailer::isReady() ? 'ok' : 'warn',
+        Mailer::isReady() ? 'ready' : ($mailProblems === [] ? 'switched off in Settings' : implode(' ', $mailProblems))];
+
+    $cbProblems = ClearBooksClient::problems();
+    $checks[] = ['Clear Books', $cbProblems === [] ? 'ok' : 'warn',
+        $cbProblems === [] ? 'ready' : implode(' ', $cbProblems)];
+
+    $checks[] = ['Reminders', Reminders::isEnabled() ? 'ok' : 'warn',
+        Reminders::isEnabled() ? 'on, every ' . Reminders::intervalDays() . ' day(s)' : 'off'];
+
+    foreach ($checks as $check) {
+        if ($check[1] === 'fail') {
+            $failed++;
+        }
+    }
+
+    table(['Check', 'Status', 'Detail'], $checks);
+
+    return $failed === 0 ? 0 : 1;
+}
+
+function cmdStats(array $argv): int
+{
+    $count = static fn (string $table): int => (int) Database::scalar("SELECT COUNT(*) FROM {$table}");
+
+    table(['Metric', 'Count'], [
+        ['Clients', $count('clients')],
+        ['Users', $count('users')],
+        ['Pending invitations', (int) Database::scalar('SELECT COUNT(*) FROM user_invites WHERE accepted_at IS NULL AND expires_at > NOW()')],
+        ['Parts', $count('parts')],
+        ['Orders', $count('orders')],
+        ['Order lines outstanding', (int) Database::scalar("SELECT COUNT(*) FROM order_lines WHERE stage NOT IN ('complete','closed') AND qty_completed < qty_ordered")],
+        ['Delivery notes', $count('delivery_notes')],
+        ['Invoices raised', $count('invoices')],
+        ['Emails sent', (int) Database::scalar("SELECT COUNT(*) FROM email_log WHERE status = 'sent'")],
+        ['Emails failed', (int) Database::scalar("SELECT COUNT(*) FROM email_log WHERE status = 'failed'")],
+    ]);
+
+    return 0;
+}
+
+function cmdKeyGenerate(array $argv): int
+{
+    echo 'APP_KEY=base64:' . base64_encode(random_bytes(32)) . "\n";
+    echo "Add this to your .env file.\n";
+
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// Users
+// ---------------------------------------------------------------------------
+
+function cmdUserList(array $argv): int
+{
+    $activeOnly = cliFlag($argv, 'active-only');
+
+    $sql = 'SELECT u.id, u.side, u.name, u.email, u.is_active, u.password_set_at, u.last_login_at, c.name AS client_name
+              FROM users u
+         LEFT JOIN clients c ON c.id = u.client_id';
+    if ($activeOnly) {
+        $sql .= ' WHERE u.is_active = 1';
+    }
+    $sql .= ' ORDER BY u.side, u.name';
+
+    $rows = Database::all($sql);
+
+    table(
+        ['ID', 'Side', 'Name', 'Email', 'Client', 'Roles', 'Status', 'Last sign-in'],
+        array_map(static fn (array $r): array => [
+            $r['id'],
+            $r['side'],
+            $r['name'],
+            $r['email'],
+            $r['client_name'] ?? '—',
+            implode(',', Role::slugsForUser((int) $r['id'])) ?: '—',
+            $r['password_set_at'] === null ? 'invited' : ((bool) $r['is_active'] ? 'active' : 'inactive'),
+            $r['last_login_at'] ?? 'never',
+        ], $rows)
+    );
+
+    return 0;
+}
+
+/**
+ * Create a staff account with a password, for the installer.
+ *
+ * Every other account is created by invitation from the interface — this is the
+ * one path that sets a password directly, because the first administrator has
+ * nobody to invite them.
+ */
+function cmdUserCreate(array $argv): int
+{
+    $name = option($argv, 'name') ?? fail('Usage: user:create --name= --email= [--roles=staff.admin] --stdin-password');
+    $email = option($argv, 'email') ?? fail('An --email is required.');
+    $roles = explode(',', (string) option($argv, 'roles', 'staff.admin'));
+
+    $password = cliFlag($argv, 'stdin-password') ? readStdin() : (string) option($argv, 'password', '');
+
+    if (strlen($password) < 12) {
+        fail('The password must be at least 12 characters.');
+    }
+
+    if (filter_var($email, FILTER_VALIDATE_EMAIL) === false) {
+        fail("'{$email}' is not a valid email address.");
+    }
+
+    if (User::emailExists($email)) {
+        fail("A user with the email {$email} already exists. Use user:password to reset it instead.");
+    }
+
+    $allowed = array_column(Role::forSide('staff'), 'slug');
+    $roles = array_values(array_intersect(array_map('trim', $roles), $allowed));
+
+    if ($roles === []) {
+        fail('None of those roles exist. Valid staff roles: ' . implode(', ', $allowed));
+    }
+
+    $userId = User::create([
+        'client_id' => null,
+        'side' => 'staff',
+        'name' => $name,
+        'email' => $email,
+        'password_hash' => password_hash($password, PASSWORD_DEFAULT),
+        'is_active' => 1,
+    ]);
+
+    User::updatePasswordHash($userId, password_hash($password, PASSWORD_DEFAULT));
+    Role::setForUser($userId, $roles, $allowed);
+
+    echo "Created staff user {$email} (#{$userId}) with roles: " . implode(', ', $roles) . "\n";
+
+    return 0;
+}
+
+function cmdUserPassword(array $argv): int
+{
+    $email = option($argv, 'email') ?? fail('Usage: user:password --email=');
+
+    $user = User::findByEmail($email);
+    if ($user === null) {
+        fail("No user with email {$email}");
+    }
+
+    if (cliFlag($argv, 'stdin-password')) {
+        $password = readStdin();
+        if (strlen($password) < 12) {
+            fail('The password must be at least 12 characters.');
+        }
+        $printed = '(read from stdin)';
+    } else {
+        $password = bin2hex(random_bytes(9));
+        $printed = $password;
+    }
+
+    User::updatePasswordHash((int) $user['id'], password_hash($password, PASSWORD_DEFAULT));
+    User::setActive((int) $user['id'], true);
+    Database::run('DELETE FROM login_attempts WHERE email = :email', ['email' => $email]);
+
+    echo "Password reset for {$email}, account activated and any lockout cleared.\n";
+    echo "Password: {$printed}\n";
+
+    return 0;
+}
+
+function cmdUserRoles(array $argv): int
+{
+    $email = option($argv, 'email') ?? fail('Usage: user:roles --email= --roles=staff.quoting,staff.production');
+    $slugs = option($argv, 'roles');
+
+    $user = User::findByEmail($email);
+    if ($user === null) {
+        fail("No user with email {$email}");
+    }
+
+    // The side is fixed on the account: a client user can never be given staff
+    // roles from here, whatever is typed.
+    $allowed = array_column(Role::forSide((string) $user['side']), 'slug');
+
+    if ($slugs === null) {
+        echo "Roles for {$email}: " . (implode(', ', Role::slugsForUser((int) $user['id'])) ?: '(none)') . "\n";
+        echo 'Available for a ' . $user['side'] . " account: " . implode(', ', $allowed) . "\n";
+
+        return 0;
+    }
+
+    $requested = array_values(array_intersect(array_map('trim', explode(',', $slugs)), $allowed));
+
+    if ($requested === []) {
+        fail('None of those roles exist for a ' . $user['side'] . ' account. Valid: ' . implode(', ', $allowed));
+    }
+
+    Role::setForUser((int) $user['id'], $requested, $allowed);
+    echo "Roles for {$email} are now: " . implode(', ', $requested) . "\n";
+
+    return 0;
+}
+
+function cmdUserActivate(array $argv): int
+{
+    return setActive($argv, true);
+}
+
+function cmdUserDeactivate(array $argv): int
+{
+    return setActive($argv, false);
+}
+
+function setActive(array $argv, bool $active): int
+{
+    $email = option($argv, 'email') ?? fail('An --email is required.');
+
+    $user = User::findByEmail($email);
+    if ($user === null) {
+        fail("No user with email {$email}");
+    }
+
+    // Locking out the last administrator is easy to do by accident and
+    // impossible to undo from the interface.
+    if (!$active && in_array('staff.admin', Role::slugsForUser((int) $user['id']), true)) {
+        $others = (int) Database::scalar(
+            "SELECT COUNT(*) FROM users u
+               JOIN user_roles ur ON ur.user_id = u.id
+               JOIN roles r ON r.id = ur.role_id
+              WHERE r.slug = 'staff.admin' AND u.is_active = 1 AND u.id <> :id",
+            ['id' => (int) $user['id']]
+        );
+
+        if ($others === 0) {
+            fail('That is the only active staff administrator — deactivating it would lock everyone out of Settings.');
+        }
+    }
+
+    User::setActive((int) $user['id'], $active);
+    echo ($active ? 'Activated ' : 'Deactivated ') . $email . "\n";
+
+    return 0;
+}
+
+function cmdUnlock(array $argv): int
+{
+    $email = option($argv, 'email');
+
+    if ($email !== null) {
+        Database::run('DELETE FROM login_attempts WHERE succeeded = 0 AND email = :email', ['email' => $email]);
+        echo "Unlocked {$email}.\n";
+    } else {
+        Database::run('DELETE FROM login_attempts WHERE succeeded = 0');
+        echo "Cleared all lockouts.\n";
+    }
+
+    return 0;
+}
+
+/**
+ * Issue an invitation link without sending it.
+ *
+ * The link is printed rather than emailed, which is what makes this usable when
+ * email is the thing that is broken.
+ */
+function cmdUserInvite(array $argv): int
+{
+    $email = option($argv, 'email') ?? fail('Usage: user:invite --email=');
+
+    $user = User::findByEmail($email);
+    if ($user === null) {
+        fail("No user with email {$email}. Create the account from the interface first, or use user:create for a staff account.");
+    }
+
+    if (User::hasPassword((int) $user['id'])) {
+        fail("{$email} has already set a password. Use user:password to reset it instead.");
+    }
+
+    $token = Invite::issue((int) $user['id'], (int) $user['id']);
+
+    echo "A fresh invitation link for {$email}, valid for " . Invite::LIFETIME_DAYS . " days:\n\n";
+    echo '  ' . rtrim((string) Config::get('app.url'), '/') . '/invite/' . $token . "\n\n";
+    echo "Any earlier link for this account has been expired.\n";
+
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// Application settings
+// ---------------------------------------------------------------------------
+
+function cmdSettings(array $argv): int
+{
+    $rows = Database::all('SELECT setting_key, setting_value FROM settings ORDER BY setting_key');
+
+    table(['Key', 'Value'], array_map(static function (array $r): array {
+        // Never print a secret, even to a root shell — it ends up in scrollback
+        // and in whatever is recording the session.
+        $secret = str_contains($r['setting_key'], 'password') || str_contains($r['setting_key'], 'secret');
+
+        return [
+            $r['setting_key'],
+            $secret ? '(set — hidden)' : (string) ($r['setting_value'] ?? ''),
+        ];
+    }, $rows));
+
+    return 0;
+}
+
+function cmdSettingSet(array $argv): int
+{
+    $key = option($argv, 'key') ?? fail('Usage: setting:set --key= --value=');
+    $value = option($argv, 'value');
+
+    Setting::put($key, $value === '' ? null : $value);
+    echo "Set {$key}.\n";
+
+    return 0;
+}
+
+function cmdRoles(array $argv): int
+{
+    $rows = [];
+
+    foreach (Role::all() as $role) {
+        $capabilities = [];
+        foreach (array_keys(Capabilities::MATRIX) as $capability) {
+            if (Capabilities::allows([$role['slug']], $capability)) {
+                $capabilities[] = $capability;
+            }
+        }
+
+        $rows[] = [$role['side'], $role['slug'], $role['name'], implode(' ', $capabilities)];
+    }
+
+    table(['Side', 'Slug', 'Name', 'Capabilities'], $rows);
+
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// Email
+// ---------------------------------------------------------------------------
+
+function cmdMailStatus(array $argv): int
+{
+    $problems = Mailer::problems();
+
+    table(['Setting', 'Value'], [
+        ['Enabled', Mailer::isEnabled() ? 'yes' : 'no'],
+        ['Host', Mailer::setting('host', 'host') ?: '(not set)'],
+        ['Port', Mailer::setting('port', 'port', '587')],
+        ['Encryption', Mailer::setting('encryption', 'encryption', 'tls')],
+        ['Username', Mailer::setting('username', 'username') ?: '(none)'],
+        ['Password', Mailer::passwordSource()],
+        ['From', Mailer::setting('from_address', 'from_address') ?: '(not set)'],
+        ['Ready', Mailer::isReady() ? 'yes' : 'no'],
+        ['Problems', $problems === [] ? 'none' : implode(' ', $problems)],
+        ['Templates edited', (string) EmailTemplate::customisedCount()],
+    ]);
+
+    $log = EmailLog::recent(10);
+
+    if ($log !== []) {
+        echo "\nRecent send attempts\n\n";
+        table(['When', 'To', 'Subject', 'Status', 'Error'], array_map(static fn (array $r): array => [
+            $r['sent_at'],
+            $r['to_email'],
+            mb_strimwidth((string) $r['subject'], 0, 40, '…'),
+            $r['status'],
+            mb_strimwidth((string) ($r['error'] ?? ''), 0, 50, '…'),
+        ], $log));
+    }
+
+    return Mailer::isReady() ? 0 : 1;
+}
+
+function cmdMailTest(array $argv): int
+{
+    $to = option($argv, 'to') ?? fail('Usage: mail:test --to=someone@example.com');
+
+    $ok = Mailer::sendTemplate('smtp_test', $to, null, [
+        'mail_host' => Mailer::setting('host', 'host'),
+        'recipient' => $to,
+        'sent_at' => date('j M Y, H:i'),
+        'sent_by' => 'the console',
+    ]);
+
+    if ($ok) {
+        echo "Sent to {$to}. If it does not arrive, check the spam folder, then mail:status.\n";
+
+        return 0;
+    }
+
+    $latest = EmailLog::recent(1);
+    fwrite(STDERR, 'Failed: ' . ($latest[0]['error'] ?? 'see mail:status for the log.') . "\n");
+
+    return 1;
+}
+
+function cmdRemindersRun(array $argv): int
+{
+    $result = Reminders::run(cliFlag($argv, 'force'));
+
+    if (!$result['ran']) {
+        echo $result['reason'], "\n";
+
+        return 0;
+    }
+
+    printf(
+        "Digest of %d outstanding line(s): sent %d, failed %d.\n",
+        $result['items'],
+        $result['sent'],
+        $result['failed']
+    );
+
+    return $result['failed'] > 0 ? 1 : 0;
+}
+
+// ---------------------------------------------------------------------------
+// Clear Books
+// ---------------------------------------------------------------------------
+
+function cmdClearBooksStatus(array $argv): int
+{
+    $problems = ClearBooksClient::problems();
+
+    table(['Setting', 'Value'], [
+        ['Client ID', ClearBooksClient::clientId() !== '' ? '(set)' : '(not set)'],
+        ['Client secret', ClearBooksClient::clientSecret() !== '' ? '(set — hidden)' : '(not set)'],
+        ['Redirect URI', ClearBooksClient::redirectUri() ?: '(not set)'],
+        ['Connected', ClearBooksClient::isConnected() ? 'yes' : 'no'],
+        ['Business ID', (string) (ClearBooksClient::businessId() ?? '(not set)')],
+        ['Sales account code', (string) (ClearBooksClient::accountCode() ?? '(not set)')],
+        ['VAT treatment', ClearBooksClient::vatTreatment() ?: '(not set)'],
+        ['VAT rate', ClearBooksClient::vatRateKey() ?: '(not set)'],
+        ['Payment terms', ClearBooksClient::paymentTermsDays() . ' days'],
+        ['Ready to invoice', $problems === [] ? 'yes' : 'no'],
+        ['Problems', $problems === [] ? 'none' : implode(' ', $problems)],
+    ]);
+
+    echo "\nEndpoints (fixed, from the published Clear Books OpenAPI description)\n\n";
+    table(['What', 'URL'], [
+        ['Authorisation', ClearBooksClient::AUTHORIZE_URL],
+        ['Token', ClearBooksClient::TOKEN_URL],
+        ['API', ClearBooksClient::API_BASE],
+    ]);
+
+    return $problems === [] ? 0 : 1;
+}
+
+// ---------------------------------------------------------------------------
+
+$commands = [
+    'doctor' => ['Environment, config, storage and database health check', 'cmdDoctor'],
+    'stats' => ['Row counts across the tracker', 'cmdStats'],
+    'key:generate' => ['Print a fresh APP_KEY for .env', 'cmdKeyGenerate'],
+
+    'user:list' => ['List accounts  [--active-only]', 'cmdUserList'],
+    'user:create' => ['Create a staff account  --name= --email= [--roles=] --stdin-password', 'cmdUserCreate'],
+    'user:password' => ['Reset a password  --email= [--stdin-password]', 'cmdUserPassword'],
+    'user:roles' => ['Show or set roles  --email= [--roles=a,b]', 'cmdUserRoles'],
+    'user:activate' => ['Re-enable an account  --email=', 'cmdUserActivate'],
+    'user:deactivate' => ['Disable an account  --email=', 'cmdUserDeactivate'],
+    'user:invite' => ['Print a fresh invitation link  --email=', 'cmdUserInvite'],
+    'unlock' => ['Clear sign-in lockouts  [--email=]', 'cmdUnlock'],
+    'roles' => ['List the roles and what each one can do', 'cmdRoles'],
+
+    'settings' => ['Show the application settings', 'cmdSettings'],
+    'setting:set' => ['Change one  --key= --value=', 'cmdSettingSet'],
+
+    'mail:status' => ['Mail configuration and the recent send log', 'cmdMailStatus'],
+    'mail:test' => ['Send a test message  --to=', 'cmdMailTest'],
+    'reminders:run' => ['Run the outstanding-parts digest  [--force]', 'cmdRemindersRun'],
+
+    'clearbooks:status' => ['Clear Books connection and posting settings', 'cmdClearBooksStatus'],
+];
+
+$command = $argv[1] ?? '';
+
+if ($command === '' || in_array($command, ['--help', '-h', 'help'], true)) {
+    echo "Production Tracker admin console\n\n";
+    echo "Usage: php bin/console.php <command> [--flag=value]\n\n";
+
+    foreach ($commands as $name => [$description, $fn]) {
+        printf("  %-20s %s\n", $name, $description);
+    }
+
+    echo "\nDay-to-day work — orders, parts, pricing — is done in the web interface.\n";
+    echo "This is for the things that are awkward or risky without a proper flow.\n";
+
+    exit(0);
+}
+
+if (!isset($commands[$command])) {
+    fail("Unknown command: {$command}. Run without arguments for the command list.");
+}
+
+exit($commands[$command][1]($argv));

@@ -1,0 +1,389 @@
+# Production Tracker — project state
+
+Where the codebase actually is, written from the code and the live schema
+rather than from memory. Read this before picking the work up again.
+
+**Last verified:** 18 August 2026, against `production_tracker_dev` on the
+local MariaDB 12.3 instance and a full browser/HTTP pass across all three role
+levels.
+
+For *how to install and run it*, see [`docs/INSTALL.md`](docs/INSTALL.md).
+This file is about what exists and why, not how to deploy it.
+
+---
+
+## 1. What this is
+
+A self-hosted PHP 8.1+/MariaDB order tracker for Junction Inc Ltd, covering
+quote request → order → workshop production → delivery note → Clear Books
+invoice. Internal tool, never resold, but the data model supports multiple
+client companies from day one.
+
+Two workflow complications drive most of the design:
+
+- **Free-issue material.** Clients supply stock for Junction to work on. It
+  arrives partially, late, or wrong, and that has to be tracked per order line.
+- **Partial and batched delivery.** Finished parts go out in whatever
+  quantities are ready, so ordered/made/delivered/invoiced are four independent
+  running totals rather than one status.
+
+### Relationship to Kitwell
+
+Kitwell (the sibling asset tracker, `github.com/maeterlinckle/kitwell`) is
+**not a dependency** — no shared code, database, includes or paths. Patterns
+were studied and re-implemented natively against this application's own
+classes. The visual language is deliberately the same family: `public/css/app.css`
+is Kitwell's stylesheet with the asset-register-specific sections removed and
+this application's components appended, so the two look like siblings without
+sharing a file.
+
+Deliberate divergences from Kitwell, each for a reason:
+
+| Area | Kitwell | Here | Why |
+|---|---|---|---|
+| Permissions | Admin-editable permission grid | Fixed in-code `Capabilities::MATRIX` | The seven roles are specified and fixed; a grid would be configuration nobody needs |
+| QR codes | Hand-rolled Reed–Solomon | `endroid/qr-code` | These go on physical paperwork; correctness beats dependency-avoidance |
+| PDF | None to borrow | `dompdf` | Kitwell has no PDF generation |
+| Scheduling | Several reminder types | One digest | There is one thing worth chasing here |
+
+---
+
+## 2. Architecture
+
+Plain PHP, no framework, no build step. PSR-4 `App\` → `src/`.
+
+```
+bin/            CLI entry points (migrate, create-admin, console, reminders)
+install.sh      prompt-driven installer
+manage.sh       the single administration entry point
+config/         config.php — one array, everything from .env via App\Core\Env
+database/
+  migrations/   numbered .sql, forward-only, tracked in a migrations table
+docs/           INSTALL.md
+public/         document root — index.php, css/app.css, js/app.js
+routes/web.php  the whole route table, one file
+src/
+  Controllers/  Client/*, Staff/*, and the shared few at the top level
+  Core/         Router, Auth, Capabilities, Database, View, Csrf, Session,
+                Upload, Validator, Config, Env, Flash, Request, Response,
+                Crypto, Migrator, LoginThrottle, NotificationTypes
+  Mail/         Mailer, EmailTemplate, Merge, Layout
+  Middleware/   auth, guest, staff, csrf + MiddlewareRunner
+  Models/       one class per table-ish concept, static methods, no ORM
+  Services/     Branding, ClearBooksClient, FreeIssueNoteService, Invitations,
+                Notifications, PartsOnOrder, PdfService, QrCodeService,
+                Reminders, ReferenceNumber
+storage/        uploads/ and logs/ — outside public/, never web-reachable
+templates/      plain PHP views; layouts/, partials/, one directory per area
+```
+
+84 PHP classes, 49 templates, ~1,800 lines of CSS, ~420 of JS.
+
+### Established patterns
+
+**Config and environment.** `.env` → `App\Core\Env` → `config/config.php`
+returns one nested array → `Config::get('app.url')`. Nothing reads `$_ENV`
+directly. Runtime-editable settings live in the `settings` key/value table
+(`App\Models\Setting`) and *win over* the `.env` fallback, so an operator can
+change SMTP without a redeploy.
+
+**Database.** PDO with `ATTR_EMULATE_PREPARES => false`. Every query goes
+through `App\Core\Database` (`one`, `all`, `scalar`, `run`, `insert`,
+`transaction`) with **named placeholders** — no string interpolation of user
+input anywhere. `LIMIT` is the one place an integer is cast and inlined, because
+it cannot be bound.
+
+**Models** are final classes of static methods returning plain arrays. No
+identity map, no lazy loading. Multi-step writes go through
+`Database::transaction()` and take `PDO $pdo` so they compose (see
+`ReferenceNumber::next()`, which accepts an existing connection precisely so it
+can be called inside an open transaction).
+
+**Auth and RBAC.** `users.side` (`staff`|`client`) is the fixed top-level split
+and is enforced by a CHECK constraint tying it to `client_id` nullability.
+Granular permission is `roles`/`user_roles` many-to-many plus the in-code
+`Capabilities::MATRIX`. A generic superset rule in `Capabilities::allows()`
+gives `staff.admin` any capability listing a `staff.*` role, and `client.admin`
+any listing a `client.*` role, rather than repeating them per row.
+`Auth::authorize()` 403s and exits, JSON-aware.
+
+**Pricing visibility** is a hard rule, not styling: anything carrying a price
+is gated on `view_pricing` at the point the data is assembled — controllers omit
+it from the view payload, `Notifications` refuses to send price-bearing emails
+to recipients without it, and the preferences screen does not even offer those
+notification types to a user who could never receive them.
+
+**Templating.** `View::render($template, $data, $layout)`; templates are plain
+PHP with `<?= e($x) ?>`. `partial()` for fragments. `View::renderFile()` names
+its own locals `$__template`/`$__data`/`$__path` because `extract(..., EXTR_SKIP)`
+silently drops a view variable that collides with one — a real bug once.
+
+**CSRF** on every state-changing route via the `csrf` middleware and
+`csrf_field()`. Token rotates on login.
+
+**Uploads.** Disk under `storage/uploads/<area>/`, randomised filenames
+(`Ymd-His-<hex>.ext`), path-traversal blocked by realpath containment, DB stores
+the relative path only. Extension allow-list plus finfo magic-number checks for
+formats that have one — deliberately skipped for CAD, which does not.
+
+**File responses** go through `Response::file()`, which resolves a real content
+type (a stored `application/octet-stream` plus `nosniff` is what forces a
+download), sends `Content-Disposition: inline`, and replaces the page CSP with a
+narrow one that does *not* sandbox — sandboxing is what makes a browser's PDF
+viewer give up and offer a download instead.
+
+**Email.** `Mailer::sendTemplate($key, $to, $name, $fields)` → `EmailTemplate`
+(defaults in code, overrides in DB) → `Merge` (escaped `{{placeholders}}`) →
+`Layout` (fixed table-based HTML shell, logo embedded by CID) → PHPMailer.
+Never throws; every attempt lands in `email_log` either way.
+
+**Routing.** One `Router` with `{name:regex}` placeholders compiled by a
+hand-written scanner that counts brace depth, so a quantifier inside a
+constraint (`{token:[a-f0-9]{64}}`) works.
+
+---
+
+## 3. Database schema
+
+32 tables. Every table InnoDB/utf8mb4; `uq_`/`idx_`/`fk_`/`chk_` naming
+throughout.
+
+### Identity and access
+
+| Table | Notes |
+|---|---|
+| `clients` | Client companies. `clearbooks_entity_id` links to accounting. |
+| `users` | `side` enum + nullable `client_id`, tied by `chk_users_client_side`. `password_set_at` NULL = invited, never signed in. |
+| `roles`, `user_roles` | Seven seeded roles, many-to-many. |
+| `user_invites` | SHA-256 of the token only, `expires_at`, `accepted_at`. Rows kept after acceptance as the audit trail of how an account came to exist. |
+| `login_attempts` | Throttling, per email+IP. |
+| `notification_preferences` | Opt-in only; a missing row means "do not send". |
+
+### Parts and quoting
+
+| Table | Notes |
+|---|---|
+| `parts` | Client-visible fields plus Junction-only workshop fields on one row. `status` draft→quoted, `is_archived` for reversible hiding. |
+| `part_alternate_numbers` | Drawing numbers and the like. |
+| `part_free_issue_materials` | What material the client supplies. |
+| `part_files`, `part_photos` | Drawings and client photos, disk + reference. |
+| `part_links` | Symmetric "usually ordered with", one row per unordered pair enforced by `chk_part_links_order (part_id < linked_part_id)`. |
+
+`parts.free_issue_relationship` (`none`/`divide`/`multiply`) +
+`free_issue_factor` (2–10, enforced by `chk_parts_free_issue_factor`) +
+`free_issue_updated_by`/`_at`. **Set by the client** from the quote stage,
+overridable by staff, with the override attributed.
+
+### Orders and production
+
+| Table | Notes |
+|---|---|
+| `orders` | `order_number` unique, PO document required at placement. |
+| `order_lines` | The heart of it — see below. |
+| `production_status_log` | Every stage change, with who and why. |
+| `free_issue_receipts` | One row per check-in event, with `discrepancy_type` (`none`/`shortfall`/`excess`/`wrong_item`), notes, and `resolved_at`/`resolved_by`. |
+| `route_cards` | Generated PDF per line; the row is only written after the PDF exists. |
+| `delivery_notes`, `delivery_note_lines` | `type` = `free_issue_in` or `goods_out`. |
+| `invoices` | Clear Books reference + amount, per delivery note. |
+| `order_notes`, `order_queries`, `order_query_replies` | Timestamped log and threaded queries. |
+| `order_photos` | Staff-only progress/setup photos. |
+
+**`order_lines` is where the status model lives.** A coarse `stage` enum
+(`awaiting_free_issue`, `ready_for_production`, `in_production`, `complete`,
+`closed`) sits alongside four orthogonal quantity pairs:
+
+```
+qty_free_issue_required / qty_free_issue_received
+qty_ordered / qty_completed
+qty_ordered / qty_delivered
+qty_delivered / qty_invoiced
+```
+
+This is the central design decision and everything else follows from it: partial
+receipt, partial completion and batched despatch are *quantities*, not states,
+so none of them needs its own enum value and they can all be true at once.
+`OrderLine::statusLabel()` renders the combination
+("In production — part complete (12 of 20)").
+
+`setStage()` to `complete`/`closed` raises `qty_completed` to `qty_ordered`, so
+the enum and the counter cannot disagree — migration `004` repairs rows that
+predate that.
+
+### Configuration and operations
+
+| Table | Notes |
+|---|---|
+| `settings` | Key/value, runtime-editable. SMTP password AES-256-GCM encrypted. |
+| `email_templates` | **Overrides only** — a row exists iff somebody edited that message. |
+| `email_log` | Every send attempt, sent or failed, with the error verbatim. |
+| `reminder_runs` | One row per digest actually sent; also the interval guard. |
+| `clearbooks_tokens` | OAuth token pair, auto-refreshed. |
+| `reference_sequences` | Per-year counters behind ORD-/DN-/RC- numbers. |
+| `migrations` | Applied migration filenames. |
+
+### Migrations
+
+| File | Contents |
+|---|---|
+| `001_schema.sql` | Original 18 tables. |
+| `002_feature_expansion.sql` | Roles/permissions, settings, part links, free-issue ratio, photos, notes/queries, discrepancies, notification preferences. Renamed `users.role` → `users.side`. |
+| `003_invites_templates_reminders.sql` | `email_templates`, `user_invites`, `reminder_runs`, `users.password_set_at`, free-issue attribution columns and the 2–10 factor CHECK. |
+| `004_backfill_completed_quantities.sql` | Data repair: `qty_completed` on lines marked complete before `setStage()` kept them in step. |
+
+---
+
+## 4. Feature status
+
+### Original brief
+
+| Deliverable | Status |
+|---|---|
+| Multi-client data model | Done |
+| Quote request → quoted price | Done |
+| Order placement with PO upload | Done |
+| Free-issue tracking at line level, partial receipt | Done |
+| Partial/batched delivery at line level | Done |
+| Delivery notes (in and out) with PDF | Done |
+| Route cards with QR | Done |
+| Clear Books invoicing | OAuth done; **payload unverified** — see §5 |
+| Light/dark theme | Done |
+| Install/maintenance notes | Done — `docs/INSTALL.md` |
+
+### 14-item change request
+
+| # | Item | Status |
+|---|---|---|
+| 1 | Light/dark toggle matching Kitwell exactly | Done — same markup, same CSS, crescent/sun verified in both themes |
+| 2 | Symmetric "usually ordered with" part linking | Done — surfaced on the part page and as a suggestion while ordering |
+| 3 | Client-editable parts, archive, delete-if-unused | Done |
+| 4 | Free-issue divisor/multiplier on a part | Done — now client-set, 2–10 either way |
+| 5 | AJAX part search on the order form, auto free-issue qty | Done — and recalculated server-side |
+| 6 | Free-issue delivery notes with QR check-in, discrepancies | Done — discrepancies block advancement until resolved |
+| 7 | Cumulative parts-completed per line | Done |
+| 8 | Order notes and threaded queries | Done |
+| 9 | Delivery notes grouped on the order page | Done |
+| 10 | Seven roles, multi-role, pricing hidden entirely | Done |
+| 11 | Logo upload | Done — nav, sign-in, PDFs, embedded in email |
+| 12 | Email config + opt-in notification preferences | Done |
+| 13 | Settings menu, staff.admin only | Done |
+| 14 | Client part photos, staff order photos | Done |
+
+### Follow-up round (17 August 2026)
+
+| Item | Status |
+|---|---|
+| Pull full styling from Kitwell | Done — `app.css` rebuilt from Kitwell's |
+| Menu bar with dropdowns matching Kitwell | Done — `<details>` groups, drawer below 1150px |
+| Menu must not wrap | Done — verified 1400/1280/1150/1100px, header stays 61px |
+| Split sections for menu-level access | Done — Parts ▸ New part, Orders ▸ Place an order, Settings ▸ 7 entries |
+| Move Clients to Settings | Done |
+| Invite-based user creation | Done — three entry points, single-use 7-day links |
+| Free-issue ratio client-set, range to 10 | Done — with staff override and attribution |
+| PDFs view rather than download | Done — `Response::file()` |
+| Kitwell email template system | Done — 12 editable templates, merge fields, preview |
+| Parts-on-order report with cross-PO totals | Done — grouped per part, CSV export |
+| Cron email reminders for outstanding parts | Done — `bin/reminders.php` + Settings → Reminders |
+
+---
+
+### Deployment round (18 August 2026)
+
+| Item | Status |
+|---|---|
+| `install.sh` — prompt-driven installer | Done — same shape as Kitwell's: OS/package detection, answers file, `--dry-run`, `--non-interactive`, upgrade-in-place |
+| `manage.sh` — single admin entry point | Done — 28 commands; linked to `/usr/local/sbin/tracker` |
+| `bin/console.php` extended | Done — 19 commands; everything touching the database goes through it |
+| `/health` endpoint | Done — unauthenticated, deliberately uninformative |
+| Clear Books verified against the spec | Done — see below; the previous implementation was wrong in every guessed part |
+| GitHub repository | <https://github.com/maeterlinckle/production-tracker> |
+
+---
+
+## 5. Clear Books — what the verification found
+
+Checked against <https://api.clearbooks.co.uk/spec/v1.yaml> (OpenAPI 3.1,
+v1.0.0) and <https://api-docs.clearbooks.co.uk/>. The OAuth *mechanism* had
+been identified correctly in an earlier round; every concrete value below it
+had been guessed, and every guess was wrong.
+
+| | Before (guessed) | Per the spec |
+|---|---|---|
+| Authorise URL | `oauth-helper.clearbooks.co.uk/oauth2/authorize` | `secure.clearbooks.co.uk/account/action/oauth/` |
+| Token URL | `oauth-helper.clearbooks.co.uk/oauth2/token` | `api.clearbooks.co.uk/oauth/token` |
+| API base | `api.clearbooks.co.uk` | `api.clearbooks.co.uk/v1` |
+| Invoice endpoint | `POST /v2/invoices` | `POST /accounting/sales/invoices` |
+| Scopes | none requested | six required, named |
+| PKCE | absent | supported and recommended — now used |
+| Business selection | absent | `X-Business-ID` header |
+| Invoice fields | `entity_id`, `lines[]`, `unit_price` | `customerId`, `vatTreatment`, `lineItems[]`, `unitPrice` |
+| Line fields | description, quantity, unit price | + `accountCode` and `vatRateKey`, both required |
+| Response | `invoice_number`, `total` | `formattedDocumentNumber`, `gross` |
+| Rate limiting | unhandled | 429 with exponential backoff on reads |
+| Errors | status code only | their `errorCode`/`errorMessage` repeated verbatim |
+
+Consequences worth remembering:
+
+- **The client "entity reference" was never an entity reference.** It is the
+  numeric ID of a Clear Books *customer*. The field is relabelled and validated;
+  a non-numeric value is refused with an explanation rather than sent.
+- **Three new settings are mandatory** before an invoice can be raised: sales
+  account code, VAT treatment and VAT rate. There is no sensible default for
+  any of them — they are properties of Junction's own chart of accounts — so
+  the settings page reads the live lists from the API and offers them.
+- **The endpoints are no longer configurable.** They were in `.env`, which
+  meant the wrong values were installable. They are constants now.
+- Refresh tokens are single use and there is one access token per user per
+  application, so reconnecting revokes the current token. Both are handled and
+  both are documented on the settings page.
+
+Still not done: **no invoice has been raised against a live Clear Books
+account from this code.** The request is built from the published spec rather
+than guessed, which is a different thing from proven. Raise one real invoice
+against a low-value delivery note before trusting it.
+
+---
+
+## 6. Known gaps and things to watch
+
+**No automated test suite.** Matches Kitwell's level of rigour, as specified.
+Verification is a full HTTP sweep across four role levels plus browser testing
+of the workflows. `tests/` exists but is near-empty.
+
+**No password reset.** Not requested. Invitations cover onboarding, and
+`tracker reset-password EMAIL` covers a forgotten one. If self-service reset is
+wanted later, `user_invites` and `InviteController` are the shape to copy.
+
+**Orders have no due date.** Nothing in the schema records when a customer
+wants parts. "Overdue" in the reminder digest and the report therefore means
+*open longer than the configured ageing threshold*, counted from the order
+date. If real promised dates matter, that is a column on `orders` or
+`order_lines` and a change to `PartsOnOrder`.
+
+**The installer has not been run end to end on a real server.** Its syntax,
+argument handling, guards and help are verified; the package installation, web
+server configuration and SELinux paths cannot be exercised from a Windows
+development box. It is closely derived from Kitwell's, which is in service, and
+the risky steps are all behind `--dry-run`.
+
+**Local development note.** The PHP on this Windows box has no `php.ini`, so
+extensions load only when one is supplied:
+
+```bash
+PHPRC=<scratchpad> php bin/console.php doctor
+php -c <scratchpad>/php-test.ini -S 127.0.0.1:8321 -t public
+```
+
+Without it, `bin/*.php` dies at bootstrap on a missing `mb_internal_encoding`.
+Not a code problem — a machine setup one — but it will waste ten minutes if
+somebody hits it cold.
+
+---
+
+## 7. Immediate next steps
+
+1. **Raise one real Clear Books invoice** against a low-value delivery note.
+   The only part of the system never exercised against the live service.
+2. **Configure real SMTP** and re-run the invitation and reminder flows. Both
+   are proven end to end locally, but every send so far has failed at the
+   connection, by design of the test.
+3. **Run `install.sh --dry-run` on the target server**, then the real thing.

@@ -1,0 +1,1804 @@
+/* ==========================================================================
+   Junction Production Tracker — base stylesheet
+
+   Design priorities, in order:
+     1. Legible on a phone in a workshop: large type, high contrast, big targets.
+     2. Works with gloves: nothing smaller than 44px is tappable.
+     3. Light and dark themes driven by [data-theme] on <html>.
+   ========================================================================== */
+
+:root {
+    --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+    --radius: 10px;
+    --radius-sm: 7px;
+    --tap: 44px;
+
+    --space-1: 0.25rem;
+    --space-2: 0.5rem;
+    --space-3: 0.75rem;
+    --space-4: 1rem;
+    --space-5: 1.5rem;
+    --space-6: 2rem;
+
+    --shadow: 0 1px 2px rgb(15 23 42 / 8%), 0 2px 8px rgb(15 23 42 / 6%);
+}
+
+/* --- Light theme (default) ------------------------------------------------ */
+[data-theme="light"] {
+    --bg: #f1f5f9;
+    --bg-raised: #ffffff;
+    --bg-sunken: #e2e8f0;
+    --bg-hover: #f8fafc;
+    --text: #0f172a;
+    --text-muted: #52627a;
+    --border: #cbd5e1;
+    --border-strong: #94a3b8;
+
+    --accent: #1d4ed8;
+    --accent-text: #ffffff;
+    --accent-hover: #1e40af;
+    --accent-soft: #dbeafe;
+
+    --ok: #15803d;
+    --ok-soft: #dcfce7;
+    /* Amber-800 rather than amber-700: on the soft amber background the
+       lighter shade measured 4.42:1, just under the 4.5:1 needed for normal
+       text — and this palette has to work in poor workshop lighting. */
+    --warn: #854d0e;
+    --warn-soft: #fef3c7;
+    --danger: #b91c1c;
+    --danger-soft: #fee2e2;
+    --info: #0369a1;
+    --info-soft: #e0f2fe;
+
+    --focus: #1d4ed8;
+    color-scheme: light;
+}
+
+/* --- Dark theme ----------------------------------------------------------- */
+[data-theme="dark"] {
+    --bg: #0b1120;
+    --bg-raised: #172033;
+    --bg-sunken: #0f172a;
+    --bg-hover: #1e293b;
+    --text: #f1f5f9;
+    --text-muted: #a3b1c6;
+    --border: #33415c;
+    --border-strong: #64748b;
+
+    --accent: #60a5fa;
+    --accent-text: #06152e;
+    --accent-hover: #93c5fd;
+    --accent-soft: #1e3a8a;
+
+    --ok: #4ade80;
+    --ok-soft: #14532d;
+    --warn: #fbbf24;
+    --warn-soft: #52350a;
+    --danger: #f87171;
+    --danger-soft: #601616;
+    /* Sky-300 rather than sky-400: on the deep soft-blue background the
+       darker shade measured 4.42:1, just under 4.5:1 for normal text. */
+    --info: #7dd3fc;
+    --info-soft: #0c4a6e;
+
+    --focus: #93c5fd;
+    color-scheme: dark;
+}
+
+/* --- Reset ---------------------------------------------------------------- */
+*, *::before, *::after { box-sizing: border-box; }
+
+/* The browser's own `[hidden] { display: none }` sits in the user-agent
+   stylesheet, so *any* author rule setting `display` beats it — and `.btn` sets
+   `display: inline-flex`. Every `element.hidden = true` on a button in this
+   application was therefore doing nothing at all: the PAT wizard showed Next on
+   its last step and Back on its first, the scanner showed Start and Stop
+   together, and the photo upload showed its submit before a file was chosen.
+   This is the one place `!important` is the right tool — `hidden` means hidden,
+   and no component should have to opt in. */
+[hidden] { display: none !important; }
+
+html {
+    -webkit-text-size-adjust: 100%;
+}
+
+body {
+    margin: 0;
+    font-family: var(--font-sans);
+    font-size: 17px;              /* deliberately larger than a typical 16px */
+    line-height: 1.55;
+    background: var(--bg);
+    color: var(--text);
+    -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, h4 { line-height: 1.25; margin: 0 0 var(--space-3); }
+h1 { font-size: 1.6rem; letter-spacing: -0.01em; }
+h2 { font-size: 1.25rem; }
+h3 { font-size: 1.05rem; }
+p  { margin: 0 0 var(--space-3); }
+
+a { color: var(--accent); }
+a:hover { color: var(--accent-hover); }
+
+:focus-visible {
+    outline: 3px solid var(--focus);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+}
+
+.sr-only {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+.skip-link {
+    position: absolute; left: -9999px; top: 0; z-index: 100;
+    background: var(--accent); color: var(--accent-text);
+    padding: var(--space-3) var(--space-4); border-radius: 0 0 var(--radius) 0;
+}
+.skip-link:focus { left: 0; }
+
+.container {
+    width: 100%;
+    max-width: 1200px;
+    margin-inline: auto;
+    padding-inline: var(--space-4);
+}
+
+.muted { color: var(--text-muted); }
+.mono { font-family: var(--font-mono); font-size: 0.86em; }
+.nowrap { white-space: nowrap; }
+.break { word-break: break-word; }
+.optional { font-weight: 400; color: var(--text-muted); font-size: 0.9em; }
+
+/* --- Header and navigation ------------------------------------------------ */
+.site-header {
+    background: var(--bg-raised);
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    z-index: 40;
+}
+
+.header-inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    min-height: 60px;
+}
+
+.brand {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-weight: 700;
+    color: var(--text);
+    padding-block: var(--space-2);
+}
+
+/* The logo is the link home; the wordmark next to it is not. */
+.brand-home {
+    display: inline-flex;
+    align-items: center;
+    border-radius: var(--radius-sm);
+    color: inherit;
+    text-decoration: none;
+}
+.brand-home:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.brand-mark {
+    display: grid;
+    place-items: center;
+    width: 34px; height: 34px;
+    border-radius: 9px;
+    background: var(--accent);
+    color: var(--accent-text);
+    font-size: 0.8rem;
+    font-weight: 800;
+    letter-spacing: 0.03em;
+}
+
+.brand-name { font-size: 1.02rem; }
+
+.nav-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: var(--tap); height: var(--tap);
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text);
+    cursor: pointer;
+}
+
+.nav-toggle-bars { display: grid; gap: 4px; }
+.nav-toggle-bars span {
+    display: block; width: 20px; height: 2px;
+    background: currentColor; border-radius: 2px;
+}
+
+.primary-nav {
+    display: none;
+    position: absolute;
+    left: 0; right: 0;
+    top: 100%;
+    background: var(--bg-raised);
+    border-bottom: 1px solid var(--border);
+    box-shadow: var(--shadow);
+    padding: var(--space-3) var(--space-4) var(--space-4);
+}
+
+.primary-nav.is-open { display: block; }
+
+.nav-list {
+    list-style: none;
+    margin: 0 0 var(--space-3);
+    padding: 0;
+    display: grid;
+    gap: var(--space-1);
+}
+
+.nav-link {
+    display: flex;
+    align-items: center;
+    min-height: var(--tap);
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-sm);
+    color: var(--text);
+    text-decoration: none;
+    font-weight: 600;
+}
+
+.nav-link:hover { background: var(--bg-hover); color: var(--text); }
+
+.nav-link.is-active {
+    background: var(--accent-soft);
+    color: var(--text);
+    box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.nav-link.is-pending {
+    color: var(--text-muted);
+    cursor: default;
+    gap: var(--space-2);
+    font-weight: 500;
+}
+.nav-link.is-pending:hover { background: transparent; }
+
+.nav-divider {
+    height: 1px;
+    background: var(--border);
+    margin: var(--space-2) 0;
+}
+
+.nav-account {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    padding-top: var(--space-3);
+    border-top: 1px solid var(--border);
+}
+
+.nav-account-group { position: relative; flex: 1 1 auto; }
+.nav-user { gap: var(--space-2); flex: 1 1 auto; }
+.nav-user-text { display: grid; line-height: 1.2; }
+.nav-user-name { font-weight: 600; }
+.nav-user-role { font-size: 0.82rem; color: var(--text-muted); font-weight: 500; }
+
+.avatar {
+    display: grid; place-items: center;
+    width: 34px; height: 34px;
+    border-radius: 50%;
+    background: var(--bg-sunken);
+    color: var(--text);
+    font-weight: 700;
+}
+
+.nav-logout { margin: 0; }
+
+/* Desktop navigation */
+/* The horizontal bar appears at 1150px.
+   ---------------------------------------------------------------------------
+   An administrator sees every item, which is the widest the bar ever gets: six
+   menu items, the account block, Scan and the brand come to about 1059px of
+   content, so the bar needs roughly 1091px of viewport before it fits on one
+   row. The margin above that covers an APP_NAME longer than "Kitwell"; the
+   wordmark is capped in case it is much longer.
+
+   Below 1150px the drawer is used instead: a vertical list cannot wrap, and it
+   is the same control phones already use. Widening the window brings the bar
+   back. */
+@media (min-width: 1150px) {
+    .nav-toggle { display: none; }
+
+    /* The block padding is a mobile tap-target concern; on a desktop the row's
+       own min-height and centring do that job, and dropping it here is what
+       lets the stacked brand fit inside 60px. */
+    .brand { padding-block: 0; }
+
+    /* The desktop brand lockup itself is at the end of the branding section,
+       next to the mobile rules it has to outrank — a media query adds no
+       specificity, so the two have to be read in source order. */
+
+    .primary-nav {
+        display: flex;
+        position: static;
+        align-items: center;
+        justify-content: space-between;
+        flex: 1 1 auto;
+        gap: var(--space-4);
+        background: none;
+        border: 0;
+        box-shadow: none;
+        padding: 0;
+    }
+
+    .nav-list {
+        display: flex;
+        align-items: center;
+        gap: var(--space-1);
+        margin: 0;
+        /* Never wrap. A menu that reflows onto a second row doubles the header
+           height and pushes the page down; below the width where the bar fits
+           on one line the drawer is used instead. */
+        flex-wrap: nowrap;
+    }
+
+    .nav-item { flex: 0 0 auto; }
+
+    /* Nothing in the bar wraps its own text either. A squeezed "Sign out"
+       breaking onto two lines made the header 10px taller than the menu did,
+       which is the same bug one level down. */
+    .site-header .btn,
+    .nav-account .btn,
+    .brand-name { white-space: nowrap; }
+
+    /* The account block keeps its natural width rather than being squeezed
+       into one: it is the thing that gets compressed first otherwise. */
+    .nav-account { flex: 0 0 auto; }
+
+    /* Slightly tighter than the touch-sized padding used on a phone: six items
+       at 12px a side is 144px of air, which is most of a menu item. */
+    .nav-link { min-height: 40px; padding-inline: var(--space-2); white-space: nowrap; }
+
+    /* The menu text sits on the foot of the logo.
+       ---------------------------------------------------------------------
+       Everything in the bar bottom-aligns against a shared floor, and the
+       brand and the menu text are each lifted off it by the same variable — so
+       they cannot drift apart: change it and both move together.
+
+       `align-items: baseline` is the obvious thing to reach for here and is a
+       trap. A menu item is `display: flex`, and a flex container's baseline is
+       synthesised from its first child — which differs between a plain link
+       (an anonymous text item) and a group's `<summary>` (a real `<span>`).
+       Measured, the two disagreed by 6.8px while looking entirely plausible.
+
+       Bottom-aligning alone is not enough either: a menu item's box bottom is
+       the bottom of its *line box*, which carries half-leading below the
+       glyphs — measured, that left the text sitting a couple of pixels high.
+       `line-height: 1` collapses the line box onto the text, after which one
+       shared floor value puts the logo's foot and the text's on the same line.
+
+       The account block and the quick actions opt out and stay centred: they
+       are controls rather than text on a line, and dropped to the baseline
+       they read as having slipped. */
+    .header-inner { align-items: flex-end; --bar-floor: 14px; }
+    .header-actions { align-self: center; }
+    .primary-nav { align-items: flex-end; }
+    .nav-account { align-self: center; }
+    .nav-list { align-items: flex-end; }
+
+    .brand { padding-bottom: var(--bar-floor); }
+
+    .nav-list > .nav-item > .nav-link,
+    .nav-list > .nav-item > .nav-group > .nav-group-toggle {
+        align-items: flex-end;
+        line-height: 1;
+        padding-bottom: var(--bar-floor);
+    }
+
+    /* The caret is a shape, not a letter: it belongs against the middle of the
+       text rather than sitting on the same line as its feet. */
+    .nav-list > .nav-item > .nav-group > .nav-group-toggle .caret { align-self: center; }
+
+    /* The underline sits at the foot of the box, which is now the floor of the
+       bar rather than the underside of the text — so it reads as an underline
+       for the whole row instead of a strike through the descenders. */
+    .nav-link.is-active {
+        box-shadow: inset 0 -3px 0 var(--accent);
+        background: transparent;
+    }
+
+    .nav-divider {
+        width: 1px; height: 24px; margin-inline: var(--space-2); background: var(--border);
+    }
+
+    /* nowrap: the account area is the theme toggle, the account menu and Sign
+       out, and they belong on one line. Allowed to wrap it pushed Sign out
+       onto a second row and doubled the header's height. */
+    .nav-account { border: 0; padding-top: 0; flex-wrap: nowrap; }
+
+    /* On a desktop the bar shows the avatar alone; the name and role are the
+       first thing inside the account menu.
+       This is arithmetic, not taste: .container caps at 1200px, and brand
+       (142) + six nav items (612) + the account chip with a name (321) + the
+       scan button (86) is already over that before gaps. The name was
+       previously revealed at 1100px, a width the header can never actually
+       reach, so "Settings" wrapped onto a second row at every desktop size.
+       In the slide-out menu below 900px there is room, and it still shows. */
+    .nav-user-text { display: none; }
+}
+
+/* Who you are, at the top of your own menu. */
+.nav-account-identity {
+    padding: var(--space-2) var(--space-3) var(--space-3);
+    border-bottom: 1px solid var(--border);
+    margin-bottom: var(--space-1);
+    line-height: 1.3;
+}
+.nav-account-identity strong { display: block; }
+.nav-account-identity span { font-size: 0.85rem; color: var(--text-muted); }
+
+/* Redundant on a phone, where the chip itself already shows both. */
+@media (max-width: 899px) {
+    .nav-account-identity { display: none; }
+}
+
+/* --- Main ----------------------------------------------------------------- */
+main.container { padding-block: var(--space-5) var(--space-6); }
+
+.page-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--space-3);
+    margin-bottom: var(--space-5);
+}
+.page-head h1 { margin-bottom: var(--space-1); }
+.page-head p { margin: 0; }
+
+.section-title {
+    margin: var(--space-6) 0 var(--space-3);
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+}
+
+/* --- Cards ---------------------------------------------------------------- */
+.card {
+    background: var(--bg-raised);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: var(--space-4);
+    margin-bottom: var(--space-4);
+    box-shadow: var(--shadow);
+}
+
+.card-grid {
+    display: grid;
+    gap: var(--space-4);
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+}
+
+.notice-card { border-left: 4px solid var(--accent); }
+
+/* A short explanation inside a form, where a whole card would be too much:
+   "this account will be emailed an invitation", and the like. */
+.notice-inline {
+    padding: var(--space-3);
+    border-left: 4px solid var(--accent);
+    border-radius: var(--radius-sm);
+    background: var(--bg-sunken);
+    font-size: 0.94rem;
+    margin-bottom: var(--space-4);
+}
+
+/* The invited user's own details, above the password they are about to set. */
+.invite-summary { margin-bottom: var(--space-3); }
+
+/* Status cards: a coloured edge rather than a coloured panel, so the text
+   inside keeps the page's normal contrast. */
+.card-ok     { border-left: 4px solid var(--ok); }
+.card-warn   { border-left: 4px solid var(--warn); }
+.card-danger { border-left: 4px solid var(--danger); }
+
+.plain-list { margin: 0; padding-left: var(--space-4); }
+.plain-list li + li { margin-top: var(--space-1); }
+
+/* --- Sub-navigation ------------------------------------------------------- */
+/* Tabs inside a settings area, so four related pages are one menu entry. */
+.subnav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1);
+    margin-bottom: var(--space-4);
+    border-bottom: 1px solid var(--border);
+}
+
+.subnav-link {
+    display: inline-flex;
+    align-items: center;
+    min-height: var(--tap);
+    padding: var(--space-2) var(--space-3);
+    color: var(--text-muted);
+    text-decoration: none;
+    font-weight: 600;
+    border-bottom: 3px solid transparent;
+    margin-bottom: -1px;
+}
+
+.subnav-link:hover { color: var(--text); }
+
+.subnav-link.is-active {
+    color: var(--text);
+    border-bottom-color: var(--accent);
+}
+
+/* A short form that sits on one line where there is room: the test-email box,
+   and anything else that is a single field plus its button. */
+/* A field or two and the button that acts on them, on one line.
+   ---------------------------------------------------------------------------
+   flex-end, not flex-start. These fields carry a label above the control, so
+   aligning to the top put the button level with the *label* and floating above
+   the input it belongs to. Aligned to the bottom the two sit on the same line
+   and read as one control, which is what they are.
+
+   The wrapped case is why this is not `align-items: center`: at a narrow width
+   the button drops to its own line, and centring would leave it half-height
+   against a tall field. */
+.form-inline {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: var(--space-2);
+    margin: 0;
+}
+.form-inline .field { margin: 0; }
+.form-inline .field-inline { flex: 1 1 16rem; }
+
+/* --- Stats ----------------------------------------------------------------
+   Compact by intent. These are a glanceable summary above the day's work, not
+   the point of the page, and at full height a dozen of them pushed everything
+   else below the fold.
+
+   auto-fit rather than auto-fill: a row with fewer cards than it has room for
+   should stretch them across the width, not leave a column of empty space at
+   the right-hand end. */
+.stat-grid {
+    display: grid;
+    gap: var(--space-2);
+    grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
+    margin-bottom: var(--space-4);
+}
+
+.stat-card {
+    background: var(--bg-raised);
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--border-strong);
+    border-radius: var(--radius);
+    padding: var(--space-3);
+    display: grid;
+    gap: 2px;
+    align-content: start;
+}
+
+.stat-value { font-size: 1.5rem; font-weight: 700; line-height: 1.1; }
+.stat-label { font-size: 0.85rem; line-height: 1.35; color: var(--text-muted); }
+
+.stat-card.stat-danger { border-left-color: var(--danger); }
+.stat-card.stat-danger .stat-value { color: var(--danger); }
+.stat-card.stat-warn { border-left-color: var(--warn); }
+.stat-card.stat-warn .stat-value { color: var(--warn); }
+.stat-card.stat-info { border-left-color: var(--info); }
+
+/* --- Tables --------------------------------------------------------------- */
+.table-wrap {
+    overflow-x: auto;
+    background: var(--bg-raised);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    -webkit-overflow-scrolling: touch;
+}
+
+.table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.96rem;
+}
+
+.table th, .table td {
+    padding: var(--space-3);
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+}
+
+.table thead th {
+    background: var(--bg-sunken);
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+    position: sticky;
+    top: 0;
+}
+
+.table tbody tr:last-child td { border-bottom: 0; }
+.table tbody tr:hover { background: var(--bg-hover); }
+.table-compact th, .table-compact td { padding: var(--space-2) var(--space-3); }
+
+.row-muted td { opacity: 0.62; }
+.cell-sub { font-size: 0.85rem; color: var(--text-muted); }
+.empty { text-align: center; color: var(--text-muted); padding: var(--space-6) !important; }
+
+/* The actions column: one or more buttons in the last cell of a row.
+ *
+ * The cell stays a table-cell and the buttons lay out inline. Anything that
+ * takes the `<td>` out of table layout — `display: flex` in particular — stops
+ * it stretching to the row height, and since the row separator is a
+ * `border-bottom` on the cell, its line is then drawn short of the others.
+ *
+ * Inline layout means `align-items` and `gap` do not apply, hence
+ * `vertical-align` and a margin. `nowrap` keeps a pair of buttons on one line;
+ * the table already scrolls horizontally inside `.table-wrap` when it needs to.
+ */
+td.actions {
+    white-space: nowrap;
+    vertical-align: middle;
+}
+
+td.actions > * { vertical-align: middle; }
+
+/* Half a gap: inline layout contributes the other half itself, because the
+   newline between two buttons in the template collapses to one word space. */
+td.actions > * + * { margin-left: var(--space-1); }
+
+.inline-form { display: inline; margin: 0; }
+
+/* --- Badges and chips ----------------------------------------------------- */
+.badge {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 999px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    background: var(--bg-sunken);
+    color: var(--text);
+    white-space: nowrap;
+}
+
+.badge-ok { background: var(--ok-soft); color: var(--ok); }
+.badge-warn { background: var(--warn-soft); color: var(--warn); }
+.badge-danger { background: var(--danger-soft); color: var(--danger); }
+.badge-role { background: var(--accent-soft); }
+.badge-muted { background: var(--bg-sunken); color: var(--text-muted); }
+
+.permission-chips { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.chip {
+    background: var(--bg-sunken);
+    border-radius: 999px;
+    padding: 4px 12px;
+    font-size: 0.82rem;
+}
+.chip-warn { background: var(--warn-soft); color: var(--warn); font-weight: 600; }
+
+.meta-list { list-style: none; margin: 0 0 var(--space-3); padding: 0; display: grid; gap: var(--space-1); font-size: 0.92rem; }
+
+/* --- Buttons -------------------------------------------------------------- */
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2);
+    min-height: var(--tap);
+    padding: var(--space-2) var(--space-4);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    background: var(--bg-raised);
+    color: var(--text);
+    font: inherit;
+    font-weight: 600;
+    text-decoration: none;
+    cursor: pointer;
+    transition: background-color 0.12s ease, border-color 0.12s ease;
+}
+
+.btn:hover { background: var(--bg-hover); color: var(--text); }
+.btn:active { transform: translateY(1px); }
+
+.btn-primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--accent-text);
+}
+.btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); color: var(--accent-text); }
+
+.btn-warning { background: var(--warn-soft); border-color: var(--warn); color: var(--warn); }
+.btn-danger  { background: var(--danger-soft); border-color: var(--danger); color: var(--danger); }
+
+.btn-ghost { background: transparent; border-color: transparent; }
+.btn-ghost:hover { background: var(--bg-hover); }
+
+.btn-sm { min-height: 38px; padding: var(--space-1) var(--space-3); font-size: 0.9rem; }
+.btn-lg { min-height: 52px; font-size: 1.05rem; padding-inline: var(--space-5); }
+.btn-block { width: 100%; }
+.btn-icon .btn-label { display: none; }
+
+@media (max-width: 899px) {
+    .btn-icon .btn-label { display: inline; }
+}
+
+/* --- Forms ---------------------------------------------------------------- */
+.form { max-width: 720px; }
+.form.card { max-width: 720px; }
+
+.field { margin-bottom: var(--space-4); }
+
+.field-row {
+    display: grid;
+    gap: var(--space-4);
+    grid-template-columns: 1fr;
+}
+@media (min-width: 640px) {
+    .field-row { grid-template-columns: 1fr 1fr; }
+}
+
+.label {
+    display: block;
+    font-weight: 600;
+    margin-bottom: var(--space-1);
+}
+
+.input {
+    display: block;
+    width: 100%;
+    min-height: var(--tap);
+    padding: var(--space-2) var(--space-3);
+    font: inherit;
+    font-size: 1rem;                 /* >=16px stops iOS zooming on focus */
+    color: var(--text);
+    background: var(--bg-raised);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+}
+
+.input:focus { border-color: var(--accent); }
+.input.has-error { border-color: var(--danger); background: var(--danger-soft); }
+
+select.input { appearance: auto; }
+textarea.input { min-height: 120px; resize: vertical; }
+
+.field-hint { margin: var(--space-1) 0 0; font-size: 0.86rem; color: var(--text-muted); }
+.field-error { margin: var(--space-1) 0 0; font-size: 0.88rem; font-weight: 600; color: var(--danger); }
+
+.input-with-button { display: flex; gap: var(--space-2); align-items: stretch; }
+.input-with-button .input { flex: 1 1 auto; }
+.btn-inline { white-space: nowrap; border: 1px solid var(--border); }
+
+.checkbox {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-3);
+    min-height: var(--tap);
+    padding: var(--space-2);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+}
+.checkbox:hover { background: var(--bg-hover); }
+.checkbox input[type="checkbox"] {
+    width: 22px; height: 22px;
+    margin-top: 2px;
+    accent-color: var(--accent);
+    flex: 0 0 auto;
+}
+
+.fieldset {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: var(--space-4);
+    margin: 0 0 var(--space-4);
+}
+.fieldset legend { padding-inline: var(--space-2); font-weight: 700; }
+
+.form-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+    align-items: center;
+}
+
+/* A form inside .form-actions is just a wrapper around one button (each POST
+   needs its own form and CSRF token), so it must not add layout of its own. */
+.form-actions > form { margin: 0; }
+
+/* Several checkboxes that each carry a name and some detail — the reminder
+   notify list. Columns where there is room, one per row on a phone. */
+.check-grid {
+    display: grid;
+    gap: var(--space-2);
+    grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr));
+}
+.check-grid .checkbox { align-items: flex-start; }
+.check-grid .muted { display: block; font-size: 0.88rem; }
+
+.sticky-actions {
+    position: sticky;
+    bottom: 0;
+    background: var(--bg);
+    padding: var(--space-3) 0;
+    border-top: 1px solid var(--border);
+}
+
+.filter-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    align-items: center;
+    margin-bottom: var(--space-4);
+}
+.field-inline { margin: 0; flex: 1 1 180px; }
+.filter-bar .btn { flex: 0 0 auto; }
+
+/* --- Flash messages ------------------------------------------------------- */
+.flash-stack { display: grid; gap: var(--space-2); margin-bottom: var(--space-4); }
+
+.flash {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-4);
+    border-radius: var(--radius-sm);
+    border-left: 4px solid var(--border-strong);
+    background: var(--bg-raised);
+    font-weight: 500;
+}
+
+.text-danger { color: var(--danger); }
+
+/* --- Two-factor ----------------------------------------------------------- */
+
+/* A code is read off a screen and typed in a hurry: wide, spaced and monospaced
+   beats an ordinary input that turns 0 and O into the same shape. */
+.input-code {
+    font-family: var(--font-mono);
+    font-size: 1.4rem;
+    letter-spacing: 0.35em;
+    text-align: center;
+}
+
+.totp-enrol { display: grid; gap: var(--space-4); align-items: start; }
+@media (min-width: 700px) {
+    .totp-enrol { grid-template-columns: auto 1fr; }
+}
+
+/* White behind the symbol whatever the theme: a QR inverted by a dark mode is
+   one a lot of readers will not see at all. */
+.totp-qr {
+    background: #fff;
+    padding: var(--space-3);
+    border-radius: var(--radius);
+    line-height: 0;
+}
+
+.backup-codes {
+    list-style: none;
+    margin: var(--space-3) 0 0;
+    padding: 0;
+    display: grid;
+    gap: var(--space-2);
+    grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+}
+.backup-codes li {
+    padding: var(--space-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-sunken);
+    text-align: center;
+    letter-spacing: 0.06em;
+}
+
+/* The outcome of the last reminder run, kept on the page rather than left in a
+   banner that now times out. */
+.last-run {
+    margin-top: var(--space-4);
+    padding-top: var(--space-4);
+    border-top: 1px solid var(--border);
+}
+.last-run h3 { margin-bottom: var(--space-1); }
+.last-run p { margin-bottom: var(--space-1); }
+
+/* Fading out rather than snapping away: a banner that simply disappears looks
+   like the page reloaded. Nothing depends on the transition finishing — the
+   script removes the element on a timer of its own. */
+.flash.is-leaving {
+    opacity: 0;
+    transform: translateY(-4px);
+    transition: opacity 240ms ease, transform 240ms ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .flash.is-leaving { transition: none; transform: none; }
+}
+
+.flash-success { background: var(--ok-soft); border-left-color: var(--ok); color: var(--ok); }
+.flash-error   { background: var(--danger-soft); border-left-color: var(--danger); color: var(--danger); }
+.flash-warning { background: var(--warn-soft); border-left-color: var(--warn); color: var(--warn); }
+.flash-info    { background: var(--info-soft); border-left-color: var(--info); color: var(--info); }
+
+.flash-close {
+    background: none; border: 0; cursor: pointer;
+    font-size: 1.4rem; line-height: 1; color: inherit; opacity: 0.7;
+    min-width: 32px; min-height: 32px;
+}
+.flash-close:hover { opacity: 1; }
+
+/* --- Roles and permissions ------------------------------------------------ */
+.role-card-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
+.group-title { margin-top: var(--space-4); color: var(--text-muted); font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.05em; }
+
+.permission-group-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); margin-bottom: var(--space-2); }
+.permission-group-head h2 { margin: 0; }
+
+.permission-list {
+    display: grid;
+    gap: var(--space-1);
+    grid-template-columns: 1fr;
+}
+@media (min-width: 760px) {
+    .permission-list { grid-template-columns: 1fr 1fr; }
+}
+
+.permission-item { align-items: flex-start; border: 1px solid transparent; }
+.permission-item span { display: block; }
+.permission-name { font-weight: 600; }
+.permission-desc { font-size: 0.86rem; }
+.permission-slug { font-size: 0.78rem; }
+
+.changes pre {
+    margin: var(--space-2) 0 0;
+    padding: var(--space-2);
+    background: var(--bg-sunken);
+    border-radius: var(--radius-sm);
+    max-width: 420px;
+    overflow-x: auto;
+}
+
+/* --- Auth screens --------------------------------------------------------- */
+.body-centred {
+    min-height: 100vh;
+    min-height: 100dvh;
+    display: grid;
+    place-items: center;
+    background: var(--bg);
+    padding: var(--space-4);
+}
+
+.auth-shell { width: 100%; max-width: 430px; display: grid; gap: var(--space-4); justify-items: center; }
+
+.auth-card {
+    width: 100%;
+    background: var(--bg-raised);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: var(--space-5);
+    box-shadow: var(--shadow);
+}
+
+.auth-brand {
+    display: flex; align-items: center; gap: var(--space-2);
+    margin-bottom: var(--space-5);
+    font-weight: 700; font-size: 1.1rem;
+}
+
+.auth-title { margin-bottom: var(--space-1); }
+.auth-subtitle { color: var(--text-muted); margin-bottom: var(--space-5); font-size: 0.95rem; }
+.auth-help { margin: var(--space-4) 0 0; font-size: 0.88rem; text-align: center; }
+
+.theme-toggle-standalone { border: 1px solid var(--border); background: var(--bg-raised); }
+
+.theme-icon {
+    width: 18px; height: 18px;
+    border-radius: 50%;
+    background: currentColor;
+    box-shadow: inset -6px -3px 0 0 var(--bg-raised);
+}
+[data-theme="dark"] .theme-icon { box-shadow: none; }
+
+/* --- Error pages ---------------------------------------------------------- */
+.error-page { text-align: center; padding-block: var(--space-6); }
+.error-status { font-size: 3rem; font-weight: 800; color: var(--text-muted); margin: 0; line-height: 1; }
+
+/* --- Footer --------------------------------------------------------------- */
+.site-footer {
+    border-top: 1px solid var(--border);
+    background: var(--bg-raised);
+    padding-block: var(--space-4);
+    font-size: 0.85rem;
+}
+.footer-inner { display: flex; flex-wrap: wrap; gap: var(--space-2); justify-content: space-between; }
+
+
+/* --- Email templates ------------------------------------------------------ */
+textarea.textarea-tall { min-height: 22rem; font-family: var(--font-mono, monospace); font-size: 0.92rem; }
+
+.merge-fields { margin: 0; }
+.merge-fields dt { font-weight: 600; margin-top: var(--space-2); }
+.merge-fields dd { margin: 0 0 var(--space-1); color: var(--text-muted); font-size: 0.9rem; }
+
+.email-preview {
+    margin: 0;
+    padding: var(--space-3);
+    background: var(--bg-sunken);
+    border-radius: var(--radius-sm);
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-size: 0.9rem;
+}
+
+.card-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+    margin-bottom: var(--space-3);
+}
+.card-head h2 { margin: 0; }
+
+.count-pill {
+    display: inline-block;
+    min-width: 1.6em;
+    padding: 0 0.5em;
+    border-radius: 999px;
+    background: var(--bg-sunken);
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    font-weight: 700;
+    text-align: center;
+}
+
+.detail-list { margin: 0; display: grid; gap: var(--space-2); }
+.detail-list > div {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 0;
+    padding-bottom: var(--space-2);
+    border-bottom: 1px solid var(--border);
+}
+.detail-list > div:last-child { border-bottom: 0; padding-bottom: 0; }
+.detail-list dt { font-size: 0.85rem; color: var(--text-muted); }
+.detail-list dd { margin: 0; font-weight: 500; }
+
+@media (min-width: 560px) {
+    .detail-list > div { grid-template-columns: 200px 1fr; align-items: baseline; gap: var(--space-3); }
+}
+
+.detail-list-tight > div { padding-bottom: var(--space-1); }
+
+/* Label above, value full width beneath. The two-column form above works for a
+   short value in a wide column; in the 320px sidebar a date, a time and a name
+   get squeezed into half of that and wrap into a ragged block. */
+.detail-list-stacked > div { padding-bottom: var(--space-1); }
+@media (min-width: 560px) {
+    .detail-list-stacked > div { grid-template-columns: 1fr; gap: 0; }
+}
+.prewrap { white-space: pre-wrap; }
+.external-hint { font-size: 0.85em; }
+
+.child-list, .file-list, .timeline { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
+
+.child-item, .file-item {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+    padding: var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-sunken);
+}
+.child-item.is-retired { opacity: 0.6; }
+.child-link { text-decoration: none; color: var(--text); }
+.child-link:hover .child-name { text-decoration: underline; }
+.child-name { font-weight: 600; }
+.child-meta { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+
+.file-icon {
+    display: grid;
+    place-items: center;
+    width: 40px; height: 40px;
+    border-radius: var(--radius-sm);
+    background: var(--danger-soft);
+    color: var(--danger);
+    font-size: 0.68rem;
+    font-weight: 800;
+    flex: 0 0 auto;
+}
+.file-body { display: grid; gap: 2px; flex: 1 1 220px; min-width: 0; }
+.file-title { font-weight: 600; }
+.file-meta { font-size: 0.84rem; }
+.file-actions { display: flex; gap: var(--space-2); align-items: center; }
+
+.upload-form {
+    margin-top: var(--space-4);
+    padding-top: var(--space-4);
+    border-top: 1px solid var(--border);
+    max-width: none;
+}
+input[type="file"].input { padding: var(--space-2); line-height: 1.6; }
+
+.barcode-card { text-align: center; }
+.barcode-holder {
+    background: #ffffff;
+    border-radius: var(--radius-sm);
+    padding: var(--space-3);
+    margin-bottom: var(--space-3);
+    overflow-x: auto;
+}
+.barcode-holder svg { display: block; margin: 0 auto; max-width: 100%; height: auto; }
+
+.danger-card { border-left: 4px solid var(--warn); }
+.delete-form { margin-top: var(--space-3); padding-top: var(--space-3); border-top: 1px solid var(--border); }
+
+/* The Manage card in the asset rail: ordinary actions at the top, then a ruled
+   line, then the ones you cannot take back. The rule keeps "Copy" and "Delete
+   permanently" from reading as one undifferentiated stack in a 320px column. */
+.manage-actions { display: grid; gap: var(--space-2); }
+.manage-divider {
+    margin-top: var(--space-3);
+    padding-top: var(--space-3);
+    border-top: 1px solid var(--border);
+}
+.manage-divider .muted { margin-top: 0; }
+
+.timeline li {
+    display: grid;
+    gap: 2px;
+    padding: var(--space-2) 0 var(--space-2) var(--space-4);
+    border-left: 2px solid var(--border);
+    position: relative;
+}
+.timeline li::before {
+    content: "";
+    position: absolute;
+    left: -5px; top: 1.1rem;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--accent);
+}
+.timeline-when, .timeline-who { font-size: 0.84rem; }
+
+
+/* --- Reports -------------------------------------------------------------- */
+.report-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    text-decoration: none;
+    color: inherit;
+    margin-bottom: 0;
+}
+.report-card:hover { border-color: var(--accent); background: var(--bg-hover); }
+.report-card h3 { margin: 0; color: var(--accent); }
+.report-card p { margin: 0; font-size: 0.92rem; flex: 1 1 auto; }
+.report-card-go { font-weight: 600; font-size: 0.9rem; }
+
+.table-report { font-size: 0.92rem; }
+.table-report td, .table-report th { white-space: nowrap; }
+.table-report td .cell-sub { white-space: normal; }
+.align-right { text-align: right; }
+.report-footnote { margin-top: var(--space-3); font-size: 0.86rem; }
+
+.report-print { padding: var(--space-4); }
+.report-print-head { margin-bottom: var(--space-4); }
+.report-print-org { font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; margin: 0 0 var(--space-1); }
+.report-print-meta { font-size: 0.85rem; }
+.report-print-summary {
+    list-style: none;
+    margin: 0 0 var(--space-4);
+    padding: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-4);
+}
+.report-print-summary strong { font-size: 1.3rem; }
+
+@media print {
+    .report-print { padding: 0; }
+    .table-report { font-size: 9pt; }
+    .table-report thead { display: table-header-group; }
+    .table-report tr { break-inside: avoid; }
+}
+
+
+/* --- Reference data (categories, locations) -------------------------------
+   A tree of compact rows. One row is a single line: caret, name, what uses it,
+   and the three actions. Everything else about an entry lives on its own page,
+   which is what keeps this readable when there are fifty of them.
+
+   The indent is on the nested list rather than on each row, so a branch and the
+   rule down its left edge move together. */
+.tree-card { padding: var(--space-2) var(--space-3); }
+
+.tree-list { list-style: none; margin: 0; padding: 0; }
+
+.tree-list .tree-list {
+    margin-left: 10px;
+    padding-left: var(--space-4);
+    border-left: 1px solid var(--border);
+}
+
+.tree-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: 5px var(--space-2);
+    border-radius: var(--radius-sm);
+    min-height: 34px;
+    cursor: pointer;
+    list-style: none;
+}
+.tree-row::-webkit-details-marker { display: none; }
+.tree-row:hover { background: var(--bg-hover); }
+
+/* A leaf discloses nothing, so it gets no control — but it keeps the caret's
+   width, or the names would not line up down the column. */
+.tree-row.is-leaf { cursor: default; }
+.caret-placeholder { visibility: hidden; }
+
+.tree-row.is-inactive .tree-name { color: var(--text-muted); text-decoration: line-through; }
+
+.tree-name { font-weight: 600; }
+
+/* Pushed to the right and allowed to collapse first: on a narrow screen the
+   name and the actions are what matter. */
+.tree-meta {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: 0.86rem;
+}
+.tree-count { color: var(--text-muted); white-space: nowrap; }
+
+.tree-actions { display: flex; align-items: center; gap: var(--space-1); flex: 0 0 auto; }
+
+/* Only on hover or keyboard focus, so a long list is a list of names rather
+   than a wall of buttons — but always visible on a touch screen, where there
+   is no hover to reveal them with. */
+@media (hover: hover) and (pointer: fine) {
+    .tree-actions { opacity: 0; transition: opacity 120ms ease; }
+    .tree-row:hover .tree-actions,
+    .tree-row:focus-within .tree-actions { opacity: 1; }
+}
+
+.btn-xs {
+    min-height: 26px;
+    padding: 0 var(--space-2);
+    font-size: 0.8rem;
+    border-radius: var(--radius-sm);
+}
+
+@media (max-width: 599px) {
+    /* The count is the first thing to go: the name and the actions are why you
+       are on this page. */
+    .tree-count { display: none; }
+    .tree-list .tree-list { padding-left: var(--space-3); }
+}
+
+/* --- Print ---------------------------------------------------------------- */
+@media print {
+    .site-header, .site-footer, .filter-bar, .form-actions, .btn { display: none !important; }
+    body { background: #fff; color: #000; font-size: 12pt; }
+    .card, .table-wrap { border: 1px solid #999; box-shadow: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
+}
+
+/* ==========================================================================
+
+/* ==========================================================================
+   Navigation: grouped menu
+
+   One set of markup drives both layouts. A group is a <details>; below 900px
+   it is an accordion inside the slide-out menu, above it the same element
+   becomes a drop-down. Nothing here duplicates a mobile-only structure.
+   ========================================================================== */
+
+.header-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    margin-left: auto;          /* pins the scan button to the right */
+    flex: 0 0 auto;
+}
+
+
+/* --- Groups -------------------------------------------------------------- */
+.nav-group summary { list-style: none; cursor: pointer; }
+.nav-group summary::-webkit-details-marker { display: none; }
+
+.nav-group-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+    width: 100%;
+}
+
+/* The expand/collapse triangle, wherever a <details> is used as a disclosure:
+   the nav drop-downs, the account menu, the filter panel on the register. One
+   shape and one rotation rule, so a triangle means the same thing everywhere.
+   `.nav-caret` stays as the nav's own hook for the reduced-motion rule. */
+.caret {
+    width: 0; height: 0;
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-top: 5px solid currentColor;
+    flex: 0 0 auto;
+    transition: transform 120ms ease;
+}
+details[open] > summary .caret { transform: rotate(180deg); }
+
+.nav-sublist {
+    list-style: none;
+    margin: var(--space-1) 0 var(--space-2);
+    padding: 0 0 0 var(--space-4);
+    display: grid;
+    gap: 2px;
+    border-left: 2px solid var(--border);
+}
+.nav-sublink { font-weight: 500; }
+
+/* Matches the bar's own breakpoint above: these rules describe the horizontal
+   bar's drop-downs, so they have to appear and disappear with it. */
+@media (min-width: 1150px) {
+    .nav-item-group { position: relative; }
+
+    /* The panel floats over the page rather than pushing the bar taller. */
+    .nav-group > .nav-sublist {
+        position: absolute;
+        top: calc(100% + 4px);
+        left: 0;
+        z-index: 50;
+        min-width: 15rem;
+        margin: 0;
+        padding: var(--space-2);
+        border: 1px solid var(--border);
+        border-left: 1px solid var(--border);
+        border-radius: var(--radius);
+        background: var(--bg-raised);
+        box-shadow: var(--shadow);
+    }
+
+    .nav-group-toggle { width: auto; }
+
+    /* A group is rendered `open` when the current page is inside it, so the
+       menu shows where you are. On a phone that is an accordion and it simply
+       expands. Here the panel floats over the page, so an auto-opened one
+       would land on top of the page you just navigated to and stay there.
+       Keep it shut until the group is actually reached for.
+
+       :focus-within rather than a class, so this still works with JavaScript
+       off: clicking the summary focuses it and the panel appears. The script
+       drops the attribute on first interaction, after which the group behaves
+       like any other. */
+    .nav-group[data-nav-autoopen]:not(:focus-within) > .nav-sublist { display: none; }
+
+    /* The account menu sits at the right-hand end of the bar, so its panel
+       hangs from the right edge — anchored left it would run off the page. */
+    .nav-account-group > .nav-sublist { left: auto; right: 0; }
+
+    /* On a phone the chip fills its row; on a desktop it must not grow, or it
+       pushes Sign out onto a second line and doubles the header's height. */
+    .nav-account-group { flex: 0 0 auto; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .caret { transition: none; }
+}
+
+
+/* --- Branding -------------------------------------------------------------
+   The logo is constrained by height and never by width, so it keeps its
+   proportions whatever shape it is; max-width stops a very wide wordmark from
+   pushing the navigation off the bar. object-fit: contain letterboxes rather
+   than stretches, which is the whole point. */
+
+.brand-logo-wrap { display: inline-flex; align-items: flex-end; }
+
+/* Mobile: logo and wordmark side by side, sitting on the same baseline — the
+   text aligns with the *bottom* of the logo rather than its middle, which is
+   what makes the pair read as one lockup instead of two loose objects. */
+.brand-stack {
+    display: flex;
+    align-items: flex-end;
+    gap: var(--space-2);
+    min-width: 0;
+}
+
+.brand-logo {
+    display: block;
+    height: 34px;
+    width: auto;
+    max-width: 190px;
+    object-fit: contain;
+}
+
+/* The wordmark's own line box carries space under the baseline; trimming it is
+   what actually lines the text bottom up with the foot of the logo. */
+.brand-stack .brand-name { line-height: 1; padding-bottom: 2px; }
+
+/* Both variants ship in the markup and CSS picks: the theme can change without
+   a page load, so the server cannot know which one to send. */
+[data-theme="light"] .brand-logo-dark,
+[data-theme="dark"]  .brand-logo-light { display: none; }
+
+/* Where only one variant was uploaded it is used for both themes — one logo is
+   better than none. It is the only .brand-logo present, so nothing hides it. */
+
+/* Desktop: logo and wordmark side by side, both centred on the bar's own line
+   so the name sits level with the menu items rather than above or below them.
+   ---------------------------------------------------------------------------
+   They were stacked, which was the cheapest way to buy width back when the menu
+   had one more item in it. Dropping Dashboard paid for the wider lockup; the
+   arithmetic is in the breakpoint comment further up.
+
+   This block has to come *after* the mobile rules above, not with the rest of
+   the desktop navigation: both are single-class selectors, so source order is
+   the only thing deciding which wins. */
+@media (min-width: 1150px) {
+    /* The wordmark stands on the logo's foot, which is the same line the menu
+       items stand on — so the whole bar reads as one row of type rather than a
+       lockup floating above a menu. It was centred against the logo until the
+       menu was brought down to that line, and then it was the odd one out. */
+    .brand-stack { align-items: flex-end; }
+
+    /* Large enough to balance a menu-sized wordmark, small enough to leave the
+       header at 60px. max-width caps a wide banner logo — object-fit
+       letterboxes it rather than squashing it. */
+    .brand-stack-logo .brand-logo { height: 36px; max-width: 128px; }
+
+    /* Item for item with the menu: same size (inherited, because the body is
+       17px and a rem is 16px), same weight, and standing on the same line —
+       `line-height: 1` plus the descent correction, exactly as the menu items
+       do it, so all three feet coincide.
+
+       max-width is the safety net the logo already has: APP_NAME is whatever
+       the operator typed, and an unbounded wordmark is the one thing left in
+       this bar that could put it back on two rows. A flex item is blockified,
+       so overflow and the ellipsis both apply here. */
+    .brand-stack .brand-name {
+        font-size: inherit;
+        font-weight: 600;
+        line-height: 1;
+        padding-bottom: 0;
+        max-width: 12rem;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+}
+
+.brand-mark-inline {
+    display: inline-grid;
+    width: 22px; height: 22px;
+    font-size: 0.62rem;
+    border-radius: 6px;
+    vertical-align: text-bottom;
+}
+
+.footer-brand { display: grid; gap: 2px; }
+.footer-brand a { color: inherit; }
+
+.logo-grid {
+    display: grid;
+    gap: var(--space-4);
+    grid-template-columns: 1fr;
+}
+@media (min-width: 700px) {
+    .logo-grid { grid-template-columns: 1fr 1fr; }
+}
+
+.logo-slot { display: grid; gap: var(--space-3); align-content: start; }
+
+/* Each preview sits on the background it will actually be seen against, so a
+   white-on-transparent logo is not judged against a white card. */
+.logo-preview {
+    display: grid;
+    place-items: center;
+    min-height: 96px;
+    padding: var(--space-3);
+    border: 1px dashed var(--border);
+    border-radius: var(--radius-sm);
+}
+.logo-preview img { max-height: 64px; max-width: 100%; width: auto; object-fit: contain; }
+.logo-preview-light { background: #ffffff; }
+.logo-preview-dark  { background: #0f172a; }
+.logo-preview-dark .muted { color: #94a3b8; }
+
+/* --- Spacing between blocks that are not cards ----------------------------
+   `.card` carries only a bottom margin, so a card that *follows* something
+   else — a form, a grid of cards — gets no separation from it and sits flush.
+   That is what put the "Running the reminders" panel against the save button
+   and the "How importing works" panel against the importer tiles. */
+
+form + .card,
+form + .section-title,
+.card-grid + .card,
+.card-grid + .section-title { margin-top: var(--space-5); }
+
+/* --- Roles and permissions ------------------------------------------------ */
+
+.role-table td { vertical-align: middle; }
+.role-name { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.role-table .num { text-align: right; }
+.role-table thead .num { text-align: right; }
+
+/* A fixed layout is what makes the columns line up: without it the table sizes
+   each column to its own widest cell, and the slug column drifts wider or
+   narrower depending on which group you are looking at. */
+.permission-table { table-layout: fixed; }
+.permission-table td, .permission-table th { vertical-align: middle; overflow-wrap: anywhere; }
+.permission-col-slug { width: 15rem; }
+.permission-col-name { width: 13rem; }
+
+.permission-group-row th {
+    background: var(--bg-sunken);
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+}
+
+@media (max-width: 720px) {
+    .permission-col-slug { width: 9rem; }
+    .permission-col-name { width: 8rem; }
+}
+
+
+/* ==========================================================================
+   Junction Production Tracker — application components
+
+   Everything above this line is the shared visual language: tokens, header,
+   cards, tables, forms, badges. Below it is what only this application has —
+   the order stepper, the quantity bars, the part search combobox — plus a
+   short adapter layer so markup written against bare elements picks up the
+   same styling as the explicit .input / .table classes.
+   ========================================================================== */
+
+/* --- Adapter: bare elements get the component styling ---------------------
+   Kitwell tags every control with .input and every table with .table. This
+   application's templates mostly use the plain element, so the same rules are
+   repeated here against the element selector. New markup should prefer the
+   classes; this exists so both spellings look identical. */
+
+input[type="text"], input[type="email"], input[type="password"], input[type="number"],
+input[type="date"], input[type="datetime-local"], input[type="tel"], input[type="url"],
+input[type="search"], input[type="file"], select, textarea {
+    display: block;
+    width: 100%;
+    min-height: var(--tap);
+    padding: var(--space-2) var(--space-3);
+    font: inherit;
+    font-size: 1rem;                 /* >=16px stops iOS zooming on focus */
+    color: var(--text);
+    background: var(--bg-raised);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+}
+
+input:focus, select:focus, textarea:focus { border-color: var(--accent); }
+textarea { min-height: 120px; resize: vertical; }
+
+/* A checkbox or radio is not a text field and must not be stretched to one. */
+input[type="checkbox"], input[type="radio"] {
+    display: inline-block;
+    width: auto;
+    min-height: 0;
+    padding: 0;
+    border: 0;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.96rem;
+    background: var(--bg-raised);
+}
+
+table th, table td {
+    padding: var(--space-3);
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+}
+
+table thead th {
+    background: var(--bg-sunken);
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+    font-weight: 700;
+}
+
+table tbody tr:last-child td { border-bottom: 0; }
+table tbody tr:hover { background: var(--bg-hover); }
+
+/* The register tables are wide and read across; wrapping a part description
+   mid-cell makes the row heights jump. Cells opt back in with .wrap. */
+.table-nowrap th, .table-nowrap td { white-space: nowrap; }
+td.wrap, th.wrap { white-space: normal; min-width: 14rem; }
+
+.field label { display: block; font-weight: 600; margin-bottom: var(--space-1); }
+.field .hint { margin: var(--space-1) 0 0; font-size: 0.86rem; color: var(--text-muted); }
+.field .error { margin: var(--space-1) 0 0; font-size: 0.88rem; font-weight: 600; color: var(--danger); }
+
+.text-muted { color: var(--text-muted); }
+.empty-state { text-align: center; color: var(--text-muted); padding: var(--space-6); }
+.mt-0 { margin-top: 0; }
+.mb-0 { margin-bottom: 0; }
+
+.badge-info { background: var(--info-soft); color: var(--info); }
+
+/* PT spells the destructive flash "danger"; Kitwell spells it "error". Both
+   are here so neither name is a silent no-op. */
+.flash-danger { background: var(--danger-soft); border-left-color: var(--danger); color: var(--danger); }
+
+.card-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--space-3);
+    margin-bottom: var(--space-4);
+    flex-wrap: wrap;
+}
+.card-header h1, .card-header h2, .card-header h3 { margin-bottom: var(--space-1); }
+
+.grid { display: grid; gap: var(--space-4); }
+.grid-2 { grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+.grid-3 { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+
+.form-row { display: flex; gap: var(--space-4); flex-wrap: wrap; }
+.form-row > .field { flex: 1 1 200px; }
+
+/* --- Order stepper --------------------------------------------------------
+   The coarse stage of one order line, drawn as a row of dots. The connecting
+   rule is an ::after on each step rather than a background on the row, so it
+   can be coloured per segment as the line advances. */
+.stepper { display: flex; align-items: flex-start; gap: 0; margin: var(--space-4) 0; }
+
+.step {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-1);
+    flex: 1;
+    position: relative;
+    text-align: center;
+    min-width: 0;
+}
+
+.step-dot {
+    display: grid;
+    place-items: center;
+    width: 26px; height: 26px;
+    border-radius: 50%;
+    background: var(--bg-raised);
+    border: 2px solid var(--border-strong);
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: var(--text-muted);
+    position: relative;
+    z-index: 1;
+}
+
+.step-label { font-size: 0.78rem; line-height: 1.25; color: var(--text-muted); }
+
+.step::after {
+    content: "";
+    position: absolute;
+    top: 12px;
+    left: 50%;
+    width: 100%;
+    height: 2px;
+    background: var(--border-strong);
+}
+
+.step:last-child::after { display: none; }
+.step.done .step-dot { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+.step.done::after { background: var(--accent); }
+.step.current .step-dot { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+.step.current .step-label { color: var(--text); font-weight: 600; }
+
+/* --- Quantity bars --------------------------------------------------------
+   Free issue received, parts completed, delivered, invoiced: four independent
+   quantities against the same order line, each one a fraction of its own
+   total rather than a stage in a sequence. */
+.qty-bar {
+    height: 8px;
+    border-radius: 999px;
+    background: var(--bg-sunken);
+    overflow: hidden;
+}
+.qty-bar-fill { height: 100%; background: var(--accent); border-radius: 999px; }
+.qty-bar-fill.is-complete { background: var(--ok); }
+.qty-bar-label { font-size: 0.82rem; color: var(--text-muted); margin-top: var(--space-1); }
+
+/* --- Part search combobox -------------------------------------------------
+   Used to add a part to an order and to link one part to another. The results
+   panel is absolutely positioned so opening it does not reflow the form. */
+.combobox { position: relative; }
+
+.combobox-results {
+    display: none;
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0; right: 0;
+    z-index: 30;
+    max-height: 17rem;
+    overflow-y: auto;
+    background: var(--bg-raised);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow);
+}
+.combobox-results.open { display: block; }
+
+.combobox-item {
+    display: block;
+    width: 100%;
+    min-height: var(--tap);
+    padding: var(--space-2) var(--space-3);
+    text-align: left;
+    border: 0;
+    background: none;
+    color: var(--text);
+    font: inherit;
+    cursor: pointer;
+}
+.combobox-item:hover, .combobox-item:focus-visible { background: var(--bg-hover); }
+.combobox-item .cell-sub { display: block; }
+
+/* --- Files and paperwork --------------------------------------------------- */
+.file-list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
+.file-list li {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-raised);
+}
+
+/* A QR code is read by a camera: it needs true white behind it whatever the
+   page theme is doing. */
+.qr-box { background: #fff; padding: var(--space-2); border-radius: var(--radius-sm); display: inline-block; }
+
+.photo-grid { display: flex; flex-wrap: wrap; gap: var(--space-3); }
+.photo-tile { display: grid; gap: var(--space-1); justify-items: center; max-width: 130px; }
+.photo-tile img {
+    width: 120px; height: 120px;
+    object-fit: cover;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+}
+.photo-caption { font-size: 0.8rem; color: var(--text-muted); text-align: center; }
+
+@media (max-width: 640px) {
+    .step-label { display: none; }
+}

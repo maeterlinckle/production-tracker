@@ -1,0 +1,17 @@
+/vendor/
+/.env
+/storage/logs/*
+!/storage/logs/.gitkeep
+/storage/uploads/*
+!/storage/uploads/.gitkeep
+!/storage/uploads/drawings/.gitkeep
+!/storage/uploads/pos/.gitkeep
+!/storage/uploads/delivery-notes/.gitkeep
+!/storage/uploads/route-cards/.gitkeep
+
+# composer.lock IS committed — this is an application, not a library, so the
+# lock file is what makes `composer install` reproducible on the server.
+
+.DS_Store
+Thumbs.db
+*.log

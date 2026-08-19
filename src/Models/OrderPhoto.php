@@ -21,12 +21,13 @@ final class OrderPhoto
     public static function create(array $data): int
     {
         return Database::insert(
-            'INSERT INTO order_photos (order_id, order_line_id, file_path, original_filename, mime_type, file_size, caption, uploaded_by)
-             VALUES (:order_id, :order_line_id, :file_path, :original_filename, :mime_type, :file_size, :caption, :uploaded_by)',
+            'INSERT INTO order_photos (order_id, order_line_id, file_path, thumb_path, original_filename, mime_type, file_size, caption, uploaded_by)
+             VALUES (:order_id, :order_line_id, :file_path, :thumb_path, :original_filename, :mime_type, :file_size, :caption, :uploaded_by)',
             [
                 'order_id' => $data['order_id'],
                 'order_line_id' => $data['order_line_id'] ?? null,
                 'file_path' => $data['file_path'],
+                'thumb_path' => $data['thumb_path'] ?? null,
                 'original_filename' => $data['original_filename'],
                 'mime_type' => $data['mime_type'] ?? null,
                 'file_size' => $data['file_size'] ?? null,

@@ -97,7 +97,33 @@ final class StaffDeliveryNoteController
 
         $lines = OrderLine::shippableForClient((int) $clientId);
 
-        View::render('staff/delivery-notes/create-goods-out', ['title' => 'New delivery note', 'client' => $client, 'lines' => $lines]);
+        // Reached from an order's own page nine times out of ten, and that
+        // order is what the person is here to despatch. Everything else the
+        // client has ready still gets listed — putting two orders in one parcel
+        // is normal — but underneath, and clearly second.
+        $focusOrderId = (int) Request::query('order', 0);
+        $focusOrder = null;
+        $focusLines = [];
+        $otherLines = [];
+
+        foreach ($lines as $line) {
+            if ($focusOrderId > 0 && (int) $line['order_id'] === $focusOrderId) {
+                $focusLines[] = $line;
+                $focusOrder ??= ['id' => $focusOrderId, 'order_number' => $line['order_number'], 'po_number' => $line['po_number']];
+            } else {
+                $otherLines[] = $line;
+            }
+        }
+
+        View::render('staff/delivery-notes/create-goods-out', [
+            'title' => 'New delivery note',
+            'client' => $client,
+            'focusOrder' => $focusOrder,
+            'focusRequested' => $focusOrderId > 0,
+            'focusLines' => $focusLines,
+            'otherLines' => $otherLines,
+            'lines' => $lines,
+        ]);
     }
 
     public function storeGoodsOut(string $clientId): void

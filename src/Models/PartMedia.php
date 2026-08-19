@@ -108,9 +108,9 @@ final class PartMedia
 
             $statement = $pdo->prepare(
                 'INSERT INTO part_media (
-                    part_id, kind, is_main, caption, file_path, original_filename, mime_type, file_size, uploaded_by
+                    part_id, kind, is_main, caption, file_path, thumb_path, original_filename, mime_type, file_size, uploaded_by
                  ) VALUES (
-                    :part_id, :kind, :is_main, :caption, :file_path, :original_filename, :mime_type, :file_size, :uploaded_by
+                    :part_id, :kind, :is_main, :caption, :file_path, :thumb_path, :original_filename, :mime_type, :file_size, :uploaded_by
                  )'
             );
             $statement->execute([
@@ -119,6 +119,7 @@ final class PartMedia
                 'is_main' => $isMain ? 1 : null,
                 'caption' => $data['caption'] ?? null,
                 'file_path' => $data['file_path'],
+                'thumb_path' => $data['thumb_path'] ?? null,
                 'original_filename' => $data['original_filename'],
                 'mime_type' => $data['mime_type'] ?? null,
                 'file_size' => $data['file_size'] ?? null,

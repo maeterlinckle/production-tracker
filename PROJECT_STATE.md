@@ -3,7 +3,7 @@
 Where the codebase actually is, written from the code and the live schema
 rather than from memory. Read this before picking the work up again.
 
-**Last verified:** 18 August 2026, against `production_tracker_dev` on the
+**Last verified:** 20 August 2026, against `production_tracker_dev` on the
 local MariaDB 12.3 instance and a full browser/HTTP pass across all three role
 levels.
 
@@ -66,13 +66,14 @@ src/
   Controllers/  Client/*, Staff/*, and the shared few at the top level
   Core/         Router, Auth, Capabilities, Database, View, Csrf, Session,
                 Upload, Validator, Config, Env, Flash, Request, Response,
-                Crypto, Migrator, LoginThrottle, NotificationTypes
+                Crypto, Image, Migrator, LoginThrottle, NotificationTypes
   Mail/         Mailer, EmailTemplate, Merge, Layout
   Middleware/   auth, guest, staff, csrf + MiddlewareRunner
   Models/       one class per table-ish concept, static methods, no ORM
   Services/     Branding, ClearBooksClient, FreeIssueNoteService, Invitations,
-                Notifications, PartsOnOrder, PdfService, QrCodeService,
-                Reminders, ReferenceNumber
+                Notifications, OrderPlacement, OrderView, PartForm, PartView,
+                PartsOnOrder, PdfService, QrCodeService, ReferenceNumber,
+                Reminders, RouteCardService
 storage/        uploads/ and logs/ — outside public/, never web-reachable
 templates/      plain PHP views; layouts/, partials/, one directory per area
 ```
@@ -145,7 +146,7 @@ constraint (`{token:[a-f0-9]{64}}`) works.
 
 ## 3. Database schema
 
-36 tables. Every table InnoDB/utf8mb4; `uq_`/`idx_`/`fk_`/`chk_` naming
+37 tables. Every table InnoDB/utf8mb4; `uq_`/`idx_`/`fk_`/`chk_` naming
 throughout.
 
 ### Identity and access
@@ -167,7 +168,7 @@ throughout.
 | `part_alternate_numbers` | Drawing numbers and the like. |
 | `part_free_issue_materials` | What material the client supplies. |
 | `part_files` | Drawings, versioned: a new upload becomes current and the one it replaces is kept. |
-| `part_media` | The part's own reference material — main photo, setup documents, tooling files — as one table with a `kind`. `is_main` is 1 or NULL so a unique key can enforce one main photo per part. |
+| `part_media` | The part's own reference material — main photo, setup documents, tooling files — as one table with a `kind`. `is_main` is 1 or NULL so a unique key can enforce one main photo per part. `thumb_path` is the generated thumbnail, nullable so a host without GD degrades to the full image. |
 | `part_links` | Symmetric "usually ordered with", one row per unordered pair enforced by `chk_part_links_order (part_id < linked_part_id)`. |
 
 `parts.has_free_issue` is the explicit yes/no, and `chk_parts_free_issue_toggle`
@@ -308,6 +309,8 @@ delivery to be argued about before anything moves.
 
 | `006_derive_free_issue_requirement.sql` | Data repair: recomputes `qty_free_issue_required` on every line under the new derivation, so rows carrying accumulated one-off top-ups come on to the calculated footing. |
 | `007_staff_orders_and_part_media.sql` | The `staff.raise_orders` role; `part_media` (with `part_photos` read into it and dropped); `order_line_change_requests.initiated_by`. |
+| `008_part_housekeeping.sql` | `parts.updated_by` (who last changed a part) and `parts.price_under_review` (the flag that says the price is about to move). |
+| `009_photo_thumbnails.sql` | `thumb_path` on `part_media` and `order_photos`. |
 
 `005` is the one migration that is genuinely forward-only: it reads
 `production_status_log` and then drops it, so a second run has nothing to read.
@@ -395,6 +398,55 @@ The `migrations` table is what stops that happening.
 | 7 | Free-issue notes ask for what is still outstanding | Done — living document, rendered fresh, never stored |
 | 8 | Client-requested quantity changes with PO history | Done — staff apply or decline; a decrease cannot eat into what is made |
 | 9 | PO number on the order, through to Clear Books | Done — the invoice `reference` field |
+
+### Consolidation and media round (20 August 2026)
+
+| # | Item | Status |
+|---|---|---|
+| 1 | `/staff/parts/{id}` rebalanced | Done — a 2fr main column and a 1fr rail |
+| 2 | Housekeeping metadata on the part page | Done — needed a new `parts.updated_by`; archive/delete now reachable from both sides |
+| 3 | Client and staff part views merged | Done — one template at two URLs |
+| 4 | Client and staff order views merged | Done — same approach |
+| 5 | Photos resized, thumbnails generated | Done — Kitwell's sizes, re-implemented natively |
+| 6 | Target price hidden from clients once quoted | Done — staff always see it; still editable either way |
+| 7 | Part edit page, merged and permission-aware | Done — staff could not edit a part at all before |
+| 8 | Delivery note focused on the order it came from | Done — focus card first, pre-filled, others below |
+| 9 | "Update price on next order" flag | Done — on the part page and again as the part is added to an order |
+
+**One page, two URLs — and why.**
+
+Both merges keep a single template rendered at two addresses (`/parts/{id}` and
+`/staff/parts/{id}`; `/orders/{id}` and `/staff/orders/{id}`) rather than at one
+shared address. Two reasons, and neither is inertia: Junction's own actions have
+to sit behind the `staff` middleware group, so the staff URL space is needed for
+the forms whatever the view does; and every link into the staff area — from the
+reports, the check-in screen, the part links, the delivery notes — already
+points there. A single URL would have put staff inside the client area for a
+page that is half staff-only.
+
+What matters is that there is one source. `PartView::payload()` and
+`OrderView::payload()` assemble the data, `templates/parts/show.php` and
+`templates/orders/show.php` render it, and the controllers do nothing but find
+the record and hand it over. `templates/staff/parts/show.php` and
+`templates/staff/orders/show.php` are deleted rather than left as copies.
+
+Both pairs had already drifted before the merge, which is the argument for doing
+it: the client's delivery notes were listed one way and Junction's another, only
+one side showed where a line's quantity had got to, and archiving existed on one
+page and not the other.
+
+**Permissions are enforced twice, on purpose.** The templates hide what somebody
+cannot change; `App\Services\PartForm` refuses it. Verified by posting
+`quoted_price`, `material_cost`, `name` and `target_price` as a production-only
+staff user: every one ignored, and the single field that role does own applied.
+
+**Images.** `App\Core\Image` follows Kitwell's approach and its sizes — a 2400px
+longest edge for the stored original, 480px for the thumbnail, EXIF orientation
+applied, and every failure path leaving the upload untouched rather than lost.
+Re-implemented against this application's own `Upload` and `Config`, not shared.
+Thumbnails live in a `thumbs/` directory beside the original so a backup takes
+both. `thumb_path` is nullable and the file controller falls back to the full
+image, so a host without GD serves heavier pages rather than broken ones.
 
 ### Staff orders and part media round (19 August 2026)
 

@@ -135,8 +135,15 @@ $submitLabel = $submitLabel ?? 'Place order';
             fiCell = '<span class="text-muted">—</span>';
         }
 
+        // The price warning goes here, beside the quantity box, because this is
+        // the last moment before somebody commits to a number. On the part page
+        // it is a note; here it is the thing they are about to act on.
+        var priceNote = part.price_under_review
+            ? '<div class="cell-sub cell-warn">Price under review — may change on this order</div>'
+            : '';
+
         row.innerHTML =
-            '<td>' + escapeHtml(part.cpn) + '</td>' +
+            '<td>' + escapeHtml(part.cpn) + priceNote + '</td>' +
             '<td class="wrap">' + escapeHtml(part.name) + '</td>' +
             '<td><input type="number" min="1" class="qty-input" style="width:90px" value="' + line.qty + '"></td>' +
             '<td>' + fiCell + '</td>' +

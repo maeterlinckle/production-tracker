@@ -151,6 +151,12 @@ price and committing a client to buy at it are different jobs, and one person
 holding both should be somebody's decision rather than a side effect of the
 role list.
 
+A part page and an order page are each one page shown to both sides: `/parts/{id}`
+and `/staff/parts/{id}` render the same template, as do `/orders/{id}` and
+`/staff/orders/{id}`. What a person sees is decided by their role, not by which
+address they arrived at — so a client and a member of staff looking at the same
+order are looking at the same thing, with different parts of it switched on.
+
 Pricing (quoted prices, invoice amounts) is only ever sent to the browser or
 an email for users holding `view_pricing` (`client.purchaser`/`client.admin`
 on the client side, `staff.quoting`/`staff.admin` on the staff side) — it's

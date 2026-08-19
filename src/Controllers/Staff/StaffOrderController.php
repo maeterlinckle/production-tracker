@@ -7,6 +7,7 @@ namespace App\Controllers\Staff;
 use App\Core\Auth;
 use App\Core\Config;
 use App\Core\Flash;
+use App\Core\Image;
 use App\Core\Request;
 use App\Core\Response;
 use App\Core\Upload;
@@ -25,6 +26,7 @@ use App\Models\Part;
 use App\Services\FreeIssueNoteService;
 use App\Services\Notifications;
 use App\Services\OrderPlacement;
+use App\Services\OrderView;
 use App\Services\RouteCardService;
 use RuntimeException;
 
@@ -121,49 +123,9 @@ final class StaffOrderController
             return;
         }
 
-        $client = Client::find((int) $order['client_id']);
-        $lines = OrderLine::forOrder($order['id']);
-
-        // Everything the per-line panel needs, gathered once rather than from
-        // inside the template's loop.
-        $lineDetail = [];
-        foreach ($lines as $line) {
-            $lineId = (int) $line['id'];
-            $lineDetail[$lineId] = [
-                'change_requests' => OrderLineChangeRequest::forLine($lineId),
-                'rejections' => OrderLine::rejections($lineId),
-                'failures' => OrderLine::failureHistory($lineId),
-                'moves' => OrderLine::stageMoves($lineId),
-                'open_discrepancy' => OrderLine::openDiscrepancy($lineId),
-            ];
-        }
-
-        $deliveryNotes = DeliveryNote::forOrder($order['id']);
-        $invoicesByDn = [];
-        foreach ($deliveryNotes as $dn) {
-            $invoicesByDn[$dn['id']] = Invoice::forDeliveryNote((int) $dn['id']);
-        }
-
-        $queries = array_map(static function (array $q) {
-            $q['replies'] = OrderQuery::replies((int) $q['id']);
-
-            return $q;
-        }, OrderQuery::forOrder($order['id']));
-
-        View::render('staff/orders/show', [
-            'title' => $order['order_number'],
-            'order' => $order,
-            'client' => $client,
-            'lines' => $lines,
-            'lineDetail' => $lineDetail,
-            'deliveryNotes' => $deliveryNotes,
-            'invoicesByDn' => $invoicesByDn,
-            'poDocuments' => OrderPoDocument::forOrder($order['id']),
-            'photos' => OrderPhoto::forOrder($order['id']),
-            'notes' => OrderNote::forOrder($order['id']),
-            'queries' => $queries,
-            'rollupStatus' => Order::rollupStatus($lines),
-        ]);
+        // The same template the client sees, with Junction's own sections
+        // switched on inside it — see App\Services\OrderView.
+        View::render('orders/show', OrderView::payload($order));
     }
 
     // -- The quantity workflow (item 6) --------------------------------------
@@ -667,13 +629,15 @@ final class StaffOrderController
 
             $relativePath = Upload::store($file, 'order-photos/' . $order['id']);
             $absolutePath = Upload::absolutePath($relativePath);
+            $mime = $absolutePath !== null ? Upload::detectMime($absolutePath) : null;
 
             OrderPhoto::create([
                 'order_id' => $order['id'],
                 'order_line_id' => $lineId,
                 'file_path' => $relativePath,
                 'original_filename' => Upload::displayName((string) $file['name']),
-                'mime_type' => $absolutePath !== null ? Upload::detectMime($absolutePath) : null,
+                'mime_type' => $mime,
+                'thumb_path' => Image::process($relativePath, $mime),
                 'file_size' => (int) $file['size'],
                 'caption' => $caption,
                 'uploaded_by' => Auth::id(),

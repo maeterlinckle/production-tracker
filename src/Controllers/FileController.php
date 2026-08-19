@@ -44,7 +44,7 @@ final class FileController
      * part, and a photo of the finished thing is often the clearest answer to
      * "is this what you meant".
      */
-    public function partMedia(string $id): void
+    public function partMedia(string $id, string $variant = ''): void
     {
         $item = PartMedia::find((int) $id);
         if ($item === null) {
@@ -60,10 +60,10 @@ final class FileController
             return;
         }
 
-        $this->stream($item['file_path'], $item['original_filename'], $item['mime_type'] ?? null);
+        $this->stream($this->variantPath($item, $variant), $item['original_filename'], $item['mime_type'] ?? null);
     }
 
-    public function orderPhoto(string $id): void
+    public function orderPhoto(string $id, string $variant = ''): void
     {
         $photo = OrderPhoto::find((int) $id);
         if ($photo === null) {
@@ -79,7 +79,24 @@ final class FileController
             return;
         }
 
-        $this->stream($photo['file_path'], $photo['original_filename'], $photo['mime_type'] ?? null);
+        $this->stream($this->variantPath($photo, $variant), $photo['original_filename'], $photo['mime_type'] ?? null);
+    }
+
+    /**
+     * Which file on disk a request wants: the thumbnail, or the real thing.
+     *
+     * Falls back to the original whenever there is no thumbnail — GD missing on
+     * the host, a format it cannot read, a row that predates all this. A grid
+     * of heavier-than-ideal images is a much smaller problem than a grid of
+     * broken ones.
+     */
+    private function variantPath(array $row, string $variant): string
+    {
+        if ($variant === 'thumb' && !empty($row['thumb_path'])) {
+            return (string) $row['thumb_path'];
+        }
+
+        return (string) $row['file_path'];
     }
 
     public function po(string $id): void

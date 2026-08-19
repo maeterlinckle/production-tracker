@@ -22,6 +22,7 @@ use App\Models\OrderQuery;
 use App\Models\Part;
 use App\Services\Notifications;
 use App\Services\OrderPlacement;
+use App\Services\OrderView;
 use RuntimeException;
 
 final class OrderController
@@ -89,31 +90,8 @@ final class OrderController
             return;
         }
 
-        $lines = OrderLine::forOrder($order['id']);
-
-        $changeRequests = [];
-        foreach ($lines as $line) {
-            $changeRequests[(int) $line['id']] = OrderLineChangeRequest::forLine((int) $line['id']);
-        }
-
-        $queries = array_map(static function (array $q) {
-            $q['replies'] = OrderQuery::replies((int) $q['id']);
-
-            return $q;
-        }, OrderQuery::forOrder($order['id']));
-
-        View::render('orders/show', [
-            'title' => $order['order_number'],
-            'order' => $order,
-            'lines' => $lines,
-            'changeRequests' => $changeRequests,
-            'deliveryNotes' => DeliveryNote::forOrder($order['id']),
-            'poDocuments' => OrderPoDocument::forOrder($order['id']),
-            'photos' => OrderPhoto::forOrder($order['id']),
-            'notes' => OrderNote::forOrder($order['id']),
-            'queries' => $queries,
-            'rollupStatus' => Order::rollupStatus($lines),
-        ]);
+        // One payload, one template, both audiences — see App\Services\OrderView.
+        View::render('orders/show', OrderView::payload($order));
     }
 
     /**

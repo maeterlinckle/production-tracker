@@ -89,6 +89,10 @@ off, recorded as cancelled, and drop out of what is outstanding.
 - **Orders from either end.** Clients place their own; Junction types one in
   when it arrives on the phone, using the same form against the client's account.
   Either way it is their order, and they get the confirmation.
+- **One page per thing.** A part is one page and an order is one page, shown to
+  the client and to Junction with different parts switched on rather than as two
+  templates quietly drifting apart. Photos are resized on upload and served as
+  thumbnails in the grids.
 - **Setup knowledge that stays with the part.** A photo of the finished thing,
   the fixture, the settings sheet, the CNC program — attached to the part, so
   they are in front of whoever runs it next rather than buried in the one order

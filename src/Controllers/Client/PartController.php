@@ -7,6 +7,7 @@ namespace App\Controllers\Client;
 use App\Core\Auth;
 use App\Core\Config;
 use App\Core\Flash;
+use App\Core\Image;
 use App\Core\Request;
 use App\Core\Response;
 use App\Core\Upload;
@@ -16,6 +17,8 @@ use App\Models\Part;
 use App\Models\PartFile;
 use App\Models\PartLink;
 use App\Models\PartMedia;
+use App\Services\PartForm;
+use App\Services\PartView;
 
 final class PartController
 {
@@ -93,26 +96,23 @@ final class PartController
     {
         $part = $this->findOwnedPart((int) $id);
 
-        View::render('parts/show', [
-            'title' => $part['cpn'],
-            'part' => $part,
-            'files' => PartFile::forPart($part['id']),
-            'photos' => PartMedia::forPart($part['id']),
-            'altNumbers' => Part::alternateNumbers($part['id']),
-            'freeIssueMaterials' => Part::freeIssueMaterials($part['id']),
-            'linkedParts' => PartLink::forPart($part['id']),
-            'canManage' => Auth::can('manage_parts'),
-        ]);
+        // One payload, one template, both audiences — see App\Services\PartView.
+        View::render('parts/show', PartView::payload($part));
     }
 
+    /**
+     * The edit form — the same one Junction uses, with the fields a client is
+     * allowed to set. See templates/parts/edit.php and App\Services\PartForm.
+     */
     public function edit(string $id): void
     {
         Auth::authorize('manage_parts');
         $part = $this->findOwnedPart((int) $id);
 
+        // `errors` is injected by View::capture() from the flash, so a failed
+        // save redirects back here with its messages intact.
         View::render('parts/edit', [
             'title' => 'Edit ' . $part['cpn'],
-            'errors' => [],
             'part' => $part,
             'altNumbers' => Part::alternateNumbers($part['id']),
             'freeIssueMaterials' => Part::freeIssueMaterials($part['id']),
@@ -124,36 +124,12 @@ final class PartController
         Auth::authorize('manage_parts');
         $part = $this->findOwnedPart((int) $id);
 
-        $data = [
-            'name' => Request::post('name', ''),
-            'description' => Request::post('description', ''),
-            'usual_order_qty' => Request::post('usual_order_qty') ?: null,
-            'target_price' => Request::post('target_price') ?: null,
-            'notes' => Request::post('notes', ''),
-        ];
+        $errors = PartForm::apply($part, (int) Auth::id());
 
-        $validator = new Validator($data);
-        $validator->required('name', 'Name');
-        if ($data['usual_order_qty'] !== null) {
-            $validator->integerMin('usual_order_qty', 'Usual order quantity', 1);
-        }
-        if ($data['target_price'] !== null) {
-            $validator->numeric('target_price', 'Target price');
-        }
-
-        if ($validator->fails()) {
-            Flash::setErrors($validator->errors());
+        if ($errors !== []) {
+            Flash::setErrors($errors);
             Response::redirect('/parts/' . $id . '/edit');
         }
-
-        Part::updateClientFields($part['id'], $data);
-
-        Part::clearAlternateNumbers($part['id']);
-        $this->saveAltNumbers($part['id']);
-
-        Part::clearFreeIssueMaterials($part['id']);
-        $this->saveFreeIssueMaterials($part['id']);
-        $this->saveFreeIssue((int) $part['id']);
 
         Flash::success('Part updated.');
         Response::redirect('/parts/' . $id);
@@ -164,7 +140,7 @@ final class PartController
         Auth::authorize('manage_parts');
         $part = $this->findOwnedPart((int) $id);
 
-        Part::setArchived($part['id'], !(bool) $part['is_archived']);
+        Part::setArchived((int) $part['id'], !(bool) $part['is_archived'], (int) Auth::id());
         Flash::success((bool) $part['is_archived'] ? 'Part unarchived.' : 'Part archived. It is hidden from active lists but its history is kept, and this can be undone at any time.');
         Response::redirect('/parts/' . $id);
     }
@@ -210,13 +186,15 @@ final class PartController
 
             $relativePath = Upload::store($file, 'part-media/' . $part['id']);
             $absolutePath = Upload::absolutePath($relativePath);
+            $mime = $absolutePath !== null ? Upload::detectMime($absolutePath) : null;
 
             PartMedia::create([
                 'part_id' => $part['id'],
                 'kind' => 'photo',
                 'file_path' => $relativePath,
                 'original_filename' => Upload::displayName((string) $file['name']),
-                'mime_type' => $absolutePath !== null ? Upload::detectMime($absolutePath) : null,
+                'mime_type' => $mime,
+                'thumb_path' => Image::process($relativePath, $mime),
                 'file_size' => (int) $file['size'],
                 'uploaded_by' => Auth::id(),
             ]);
@@ -362,12 +340,13 @@ final class PartController
 
             $relativePath = Upload::store($file, 'drawings/' . $partId);
             $absolutePath = Upload::absolutePath($relativePath);
+            $mime = $absolutePath !== null ? Upload::detectMime($absolutePath) : null;
 
             PartFile::create([
                 'part_id' => $partId,
                 'file_path' => $relativePath,
                 'original_filename' => Upload::displayName((string) $file['name']),
-                'mime_type' => $absolutePath !== null ? Upload::detectMime($absolutePath) : null,
+                'mime_type' => $mime,
                 'file_size' => (int) $file['size'],
                 'uploaded_by' => Auth::id(),
             ]);

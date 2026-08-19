@@ -2034,3 +2034,57 @@ legend.label { padding: 0; }
     color: var(--text-muted);
     font-weight: 600;
 }
+
+/* ---------------------------------------------------------------------------
+   Detail pages: a wide main column and a narrow rail
+   --------------------------------------------------------------------------- */
+
+/* `.grid-2` splits evenly, which is wrong for a record page: the substance —
+   specification, drawings, media, history — wants the room, and the rail holds
+   summary facts, actions and links. Collapses to one column on a narrow window,
+   rail last, because the rail is a companion to the content rather than a
+   preface to it. */
+.detail-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr);
+    gap: var(--space-4);
+    align-items: start;
+}
+@media (max-width: 900px) {
+    .detail-layout { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* The rail's stack of cards. */
+.detail-rail { display: grid; gap: var(--space-4); align-content: start; }
+.detail-main { display: grid; gap: var(--space-4); align-content: start; min-width: 0; }
+.detail-main > .card, .detail-rail > .card { margin: 0; }
+
+/* Key-value summary in the rail: label left, value right, one per line. */
+.summary-list { display: grid; gap: var(--space-2); margin: 0; }
+.summary-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: var(--space-3);
+}
+.summary-row + .summary-row { border-top: 1px solid var(--border); padding-top: var(--space-2); }
+.summary-key { color: var(--text-muted); font-size: 0.85rem; white-space: nowrap; }
+.summary-value { text-align: right; overflow-wrap: anywhere; }
+
+/* A column of full-width actions, so the rail reads as a set of choices. */
+.rail-actions { display: grid; gap: var(--space-2); }
+.rail-actions .btn { width: 100%; justify-content: center; }
+.rail-actions form { margin: 0; display: grid; }
+
+/* The order a page was opened to deal with, when other things are listed
+   alongside it. An accent edge and a lifted surface, so which one is the point
+   of the page is not a matter of reading the headings. */
+.card-focus {
+    border-left: 3px solid var(--accent);
+    background: var(--bg-raised);
+    box-shadow: 0 0 0 1px var(--accent-soft);
+}
+
+/* A sub-line that is a caution rather than detail — the price-under-review
+   flag beside a part being added to an order. */
+.cell-warn { color: var(--warn); font-weight: 600; }

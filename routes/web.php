@@ -88,7 +88,10 @@ $router->group(['auth'], function (Router $router): void {
     $router->get('/files/po/{id:\d+}', [FileController::class, 'po']);
     $router->get('/files/po-documents/{id:\d+}', [FileController::class, 'poDocument']);
     $router->get('/files/part-media/{id:\d+}', [FileController::class, 'partMedia']);
+    // The grids ask for the thumbnail; the tile links to the real thing.
+    $router->get('/files/part-media/{id:\d+}/{variant:thumb}', [FileController::class, 'partMedia']);
     $router->get('/files/order-photos/{id:\d+}', [FileController::class, 'orderPhoto']);
+    $router->get('/files/order-photos/{id:\d+}/{variant:thumb}', [FileController::class, 'orderPhoto']);
 
     $router->get('/preferences', [PreferencesController::class, 'edit']);
     $router->post('/preferences', [PreferencesController::class, 'update'], ['csrf']);
@@ -118,6 +121,10 @@ $router->group(['staff'], function (Router $router): void {
     $router->post('/staff/parts', [StaffPartController::class, 'store'], ['csrf']);
     $router->get('/staff/parts/{id:\d+}', [StaffPartController::class, 'show']);
     $router->get('/staff/parts/{id:\d+}/linked-summary', [StaffPartController::class, 'linkedSummary']);
+    $router->get('/staff/parts/{id:\d+}/edit', [StaffPartController::class, 'edit']);
+    $router->post('/staff/parts/{id:\d+}', [StaffPartController::class, 'update'], ['csrf']);
+    $router->post('/staff/parts/{id:\d+}/archive', [StaffPartController::class, 'archive'], ['csrf']);
+    $router->post('/staff/parts/{id:\d+}/delete', [StaffPartController::class, 'delete'], ['csrf']);
 
     // A new drawing revision, and the part's own media library: setup photos,
     // machine settings, tooling files.

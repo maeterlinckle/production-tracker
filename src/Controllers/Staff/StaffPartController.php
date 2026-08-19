@@ -7,6 +7,7 @@ namespace App\Controllers\Staff;
 use App\Core\Auth;
 use App\Core\Config;
 use App\Core\Flash;
+use App\Core\Image;
 use App\Core\Request;
 use App\Core\Response;
 use App\Core\Upload;
@@ -19,6 +20,8 @@ use App\Models\PartFile;
 use App\Models\PartLink;
 use App\Models\PartMedia;
 use App\Services\Notifications;
+use App\Services\PartForm;
+use App\Services\PartView;
 
 final class StaffPartController
 {
@@ -145,19 +148,113 @@ final class StaffPartController
             return;
         }
 
-        $media = PartMedia::forPart($part['id']);
+        // The same template the client sees, with Junction's own sections
+        // switched on inside it — see App\Services\PartView.
+        View::render('parts/show', PartView::payload($part));
+    }
 
-        View::render('staff/parts/show', [
-            'title' => $part['cpn'],
+    /**
+     * Editing a part from the Junction side (item 7).
+     *
+     * There was no way to do this at all: staff could set a price and fill in
+     * workshop details from the part page, but the client-visible fields — the
+     * name, the description, the free-issue ratio somebody had typed wrong —
+     * could only be corrected by asking the client to do it.
+     *
+     * The same form the client uses, with more of it switched on. Which parts
+     * are switched on is decided in App\Services\PartForm, and enforced there
+     * too rather than only hidden here.
+     */
+    public function edit(string $id): void
+    {
+        $part = Part::find((int) $id);
+        if ($part === null) {
+            View::renderError(404, 'Part not found', 'That part does not exist.');
+
+            return;
+        }
+
+        if (!PartForm::canEditAnything()) {
+            Auth::authorize('create_client_parts');
+        }
+
+        View::render('parts/edit', [
+            'title' => 'Edit ' . $part['cpn'],
             'part' => $part,
-            'files' => PartFile::forPart($part['id']),
-            'mainPhoto' => PartMedia::mainPhoto($part['id']),
-            'attachments' => PartMedia::groupAttachments($media),
             'altNumbers' => Part::alternateNumbers($part['id']),
             'freeIssueMaterials' => Part::freeIssueMaterials($part['id']),
-            'linkedParts' => PartLink::forPart($part['id']),
-            'orderLines' => OrderLine::forPart($part['id']),
         ]);
+    }
+
+    public function update(string $id): void
+    {
+        $part = Part::find((int) $id);
+        if ($part === null) {
+            View::renderError(404, 'Part not found', 'That part does not exist.');
+
+            return;
+        }
+
+        if (!PartForm::canEditAnything()) {
+            Auth::authorize('create_client_parts');
+        }
+
+        $errors = PartForm::apply($part, (int) Auth::id());
+
+        if ($errors !== []) {
+            Flash::setErrors($errors);
+            Response::redirect('/staff/parts/' . $id . '/edit');
+        }
+
+        Flash::success('Part updated.');
+        Response::redirect('/staff/parts/' . $id);
+    }
+
+    /**
+     * Archiving and deleting from the staff side (item 2).
+     *
+     * These existed only on the client's own page, so a part raised by Junction
+     * on a client's behalf could be archived by nobody at Junction. Gated on the
+     * same capability as raising one: whoever can put a part on a client's
+     * account can take it off again.
+     */
+    public function archive(string $id): void
+    {
+        Auth::authorize('create_client_parts');
+
+        $part = Part::find((int) $id);
+        if ($part === null) {
+            View::renderError(404, 'Part not found', 'That part does not exist.');
+
+            return;
+        }
+
+        Part::setArchived((int) $part['id'], !(bool) $part['is_archived'], (int) Auth::id());
+
+        Flash::success((bool) $part['is_archived']
+            ? 'Part unarchived.'
+            : 'Part archived. It is hidden from active lists but its history is kept, and this can be undone at any time.');
+        Response::redirect('/staff/parts/' . $id);
+    }
+
+    public function delete(string $id): void
+    {
+        Auth::authorize('create_client_parts');
+
+        $part = Part::find((int) $id);
+        if ($part === null) {
+            View::renderError(404, 'Part not found', 'That part does not exist.');
+
+            return;
+        }
+
+        if (!Part::delete((int) $part['id'])) {
+            Flash::error('This part has orders against it, so it cannot be deleted. Archive it instead to hide it while keeping its history.');
+            Response::redirect('/staff/parts/' . $id);
+        }
+
+        Flash::success('Part deleted.');
+        Response::redirect('/staff/parts');
     }
 
     /** AJAX: quoted, orderable siblings of a part, for the order builder. */
@@ -210,12 +307,13 @@ final class StaffPartController
 
             $relativePath = Upload::store($file, 'drawings/' . $part['id']);
             $absolutePath = Upload::absolutePath($relativePath);
+            $mime = $absolutePath !== null ? Upload::detectMime($absolutePath) : null;
 
             PartFile::create([
                 'part_id' => $part['id'],
                 'file_path' => $relativePath,
                 'original_filename' => Upload::displayName((string) $file['name']),
-                'mime_type' => $absolutePath !== null ? Upload::detectMime($absolutePath) : null,
+                'mime_type' => $mime,
                 'file_size' => (int) $file['size'],
                 'uploaded_by' => Auth::id(),
             ]);
@@ -275,6 +373,7 @@ final class StaffPartController
 
             $relativePath = Upload::store($file, 'part-media/' . $part['id']);
             $absolutePath = Upload::absolutePath($relativePath);
+            $mime = $absolutePath !== null ? Upload::detectMime($absolutePath) : null;
 
             PartMedia::create([
                 'part_id' => $part['id'],
@@ -286,7 +385,8 @@ final class StaffPartController
                 'caption' => $caption,
                 'file_path' => $relativePath,
                 'original_filename' => Upload::displayName((string) $file['name']),
-                'mime_type' => $absolutePath !== null ? Upload::detectMime($absolutePath) : null,
+                'mime_type' => $mime,
+                'thumb_path' => Image::process($relativePath, $mime),
                 'file_size' => (int) $file['size'],
                 'uploaded_by' => Auth::id(),
             ]);
@@ -356,7 +456,7 @@ final class StaffPartController
             'base_material' => Request::post('base_material') ?: null,
             'material_source' => Request::post('material_source') ?: null,
             'material_cost' => Request::post('material_cost') ?: null,
-        ]);
+        ], (int) Auth::id());
 
         // The toggle, the source materials and the ratio are the client's
         // values; Junction can correct them, and that correction is recorded

@@ -23,10 +23,17 @@ final class Part
     public static function find(int $id): ?array
     {
         return Database::one(
-            'SELECT p.*, c.name AS client_name, u.name AS free_issue_updated_by_name
+            'SELECT p.*, c.name AS client_name,
+                    u.name AS free_issue_updated_by_name,
+                    cb.name AS created_by_name,
+                    ub.name AS updated_by_name,
+                    qb.name AS quoted_price_set_by_name
                FROM parts p
                JOIN clients c ON c.id = p.client_id
-          LEFT JOIN users u ON u.id = p.free_issue_updated_by
+          LEFT JOIN users u  ON u.id  = p.free_issue_updated_by
+          LEFT JOIN users cb ON cb.id = p.created_by
+          LEFT JOIN users ub ON ub.id = p.updated_by
+          LEFT JOIN users qb ON qb.id = p.quoted_price_set_by
               WHERE p.id = :id',
             ['id' => $id]
         );
@@ -173,6 +180,9 @@ final class Part
             'cpn' => $part['cpn'],
             'name' => $part['name'],
             'unit_price' => $part['quoted_price'] !== null ? (float) $part['quoted_price'] : null,
+            // The order builder warns on this as the part is added, which is
+            // the last moment before somebody commits to a quantity.
+            'price_under_review' => (bool) ($part['price_under_review'] ?? false),
             'has_free_issue' => (bool) $part['has_free_issue'],
             'free_issue_relationship' => $part['free_issue_relationship'],
             'free_issue_factor' => (int) $part['free_issue_factor'],
@@ -226,12 +236,21 @@ final class Part
         );
     }
 
-    public static function updateClientFields(int $id, array $data): void
+    /**
+     * Every method that writes to a part takes the user doing it.
+     *
+     * Required rather than optional on purpose. `parts` recorded who created a
+     * row and not who last changed it, so "who did this" could be answered for
+     * the first version and no other — and three people can edit a part now.
+     * Making the argument mandatory means a new write path cannot quietly skip
+     * the stamp.
+     */
+    public static function updateClientFields(int $id, array $data, int $userId): void
     {
         Database::query(
             'UPDATE parts SET
                 name = :name, description = :description, usual_order_qty = :usual_order_qty,
-                target_price = :target_price, notes = :notes
+                target_price = :target_price, notes = :notes, updated_by = :updated_by
              WHERE id = :id',
             [
                 'id' => $id,
@@ -240,6 +259,7 @@ final class Part
                 'usual_order_qty' => $data['usual_order_qty'] ?? null,
                 'target_price' => $data['target_price'] ?? null,
                 'notes' => $data['notes'] ?? null,
+                'updated_by' => $userId,
             ]
         );
     }
@@ -248,19 +268,19 @@ final class Part
     {
         Database::query(
             "UPDATE parts SET quoted_price = :price, quoted_price_set_by = :user_id,
-                quoted_price_set_at = NOW(), status = 'quoted'
+                quoted_price_set_at = NOW(), status = 'quoted', updated_by = :user_id2
              WHERE id = :id",
-            ['price' => $price, 'user_id' => $staffUserId, 'id' => $id]
+            ['price' => $price, 'user_id' => $staffUserId, 'user_id2' => $staffUserId, 'id' => $id]
         );
     }
 
-    public static function updateStaffFields(int $id, array $data): void
+    public static function updateStaffFields(int $id, array $data, int $userId): void
     {
         Database::query(
             'UPDATE parts SET
                 internal_notes = :internal_notes, build_time_minutes = :build_time_minutes,
                 base_material = :base_material, material_source = :material_source,
-                material_cost = :material_cost
+                material_cost = :material_cost, updated_by = :updated_by
              WHERE id = :id',
             [
                 'id' => $id,
@@ -269,13 +289,32 @@ final class Part
                 'base_material' => $data['base_material'] ?? null,
                 'material_source' => $data['material_source'] ?? null,
                 'material_cost' => $data['material_cost'] ?? null,
+                'updated_by' => $userId,
             ]
         );
     }
 
-    public static function setArchived(int $id, bool $archived): void
+    /**
+     * Flag that this part's price is about to move (item 9).
+     *
+     * A warning, not a change: the current price stays the current price until
+     * somebody sets a new one. A second "provisional" price column would be a
+     * number nobody had committed to, quoted back at us.
+     */
+    public static function setPriceUnderReview(int $id, bool $underReview, int $userId): void
     {
-        Database::query('UPDATE parts SET is_archived = :archived WHERE id = :id', ['archived' => $archived ? 1 : 0, 'id' => $id]);
+        Database::query(
+            'UPDATE parts SET price_under_review = :flag, updated_by = :updated_by WHERE id = :id',
+            ['flag' => $underReview ? 1 : 0, 'updated_by' => $userId, 'id' => $id]
+        );
+    }
+
+    public static function setArchived(int $id, bool $archived, int $userId): void
+    {
+        Database::query(
+            'UPDATE parts SET is_archived = :archived, updated_by = :updated_by WHERE id = :id',
+            ['archived' => $archived ? 1 : 0, 'updated_by' => $userId, 'id' => $id]
+        );
     }
 
     public static function isReferencedByOrders(int $id): bool

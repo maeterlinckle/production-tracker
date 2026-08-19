@@ -350,6 +350,15 @@
             name.textContent = item.name;
             row.appendChild(name);
 
+            // Flagged before it is picked as well as after: somebody scanning a
+            // list of parts to order should see it without having to add one.
+            if (item.price_under_review) {
+                var warning = document.createElement('span');
+                warning.className = 'cell-sub cell-warn';
+                warning.textContent = 'Price under review';
+                row.appendChild(warning);
+            }
+
             row.addEventListener('click', function () {
                 box.dispatchEvent(new CustomEvent('combobox:select', { detail: item }));
                 box.querySelector('[data-combobox-input]').value = '';

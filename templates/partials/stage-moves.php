@@ -36,18 +36,24 @@ $canProduce = $canProduce ?? false;
         with a fifth of the table and stacked all four onto separate lines.
     */ ?>
     <table class="stage-table">
+        <?php /*
+            A reader who cannot act on the line gets no action column at all,
+            rather than a column of dashes. The client sees this table too —
+            it is their order's progress — and an empty column would only
+            invite them to wonder what is missing.
+        */ ?>
         <colgroup>
             <col class="col-stage">
             <col class="col-qty">
             <?php if ($converts): ?><col class="col-unit"><?php endif; ?>
-            <col class="col-action">
+            <?php if ($canProduce): ?><col class="col-action"><?php endif; ?>
         </colgroup>
         <thead>
             <tr>
                 <th scope="col">Stage</th>
                 <th scope="col" class="align-right">Quantity</th>
                 <?php if ($converts): ?><th scope="col">Counted in</th><?php endif; ?>
-                <th scope="col" class="stage-table-actions">Action</th>
+                <?php if ($canProduce): ?><th scope="col" class="stage-table-actions">Action</th><?php endif; ?>
             </tr>
         </thead>
         <tbody>
@@ -69,10 +75,9 @@ $canProduce = $canProduce ?? false;
                 <?php if ($converts): ?>
                     <td class="stage-unit"><?= e(OrderLine::unitNoun($line, $stage, $shown)) ?></td>
                 <?php endif; ?>
+                <?php if ($canProduce): ?>
                 <td class="stage-table-actions">
-                    <?php if (!$canProduce): ?>
-                        <span class="text-muted">—</span>
-                    <?php elseif ($stage === 'awaiting_free_issue'): ?>
+                    <?php if ($stage === 'awaiting_free_issue'): ?>
                         <a href="<?= url('/staff/lines/' . $line['id'] . '/check-in') ?>" class="btn btn-sm btn-primary">
                             Check in or reject material
                         </a>
@@ -110,6 +115,7 @@ $canProduce = $canProduce ?? false;
                         </form>
                     <?php endif; ?>
                 </td>
+                <?php endif; ?>
             </tr>
         <?php endforeach; ?>
         </tbody>

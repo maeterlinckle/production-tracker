@@ -92,6 +92,23 @@ return [
             'extensions' => ['png', 'jpg', 'jpeg', 'webp'],
             'max_bytes' => 10 * 1024 * 1024,
         ],
+        // Reference material kept against a part: machine settings, setup
+        // sheets, inspection reports. Images as well as PDFs, because a
+        // photographed settings screen is how most of them actually arrive.
+        'part_document' => [
+            'extensions' => ['pdf', 'png', 'jpg', 'jpeg', 'webp', 'doc', 'docx', 'xls', 'xlsx', 'txt'],
+            'max_bytes' => 25 * 1024 * 1024,
+        ],
+        // CNC programs, tool lists and CAM files. A deliberately wide list:
+        // every control writes its own extension, and the alternative to
+        // accepting them is somebody renaming files to get them uploaded.
+        'part_tooling' => [
+            'extensions' => [
+                'nc', 'tap', 'gcode', 'ngc', 'cnc', 'mpf', 'spf', 'eia', 'iso', 'ptp', 'anc', 'min',
+                'txt', 'csv', 'zip', 'pdf', 'step', 'stp', 'iges', 'igs', 'dxf', 'dwg',
+            ],
+            'max_bytes' => 50 * 1024 * 1024,
+        ],
         'logo' => [
             'extensions' => ['png', 'jpg', 'jpeg', 'webp'],
             'max_bytes' => 2 * 1024 * 1024,

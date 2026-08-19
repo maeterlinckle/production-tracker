@@ -145,7 +145,7 @@ constraint (`{token:[a-f0-9]{64}}`) works.
 
 ## 3. Database schema
 
-35 tables. Every table InnoDB/utf8mb4; `uq_`/`idx_`/`fk_`/`chk_` naming
+36 tables. Every table InnoDB/utf8mb4; `uq_`/`idx_`/`fk_`/`chk_` naming
 throughout.
 
 ### Identity and access
@@ -154,7 +154,7 @@ throughout.
 |---|---|
 | `clients` | Client companies. `clearbooks_entity_id` links to accounting. |
 | `users` | `side` enum + nullable `client_id`, tied by `chk_users_client_side`. `password_set_at` NULL = invited, never signed in. |
-| `roles`, `user_roles` | Seven seeded roles, many-to-many. |
+| `roles`, `user_roles` | Eight seeded roles, many-to-many. |
 | `user_invites` | SHA-256 of the token only, `expires_at`, `accepted_at`. Rows kept after acceptance as the audit trail of how an account came to exist. |
 | `login_attempts` | Throttling, per email+IP. |
 | `notification_preferences` | Opt-in only; a missing row means "do not send". |
@@ -166,7 +166,8 @@ throughout.
 | `parts` | Client-visible fields plus Junction-only workshop fields on one row. `status` draft→quoted, `is_archived` for reversible hiding. |
 | `part_alternate_numbers` | Drawing numbers and the like. |
 | `part_free_issue_materials` | What material the client supplies. |
-| `part_files`, `part_photos` | Drawings and client photos, disk + reference. |
+| `part_files` | Drawings, versioned: a new upload becomes current and the one it replaces is kept. |
+| `part_media` | The part's own reference material — main photo, setup documents, tooling files — as one table with a `kind`. `is_main` is 1 or NULL so a unique key can enforce one main photo per part. |
 | `part_links` | Symmetric "usually ordered with", one row per unordered pair enforced by `chk_part_links_order (part_id < linked_part_id)`. |
 
 `parts.has_free_issue` is the explicit yes/no, and `chk_parts_free_issue_toggle`
@@ -306,6 +307,7 @@ delivery to be argued about before anything moves.
 | `005_quantity_workflow.sql` | The quantity distribution and its movement log; `parts.has_free_issue`; `orders.po_number` and `order_po_documents`; `order_line_change_requests`; `free_issue_rejections` and the `material_return` note type; close-down columns. Backfills the distribution from the old columns, migrates `production_status_log` into the movement log and drops it, drops `order_lines.stage` and drops `route_cards`. |
 
 | `006_derive_free_issue_requirement.sql` | Data repair: recomputes `qty_free_issue_required` on every line under the new derivation, so rows carrying accumulated one-off top-ups come on to the calculated footing. |
+| `007_staff_orders_and_part_media.sql` | The `staff.raise_orders` role; `part_media` (with `part_photos` read into it and dropped); `order_line_change_requests.initiated_by`. |
 
 `005` is the one migration that is genuinely forward-only: it reads
 `production_status_log` and then drops it, so a second run has nothing to read.
@@ -393,6 +395,37 @@ The `migrations` table is what stops that happening.
 | 7 | Free-issue notes ask for what is still outstanding | Done — living document, rendered fresh, never stored |
 | 8 | Client-requested quantity changes with PO history | Done — staff apply or decline; a decrease cannot eat into what is made |
 | 9 | PO number on the order, through to Clear Books | Done — the invoice `reference` field |
+
+### Staff orders and part media round (19 August 2026)
+
+| # | Item | Status |
+|---|---|---|
+| 1 | Staff can raise an order for a client | Done — new `staff.raise_orders` role; the same form, shared with the client's own |
+| 2 | Report filter controls aligned | Done — the stacked `.field` became one `.action-row` |
+| 3 | Report free-issue logic and clarity | Done — outstanding also shown as material to run, plus received / available / will make |
+| 4 | Preferences grouped, single column | Done — five headings, staff-only ones dropped for clients |
+| 5 | Staff can upload a new drawing revision | Done — the client's versioning, unchanged |
+| 6 | Part-level media library | Done — main photo, documents and tooling files on the part |
+| 7 | Staff quantity change with a PO | Done — same record and same safeguards as a client request, marked `initiated_by` |
+
+**Where the judgement calls landed.**
+
+*The permission key* is `raise_orders`, held by `staff.raise_orders` and by
+`staff.admin` under the usual superset rule. It is separate from `set_pricing`
+because deciding a price and committing somebody to buy at it are different
+jobs; whoever holds it also gets `approve_quantity_changes`, since amending an
+order they raised is the same conversation.
+
+*Notification groupings* follow what a person would look for rather than the
+internal names: Orders, Free-issue material, Despatch and invoicing, Questions
+and changes, and Junction workload. Empty groups are dropped, so a client never
+sees a heading with nothing under it.
+
+*Tooling files* are an ordinary attachment with `kind = 'tooling'`, not a system
+of their own. The alternative was two upload paths, two listings and two places
+to look for the same thing. The allow-list is deliberately wide — every control
+writes its own extension, and the alternative to accepting them is somebody
+renaming files to get them uploaded.
 
 ### Check-in and unit-accuracy round (19 August 2026)
 

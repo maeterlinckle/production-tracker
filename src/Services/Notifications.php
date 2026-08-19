@@ -43,20 +43,31 @@ final class Notifications
         );
     }
 
+    /**
+     * Confirms an order to the client side.
+     *
+     * When a client places their own order that is the person who placed it.
+     * When Junction types one in on the phone it is the client's own users —
+     * telling the member of staff who just pressed the button that they pressed
+     * the button is not a notification, and the people who need to know their
+     * order is on the system are at the other end.
+     */
     public static function orderConfirmed(array $order, array $placedByUser): void
     {
-        self::notifyUser(
-            (int) $placedByUser['id'],
-            'order_confirmed',
-            [
-                'order_number' => (string) $order['order_number'],
-                'po_filename'  => (string) ($order['po_original_filename'] ?? '—'),
-                'line_count'   => (string) count(OrderLine::forOrder((int) $order['id'])),
-                'order_url'    => absolute_url('/orders/' . $order['id']),
-            ],
-            'order',
-            (int) $order['id']
-        );
+        $fields = [
+            'order_number' => (string) $order['order_number'],
+            'po_filename'  => (string) ($order['po_original_filename'] ?? '—'),
+            'line_count'   => (string) count(OrderLine::forOrder((int) $order['id'])),
+            'order_url'    => absolute_url('/orders/' . $order['id']),
+        ];
+
+        if (($placedByUser['side'] ?? 'client') === 'staff') {
+            self::notifyClientUsers((int) $order['client_id'], 'order_confirmed', $fields, 'order', (int) $order['id']);
+
+            return;
+        }
+
+        self::notifyUser((int) $placedByUser['id'], 'order_confirmed', $fields, 'order', (int) $order['id']);
     }
 
     public static function orderLineInProduction(array $line, array $order, int $clientId): void

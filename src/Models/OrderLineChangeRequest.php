@@ -111,19 +111,73 @@ final class OrderLineChangeRequest
         );
     }
 
-    public static function create(int $lineId, int $qtyAtRequest, int $qtyRequested, ?string $reason, int $userId): int
-    {
+    public static function create(
+        int $lineId,
+        int $qtyAtRequest,
+        int $qtyRequested,
+        ?string $reason,
+        int $userId,
+        string $initiatedBy = 'client'
+    ): int {
         return Database::insert(
-            'INSERT INTO order_line_change_requests (order_line_id, qty_at_request, qty_requested, reason, requested_by)
-             VALUES (:line_id, :qty_at, :qty_requested, :reason, :user)',
+            'INSERT INTO order_line_change_requests (
+                order_line_id, initiated_by, qty_at_request, qty_requested, reason, requested_by
+             ) VALUES (
+                :line_id, :initiated_by, :qty_at, :qty_requested, :reason, :user
+             )',
             [
                 'line_id' => $lineId,
+                'initiated_by' => $initiatedBy === 'staff' ? 'staff' : 'client',
                 'qty_at' => $qtyAtRequest,
                 'qty_requested' => $qtyRequested,
                 'reason' => $reason,
                 'user' => $userId,
             ]
         );
+    }
+
+    /**
+     * A change Junction makes itself, usually because an amended purchase order
+     * has arrived (item 7).
+     *
+     * Recorded in this table and applied in the same breath, because there is
+     * nobody left to ask: the person deciding and the person applying are the
+     * same, and a row that sat "pending" for the length of one function call
+     * would be a fiction. It goes here rather than somewhere of its own so that
+     * "how did this line come to be 32" has one answer whoever asked for it.
+     *
+     * @throws RuntimeException if the reduction would eat into finished work
+     */
+    public static function applyStaffChange(int $lineId, int $qtyRequested, ?string $reason, int $userId): int
+    {
+        $line = OrderLine::find($lineId);
+        if ($line === null) {
+            throw new RuntimeException('That order line no longer exists.');
+        }
+
+        $requestId = self::create(
+            $lineId,
+            (int) $line['qty_ordered'],
+            $qtyRequested,
+            $reason,
+            $userId,
+            'staff'
+        );
+
+        // apply() does the checking, so a reduction below what is already made
+        // is refused here on exactly the terms it is refused a client. If it
+        // refuses, the row goes with it: a staff change is one action, and
+        // leaving a request behind that nobody made and nobody can approve
+        // would put a permanent "pending" on the line.
+        try {
+            self::apply($requestId, $userId, $reason);
+        } catch (RuntimeException $e) {
+            Database::query('DELETE FROM order_line_change_requests WHERE id = :id', ['id' => $requestId]);
+
+            throw $e;
+        }
+
+        return $requestId;
     }
 
     public static function decline(int $id, int $userId, ?string $notes): void

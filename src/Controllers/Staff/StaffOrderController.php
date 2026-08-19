@@ -24,6 +24,7 @@ use App\Models\OrderQuery;
 use App\Models\Part;
 use App\Services\FreeIssueNoteService;
 use App\Services\Notifications;
+use App\Services\OrderPlacement;
 use App\Services\RouteCardService;
 use RuntimeException;
 
@@ -32,6 +33,83 @@ final class StaffOrderController
     public function index(): void
     {
         View::render('staff/orders/index', ['title' => 'Orders', 'orders' => Order::all()]);
+    }
+
+    // -- Raising an order on a client's behalf --------------------------------
+
+    /**
+     * The order form, once we know whose order it is.
+     *
+     * The client comes first because everything else depends on it: which parts
+     * the search offers, which prices apply, whose free-issue ratios are used.
+     * Asking for it in the same form as the parts would mean a search box that
+     * does nothing until a select is touched.
+     */
+    public function createOrder(): void
+    {
+        Auth::authorize('raise_orders');
+
+        $clientId = (int) Request::query('client_id', 0);
+        $client = $clientId > 0 ? Client::find($clientId) : null;
+
+        if ($client === null) {
+            View::render('staff/orders/choose-client', [
+                'title' => 'Place an order',
+                'clients' => Client::all(),
+            ]);
+
+            return;
+        }
+
+        $preselectId = (int) Request::query('part', 0);
+        $preselectPart = null;
+        if ($preselectId > 0) {
+            $part = Part::find($preselectId);
+            if ($part !== null && (int) $part['client_id'] === $clientId && $part['status'] === 'quoted') {
+                $preselectPart = Part::orderableJson($part);
+            }
+        }
+
+        View::render('staff/orders/create', [
+            'title' => 'Place order for ' . $client['name'],
+            'client' => $client,
+            'preselectPart' => $preselectPart,
+        ]);
+    }
+
+    public function storeOrder(string $clientId): void
+    {
+        Auth::authorize('raise_orders');
+
+        $client = Client::find((int) $clientId);
+        if ($client === null) {
+            View::renderError(404, 'Client not found', 'That client does not exist.');
+
+            return;
+        }
+
+        try {
+            $orderId = OrderPlacement::placeFromRequest((int) $clientId, (int) Auth::id());
+        } catch (RuntimeException $e) {
+            Flash::error($e->getMessage());
+            Response::redirect('/staff/orders/new?client_id=' . $clientId);
+
+            return;
+        }
+
+        Flash::success('Order placed for ' . $client['name'] . '. They have been sent the confirmation.');
+        Response::redirect('/staff/orders/' . $orderId);
+    }
+
+    /** AJAX: that client's quoted, orderable parts, for the combobox. */
+    public function searchOrderableForClient(string $clientId): void
+    {
+        Auth::authorize('raise_orders');
+
+        $term = trim((string) Request::query('q', ''));
+        $results = $term === '' ? [] : Part::searchOrderable((int) $clientId, $term);
+
+        Response::json(['results' => array_map(static fn ($p) => Part::orderableJson($p), $results)]);
     }
 
     public function show(string $id): void
@@ -369,12 +447,23 @@ final class StaffOrderController
         $this->storePoDocument($order, '/staff/orders/' . $id);
     }
 
-    /** Shared with the client-side upload: the same document history, either way in. */
+    /**
+     * Shared with the client-side upload: the same document history, either way
+     * in. Staff can also move line quantities in the same submission (item 7),
+     * because an amended PO and the quantities it amends are one event.
+     */
     public function storePoDocument(array $order, string $redirectTo): void
     {
+        $quantityMessages = $this->applyLineQuantityChanges($order, (string) Request::post('po_number', ''));
+
         $file = Upload::files('po')[0] ?? null;
         if ($file === null) {
-            Flash::error('Choose a purchase order document to add.');
+            if ($quantityMessages !== []) {
+                Flash::success(implode(' ', $quantityMessages));
+                Response::redirect($redirectTo);
+            }
+
+            Flash::error('Choose a purchase order document to add, or change a quantity.');
             Response::redirect($redirectTo);
         }
 
@@ -406,8 +495,83 @@ final class StaffOrderController
             Order::setPoNumber((int) $order['id'], $poNumber);
         }
 
-        Flash::success('Purchase order document added. The original is still on file.');
+        Flash::success(trim(
+            'Purchase order document added. The original is still on file. ' . implode(' ', $quantityMessages)
+        ));
         Response::redirect($redirectTo);
+    }
+
+    /**
+     * Move line quantities to match the purchase order that has just arrived
+     * (item 7).
+     *
+     * The staff-side counterpart to a client's change request, and deliberately
+     * the same record: one audit trail of quantity changes whoever asked for
+     * them, marked with which side that was. The safeguards are the same too,
+     * because they are enforced inside apply() rather than at either door.
+     *
+     * Only reachable by somebody who can approve a client's request — deciding
+     * what will be invoiced is one permission, not two.
+     *
+     * @return array<int,string> what to tell the person who submitted the form
+     */
+    private function applyLineQuantityChanges(array $order, string $poNumber): array
+    {
+        if (!Auth::can('approve_quantity_changes') || Order::isClosed($order)) {
+            return [];
+        }
+
+        $quantities = Request::post('line_qty', []);
+        if (!is_array($quantities) || $quantities === []) {
+            return [];
+        }
+
+        $reason = trim((string) Request::post('quantity_reason', ''));
+        if ($reason === '') {
+            $reason = $poNumber !== ''
+                ? 'Quantity set from purchase order ' . $poNumber
+                : 'Quantity changed by Junction with an updated purchase order';
+        }
+
+        $messages = [];
+
+        foreach (OrderLine::forOrder((int) $order['id']) as $line) {
+            $lineId = (int) $line['id'];
+            if (!array_key_exists($lineId, $quantities)) {
+                continue;
+            }
+
+            $requested = (int) $quantities[$lineId];
+
+            // A blank box, or the number that is already there, is somebody
+            // leaving the line alone.
+            if ($requested <= 0 || $requested === (int) $line['qty_ordered']) {
+                continue;
+            }
+
+            try {
+                OrderLineChangeRequest::applyStaffChange($lineId, $requested, $reason, (int) Auth::id());
+            } catch (RuntimeException $e) {
+                Flash::error($line['cpn'] . ': ' . $e->getMessage());
+                continue;
+            }
+
+            $messages[] = $line['cpn'] . ' moved from ' . (int) $line['qty_ordered'] . ' to ' . $requested . '.';
+
+            $refreshed = OrderLine::find($lineId);
+            if ($refreshed !== null) {
+                Notifications::quantityChangeDecided(
+                    OrderLineChangeRequest::forLine($lineId)[0] ?? [],
+                    $refreshed,
+                    $order,
+                    'applied',
+                    (string) Auth::name(),
+                    (int) $order['client_id']
+                );
+            }
+        }
+
+        return $messages;
     }
 
     public function updatePoNumber(string $id): void

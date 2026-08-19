@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Core\Database;
+use App\Models\OrderLine;
+use App\Models\Part;
 
 /**
  * What is still to be made, and how much of it.
@@ -58,6 +60,7 @@ final class PartsOnOrder
                     o.order_number, o.placed_at, o.po_number, o.po_original_filename,
                     DATEDIFF(NOW(), o.placed_at) AS days_open,
                     p.cpn, p.name AS part_name, p.base_material, p.has_free_issue,
+                    p.free_issue_relationship, p.free_issue_factor,
                     c.id AS client_id, c.name AS client_name,
                     (SELECT COUNT(*) FROM free_issue_receipts fir
                       WHERE fir.order_line_id = ol.id
@@ -75,10 +78,10 @@ final class PartsOnOrder
         // The report shows the same derived status as the order page, so it
         // needs the same distribution behind it -- one extra query for the whole
         // report rather than one per row.
-        $distributions = \App\Models\OrderLine::distributionsFor(array_column($rows, 'id'));
+        $distributions = OrderLine::distributionsFor(array_column($rows, 'id'));
 
         return array_map(static function (array $row) use ($distributions): array {
-            $row['quantities'] = $distributions[(int) $row['id']] ?? \App\Models\OrderLine::emptyDistribution();
+            $row['quantities'] = $distributions[(int) $row['id']] ?? OrderLine::emptyDistribution();
 
             return $row;
         }, $rows);
@@ -137,6 +140,58 @@ final class PartsOnOrder
         return $parts;
     }
 
+    /**
+     * The material side of a line, in the units the material is actually
+     * counted in.
+     *
+     * The report's own columns are final parts, because that is what the client
+     * is owed and what totals across parts. But "make 40" and "run 5 bars" are
+     * different instructions, and the person reading this is deciding what to
+     * set up next — so the physical figures sit alongside, worked out the same
+     * way the order page works them out.
+     *
+     * `available` is material on the shelf: received, less anything rejected
+     * and sent back. `will_make` is what that material yields once it is
+     * through the machine, which for a divide-by-8 part is eight times the
+     * number of bars and is the figure people get wrong in their heads.
+     *
+     * @return array{
+     *     converts:bool, required:int, received:int, rejected:int, available:int,
+     *     will_make:int, outstanding_units:int, sentence:string
+     * }|null null when the part is not free-issue at all
+     */
+    public static function freeIssueFigures(array $line): ?array
+    {
+        if (!(bool) $line['has_free_issue']) {
+            return null;
+        }
+
+        $received = (int) $line['qty_free_issue_received'];
+        $rejected = (int) $line['qty_free_issue_rejected'];
+        $available = max(0, $received - $rejected);
+        $willMake = Part::finalPartsFor($line, $available);
+        $outstandingParts = (int) $line['qty_outstanding'];
+
+        $sentence = $received . ' received'
+            . ($rejected > 0 ? ' (' . $rejected . ' rejected)' : '')
+            . ', ' . $available . ' available for production — enough for '
+            . $willMake . ' final part' . ($willMake === 1 ? '' : 's') . '.';
+
+        return [
+            'converts' => Part::convertsQuantity($line),
+            'required' => (int) $line['qty_free_issue_required'],
+            'received' => $received,
+            'rejected' => $rejected,
+            'available' => $available,
+            'will_make' => $willMake,
+            // What is still to be made, expressed as the material it takes:
+            // the pre-completion stages are counted in material, so this is the
+            // figure that matches what the workshop will physically handle.
+            'outstanding_units' => Part::freeIssueQtyFor($line, $outstandingParts),
+            'sentence' => $sentence,
+        ];
+    }
+
     /** Waiting on the client rather than on the workshop. */
     public static function isBlocked(array $line): bool
     {
@@ -144,7 +199,7 @@ final class PartsOnOrder
             return true;
         }
 
-        return \App\Models\OrderLine::freeIssueOutstanding($line) > 0;
+        return OrderLine::freeIssueOutstanding($line) > 0;
     }
 
     /** A one-line description of why a line has not moved, for the report and the digest. */
@@ -154,7 +209,7 @@ final class PartsOnOrder
             return 'Free-issue discrepancy unresolved';
         }
 
-        $short = \App\Models\OrderLine::freeIssueOutstanding($line);
+        $short = OrderLine::freeIssueOutstanding($line);
         if ($short > 0) {
             $rejected = (int) $line['qty_free_issue_rejected'];
 

@@ -16,18 +16,21 @@ $csvQuery = 'format=csv' . ($clientId !== null ? '&client_id=' . $clientId : '')
     <a href="<?= url('/staff/reports/parts-on-order?' . $csvQuery) ?>" class="btn">Export CSV</a>
 </div>
 
-<form method="get" action="<?= url('/staff/reports/parts-on-order') ?>" class="filter-bar">
-    <div class="field field-inline">
-        <label class="label" for="client_id">Client</label>
-        <select class="input" id="client_id" name="client_id">
-            <option value="">Every client</option>
-            <?php foreach ($clients as $client): ?>
-                <option value="<?= (int) $client['id'] ?>" <?= $clientId === (int) $client['id'] ? 'selected' : '' ?>>
-                    <?= e($client['name']) ?>
-                </option>
-            <?php endforeach; ?>
-        </select>
-    </div>
+<?php /*
+    The select and its buttons are one row (item 2). The label used to sit above
+    the select inside a stacked .field, which pushed the control down half its
+    own height and left the buttons floating against the middle of it.
+*/ ?>
+<form method="get" action="<?= url('/staff/reports/parts-on-order') ?>" class="action-row filter-bar">
+    <label for="client_id">Client</label>
+    <select class="input-grow" id="client_id" name="client_id">
+        <option value="">Every client</option>
+        <?php foreach ($clients as $client): ?>
+            <option value="<?= (int) $client['id'] ?>" <?= $clientId === (int) $client['id'] ? 'selected' : '' ?>>
+                <?= e($client['name']) ?>
+            </option>
+        <?php endforeach; ?>
+    </select>
     <button type="submit" class="btn">Apply</button>
     <?php if ($clientId !== null): ?>
         <a href="<?= url('/staff/reports/parts-on-order') ?>" class="btn btn-ghost">Clear</a>
@@ -105,6 +108,10 @@ $csvQuery = 'format=csv' . ($clientId !== null ? '&client_id=' . $clientId : '')
                                 <?php if ($hold !== ''): ?>
                                     <div class="cell-sub"><?= e($hold) ?></div>
                                 <?php endif; ?>
+                                <?php $material = PartsOnOrder::freeIssueFigures($line); ?>
+                                <?php if ($material !== null): ?>
+                                    <div class="cell-sub"><?= e($material['sentence']) ?></div>
+                                <?php endif; ?>
                             </td>
                             <td>
                                 <?= format_date($line['placed_at']) ?>
@@ -115,7 +122,23 @@ $csvQuery = 'format=csv' . ($clientId !== null ? '&client_id=' . $clientId : '')
                             </td>
                             <td class="align-right"><?= (int) $line['qty_ordered'] ?></td>
                             <td class="align-right"><?= (int) $line['qty_completed'] ?></td>
-                            <td class="align-right"><strong><?= (int) $line['qty_outstanding'] ?></strong></td>
+                            <td class="align-right">
+                                <strong><?= (int) $line['qty_outstanding'] ?></strong>
+                                <?php /*
+                                    Still to make is work that has not reached
+                                    completion, and everything before completion
+                                    is counted in material. The parts figure is
+                                    what the client is owed; this is what the
+                                    workshop will physically handle.
+                                */ ?>
+                                <?php $fi = PartsOnOrder::freeIssueFigures($line); ?>
+                                <?php if ($fi !== null && $fi['converts']): ?>
+                                    <div class="cell-sub">
+                                        <?= (int) $fi['outstanding_units'] ?>
+                                        <?= (int) $fi['outstanding_units'] === 1 ? 'unit' : 'units' ?> to run
+                                    </div>
+                                <?php endif; ?>
+                            </td>
                             <td class="align-right"><?= (int) $line['qty_delivered'] ?></td>
                             <td>
                                 <?= status_badge(\App\Models\OrderLine::headlineStage($line)) ?>

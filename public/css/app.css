@@ -1983,3 +1983,54 @@ legend.label { padding: 0; }
     margin-bottom: var(--space-3);
 }
 .callout-ok { border-left-color: var(--ok); }
+
+/* ---------------------------------------------------------------------------
+   Part media library
+   --------------------------------------------------------------------------- */
+
+/* The part's own photo, beside its number in the page heading. */
+.part-hero {
+    width: 72px; height: 72px;
+    object-fit: cover;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    display: block;
+}
+
+.media-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: var(--space-3);
+    margin: 0 0 var(--space-4);
+}
+.media-tile { margin: 0; display: grid; gap: var(--space-2); }
+.media-tile img {
+    width: 100%;
+    aspect-ratio: 4 / 3;
+    object-fit: cover;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    display: block;
+}
+.media-tile figcaption {
+    font-size: 0.82rem;
+    color: var(--text);
+    display: grid;
+    gap: var(--space-1);
+    overflow-wrap: anywhere;
+}
+.media-actions { display: flex; flex-wrap: wrap; gap: var(--space-1); align-items: center; }
+.media-actions form { margin: 0; }
+
+/* Notification preferences: one column, under headings. */
+.pref-group { margin: 0 0 var(--space-5); }
+.pref-group + .pref-group { border-top: 1px solid var(--border); padding-top: var(--space-4); }
+.pref-group-title {
+    padding: 0;
+    margin-bottom: var(--space-2);
+    font-size: 0.82rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    font-weight: 600;
+}

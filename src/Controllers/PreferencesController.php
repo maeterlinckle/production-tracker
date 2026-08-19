@@ -19,7 +19,7 @@ final class PreferencesController
     {
         View::render('preferences/edit', [
             'title' => 'Notification preferences',
-            'types' => NotificationTypes::forUser((string) Auth::side(), Auth::roles()),
+            'groups' => NotificationTypes::groupedForUser((string) Auth::side(), Auth::roles()),
             'subscribed' => NotificationPreference::subscribedTypes((int) Auth::id()),
         ]);
     }

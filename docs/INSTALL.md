@@ -142,8 +142,14 @@ machine where `manage.sh` has not been installed.
 | Client | `client.production` | View orders, raise/answer queries — no pricing, no ordering |
 | Staff | `staff.admin` | Everything, including Settings |
 | Staff | `staff.invoicing` | Raise Clear Books invoices |
-| Staff | `staff.quoting` | Set part pricing |
+| Staff | `staff.quoting` | Set part pricing, raise parts for a client, decide quantity changes |
+| Staff | `staff.raise_orders` | Place an order on a client's behalf, and amend one when the PO changes |
 | Staff | `staff.production` | Check in free issue, update production status, generate paperwork |
+
+`staff.raise_orders` is separate from `staff.quoting` on purpose: deciding a
+price and committing a client to buy at it are different jobs, and one person
+holding both should be somebody's decision rather than a side effect of the
+role list.
 
 Pricing (quoted prices, invoice amounts) is only ever sent to the browser or
 an email for users holding `view_pricing` (`client.purchaser`/`client.admin`

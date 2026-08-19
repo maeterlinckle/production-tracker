@@ -15,7 +15,7 @@ use App\Core\View;
 use App\Models\Part;
 use App\Models\PartFile;
 use App\Models\PartLink;
-use App\Models\PartPhoto;
+use App\Models\PartMedia;
 
 final class PartController
 {
@@ -97,7 +97,7 @@ final class PartController
             'title' => $part['cpn'],
             'part' => $part,
             'files' => PartFile::forPart($part['id']),
-            'photos' => PartPhoto::forPart($part['id']),
+            'photos' => PartMedia::forPart($part['id']),
             'altNumbers' => Part::alternateNumbers($part['id']),
             'freeIssueMaterials' => Part::freeIssueMaterials($part['id']),
             'linkedParts' => PartLink::forPart($part['id']),
@@ -208,11 +208,12 @@ final class PartController
                 continue;
             }
 
-            $relativePath = Upload::store($file, 'part-photos/' . $part['id']);
+            $relativePath = Upload::store($file, 'part-media/' . $part['id']);
             $absolutePath = Upload::absolutePath($relativePath);
 
-            PartPhoto::create([
+            PartMedia::create([
                 'part_id' => $part['id'],
+                'kind' => 'photo',
                 'file_path' => $relativePath,
                 'original_filename' => Upload::displayName((string) $file['name']),
                 'mime_type' => $absolutePath !== null ? Upload::detectMime($absolutePath) : null,
@@ -230,10 +231,10 @@ final class PartController
         Auth::authorize('manage_parts');
         $part = $this->findOwnedPart((int) $id);
 
-        $photo = PartPhoto::find((int) $photoId);
+        $photo = PartMedia::find((int) $photoId);
         if ($photo !== null && (int) $photo['part_id'] === $part['id']) {
             Upload::delete($photo['file_path']);
-            PartPhoto::delete($photo['id']);
+            PartMedia::delete((int) $photo['id']);
             Flash::success('Photo removed.');
         }
 

@@ -30,6 +30,7 @@ $staffLinks = [
     // The doing comes before the reading: the orders group leads with the work
     // in front of the workshop rather than with the full history.
     ['label' => 'Orders', 'href' => '/staff/orders', 'permission' => null, 'children' => [
+        ['label' => 'Place an order', 'href' => '/staff/orders/new',     'permission' => 'raise_orders'],
         ['label' => 'All orders',     'href' => '/staff/orders',         'permission' => 'view_orders'],
         ['label' => 'Delivery notes', 'href' => '/staff/delivery-notes', 'permission' => 'view_orders'],
     ]],

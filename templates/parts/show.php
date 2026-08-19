@@ -120,8 +120,8 @@ use App\Core\Auth;
                 <div style="display:flex; flex-wrap:wrap; gap: var(--space-3)">
                     <?php foreach ($photos as $photo): ?>
                         <div style="text-align:center">
-                            <a href="<?= url('/files/part-photos/' . $photo['id']) ?>" target="_blank" rel="noopener">
-                                <img src="<?= url('/files/part-photos/' . $photo['id']) ?>" alt="<?= e($part['cpn']) ?>" style="width:100px;height:100px;object-fit:cover;border-radius:var(--radius-sm);border:1px solid var(--border)">
+                            <a href="<?= url('/files/part-media/' . $photo['id']) ?>" target="_blank" rel="noopener">
+                                <img src="<?= url('/files/part-media/' . $photo['id']) ?>" alt="<?= e($part['cpn']) ?>" style="width:100px;height:100px;object-fit:cover;border-radius:var(--radius-sm);border:1px solid var(--border)">
                             </a>
                             <?php if ($canManage): ?>
                                 <form method="post" action="<?= url('/parts/' . $part['id'] . '/photos/' . $photo['id'] . '/delete') ?>">

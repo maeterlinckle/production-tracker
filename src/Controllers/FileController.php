@@ -13,7 +13,7 @@ use App\Models\OrderPhoto;
 use App\Models\OrderPoDocument;
 use App\Models\Part;
 use App\Models\PartFile;
-use App\Models\PartPhoto;
+use App\Models\PartMedia;
 
 final class FileController
 {
@@ -36,23 +36,31 @@ final class FileController
         $this->stream($file['file_path'], $file['original_filename'], $file['mime_type'] ?? null);
     }
 
-    public function partPhoto(string $id): void
+    /**
+     * Anything in a part's media library: photos, setup documents, tooling
+     * files.
+     *
+     * Visible to the client whose part it is as well as to staff. It is their
+     * part, and a photo of the finished thing is often the clearest answer to
+     * "is this what you meant".
+     */
+    public function partMedia(string $id): void
     {
-        $photo = PartPhoto::find((int) $id);
-        if ($photo === null) {
+        $item = PartMedia::find((int) $id);
+        if ($item === null) {
             View::renderError(404, 'File not found', 'That file does not exist.');
 
             return;
         }
 
-        $part = Part::find((int) $photo['part_id']);
+        $part = Part::find((int) $item['part_id']);
         if ($part === null || (!Auth::isStaff() && (int) $part['client_id'] !== Auth::clientId())) {
             View::renderError(404, 'File not found', 'That file does not exist or is not available to you.');
 
             return;
         }
 
-        $this->stream($photo['file_path'], $photo['original_filename'], $photo['mime_type'] ?? null);
+        $this->stream($item['file_path'], $item['original_filename'], $item['mime_type'] ?? null);
     }
 
     public function orderPhoto(string $id): void

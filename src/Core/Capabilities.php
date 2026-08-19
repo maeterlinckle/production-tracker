@@ -60,9 +60,16 @@ final class Capabilities
         // exactly like one the client raised themselves afterwards.
         'create_client_parts' => ['staff.quoting', 'staff.admin'],
 
+        // Orders still arrive by phone and by email. Typing one in for the
+        // client is its own job rather than part of quoting: deciding a price
+        // and committing somebody to buy at it are different things, and one
+        // person holding both should be a decision rather than a side effect.
+        'raise_orders' => ['staff.raise_orders', 'staff.admin'],
+
         // Applying a quantity change moves what will be invoiced, so it belongs
         // with the people who set the price rather than with the workshop.
-        'approve_quantity_changes' => ['staff.quoting', 'staff.admin'],
+        // Whoever can raise an order can also amend one when the PO changes.
+        'approve_quantity_changes' => ['staff.quoting', 'staff.raise_orders', 'staff.admin'],
 
         // Cancelling outstanding quantity off an order is the commercial end of
         // the same decision.

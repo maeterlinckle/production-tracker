@@ -194,7 +194,12 @@ $goodsOutNotes = array_values(array_filter($deliveryNotes, static fn ($dn) => $d
                             <span class="badge <?= $request['status'] === 'pending' ? 'badge-warn' : ($request['status'] === 'applied' ? 'badge-ok' : 'badge-muted') ?>">
                                 <?= e(ucfirst($request['status'])) ?>
                             </span>
-                            <span class="text-muted">asked by <?= e($request['requested_by_name']) ?>, <?= format_date($request['requested_at']) ?></span>
+                            <span class="text-muted">
+                                <?= $request['initiated_by'] === 'staff'
+                                    ? 'set by ' . e($request['requested_by_name']) . ' at Junction'
+                                    : 'asked by ' . e($request['requested_by_name']) ?>,
+                                <?= format_date($request['requested_at']) ?>
+                            </span>
                         </p>
                         <?php if ($request['reason']): ?><p class="mb-1"><?= nl2br(e($request['reason'])) ?></p><?php endif; ?>
                         <?php if ($request['reviewed_by_name']): ?>
@@ -316,17 +321,63 @@ $goodsOutNotes = array_values(array_filter($deliveryNotes, static fn ($dn) => $d
         </form>
         <p class="field-hint">Sent to Clear Books as the invoice reference.</p>
 
-        <form method="post" action="<?= url('/staff/orders/' . $order['id'] . '/po-documents') ?>" enctype="multipart/form-data" style="margin-top: var(--space-4)">
+        <form method="post" action="<?= url('/staff/orders/' . $order['id'] . '/po-documents') ?>" enctype="multipart/form-data" style="margin-top: var(--space-5)">
             <?= csrf_field() ?>
+            <h3 class="line-section-title">Add an amended or additional purchase order</h3>
             <div class="form-row">
                 <div class="field"><label for="new_po_number">PO number (optional)</label><input type="text" id="new_po_number" name="po_number"></div>
                 <div class="field"><label for="po_note">Note (optional)</label><input type="text" id="po_note" name="note"></div>
             </div>
             <div class="field">
-                <label for="po">Add a purchase order document</label>
+                <label for="po">Purchase order document</label>
                 <input type="file" id="po" name="po">
             </div>
-            <button type="submit" class="btn">Add document</button>
+
+            <?php /*
+                An amended PO and the quantities it amends are one event, so
+                they are one form. Leaving a box alone leaves the line alone;
+                the safeguards are the same ones a client's request meets, and
+                the change is logged in the same place with a note that Junction
+                made it.
+            */ ?>
+            <?php if (!$orderClosed && $lines !== []): ?>
+                <h3 class="line-section-title" style="margin-top: var(--space-4)">Quantities on this order</h3>
+                <p class="text-muted">
+                    Change any of these to match the purchase order. A line cannot go below what has
+                    already been made, delivered or invoiced on it.
+                </p>
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr><th>Part</th><th class="align-right">Ordered</th><th class="align-right">Lowest it can go</th><th>New quantity</th></tr>
+                        </thead>
+                        <tbody>
+                        <?php foreach ($lines as $poLine):
+                            $floor = OrderLineChangeRequest::reducibleQty($poLine)['floor'];
+                            ?>
+                            <tr>
+                                <td><?= e($poLine['cpn']) ?> <span class="text-muted"><?= e($poLine['part_name']) ?></span></td>
+                                <td class="align-right"><?= (int) $poLine['qty_ordered'] ?></td>
+                                <td class="align-right"><?= (int) $floor ?></td>
+                                <td>
+                                    <label class="sr-only" for="line_qty_<?= (int) $poLine['id'] ?>">New quantity for <?= e($poLine['cpn']) ?></label>
+                                    <input type="number" class="input-qty" id="line_qty_<?= (int) $poLine['id'] ?>"
+                                           name="line_qty[<?= (int) $poLine['id'] ?>]"
+                                           min="<?= (int) $floor ?>" value="<?= (int) $poLine['qty_ordered'] ?>">
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="field">
+                    <label for="quantity_reason">Why (optional)</label>
+                    <input type="text" id="quantity_reason" name="quantity_reason"
+                           placeholder="Defaults to a note naming the purchase order">
+                </div>
+            <?php endif; ?>
+
+            <button type="submit" class="btn">Save purchase order and quantities</button>
         </form>
     <?php endif; ?>
 </div>
@@ -429,7 +480,14 @@ $goodsOutNotes = array_values(array_filter($deliveryNotes, static fn ($dn) => $d
 
 <div class="card">
     <h2 class="mt-0">Photos</h2>
-    <p class="text-muted">Progress and setup/tooling photos, staff-only.</p>
+    <p class="text-muted">
+        Staff-only, and specific to how <em>this</em> order went — a mark on one batch, a packing shot.
+        Anything that describes the part itself belongs on the part, where it is in front of whoever runs
+        it next:
+        <?php foreach ($lines as $photoLine): ?>
+            <a href="<?= url('/staff/parts/' . $photoLine['part_id']) ?>#setup"><?= e($photoLine['cpn']) ?></a><?= $photoLine === end($lines) ? '' : ', ' ?>
+        <?php endforeach; ?>.
+    </p>
     <?php if ($photos === []): ?>
         <p class="text-muted">No photos uploaded yet.</p>
     <?php else: ?>

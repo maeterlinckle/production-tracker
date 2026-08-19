@@ -87,7 +87,7 @@ $router->group(['auth'], function (Router $router): void {
     $router->get('/files/drawings/{id:\d+}', [FileController::class, 'drawing']);
     $router->get('/files/po/{id:\d+}', [FileController::class, 'po']);
     $router->get('/files/po-documents/{id:\d+}', [FileController::class, 'poDocument']);
-    $router->get('/files/part-photos/{id:\d+}', [FileController::class, 'partPhoto']);
+    $router->get('/files/part-media/{id:\d+}', [FileController::class, 'partMedia']);
     $router->get('/files/order-photos/{id:\d+}', [FileController::class, 'orderPhoto']);
 
     $router->get('/preferences', [PreferencesController::class, 'edit']);
@@ -113,14 +113,29 @@ $router->group(['staff'], function (Router $router): void {
     $router->post('/staff/clients/{id:\d+}/users/{userId:\d+}/reinvite', [StaffClientController::class, 'reinviteUser'], ['csrf']);
 
     $router->get('/staff/parts', [StaffPartController::class, 'index']);
-    // Registered before the {id} route so "new" is not read as an id (item 1).
+    // Registered before the {id} route so "new" is not read as an id.
     $router->get('/staff/parts/new', [StaffPartController::class, 'create']);
     $router->post('/staff/parts', [StaffPartController::class, 'store'], ['csrf']);
     $router->get('/staff/parts/{id:\d+}', [StaffPartController::class, 'show']);
+    $router->get('/staff/parts/{id:\d+}/linked-summary', [StaffPartController::class, 'linkedSummary']);
+
+    // A new drawing revision, and the part's own media library: setup photos,
+    // machine settings, tooling files.
+    $router->post('/staff/parts/{id:\d+}/drawings', [StaffPartController::class, 'uploadDrawing'], ['csrf']);
+    $router->post('/staff/parts/{id:\d+}/media', [StaffPartController::class, 'uploadMedia'], ['csrf']);
+    $router->post('/staff/parts/{id:\d+}/media/{mediaId:\d+}/main', [StaffPartController::class, 'setMainMedia'], ['csrf']);
+    $router->post('/staff/parts/{id:\d+}/media/{mediaId:\d+}/delete', [StaffPartController::class, 'deleteMedia'], ['csrf']);
     $router->post('/staff/parts/{id:\d+}/price', [StaffPartController::class, 'setPrice'], ['csrf']);
     $router->post('/staff/parts/{id:\d+}/workshop-fields', [StaffPartController::class, 'updateWorkshopFields'], ['csrf']);
 
     $router->get('/staff/orders', [StaffOrderController::class, 'index']);
+
+    // Raising an order on a client's behalf. Registered before the {id} route
+    // so "new" is not read as an id.
+    $router->get('/staff/orders/new', [StaffOrderController::class, 'createOrder']);
+    $router->post('/staff/clients/{clientId:\d+}/orders', [StaffOrderController::class, 'storeOrder'], ['csrf']);
+    $router->get('/staff/clients/{clientId:\d+}/parts-search-orderable', [StaffOrderController::class, 'searchOrderableForClient']);
+
     $router->get('/staff/orders/{id:\d+}', [StaffOrderController::class, 'show']);
     // The quantity workflow (item 6). One move action covers advancing, moving
     // back and failing, because they are the same operation with a different

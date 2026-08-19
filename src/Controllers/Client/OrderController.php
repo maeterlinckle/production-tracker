@@ -20,9 +20,9 @@ use App\Models\OrderPhoto;
 use App\Models\OrderPoDocument;
 use App\Models\OrderQuery;
 use App\Models\Part;
-use App\Models\User;
-use App\Services\FreeIssueNoteService;
 use App\Services\Notifications;
+use App\Services\OrderPlacement;
+use RuntimeException;
 
 final class OrderController
 {
@@ -64,105 +64,14 @@ final class OrderController
     public function store(): void
     {
         Auth::authorize('place_orders');
-        $clientId = (int) Auth::clientId();
 
-        $partIds = Request::post('part_id', []);
-        $quantities = Request::post('qty', []);
-        $freeIssueQtys = Request::post('free_issue_qty', []);
-
-        if (!is_array($partIds) || $partIds === []) {
-            Flash::error('Add at least one part to the order.');
+        try {
+            $orderId = OrderPlacement::placeFromRequest((int) Auth::clientId(), (int) Auth::id());
+        } catch (RuntimeException $e) {
+            Flash::error($e->getMessage());
             Response::redirect('/orders/new');
-        }
 
-        // Required from this release on (item 9): it is the reference the Clear
-        // Books invoice is raised against, and chasing it afterwards means
-        // chasing it by email.
-        $poNumber = trim((string) Request::post('po_number', ''));
-        if ($poNumber === '') {
-            Flash::error('Enter your purchase order number.');
-            Response::redirect('/orders/new');
-        }
-
-        $poFile = Upload::files('po')[0] ?? null;
-        if ($poFile === null) {
-            Flash::error('A purchase order document is required.');
-            Response::redirect('/orders/new');
-        }
-
-        $error = Upload::validate($poFile, Config::get('uploads.po.extensions'), (int) Config::get('uploads.po.max_bytes'));
-        if ($error !== null) {
-            Flash::error($error);
-            Response::redirect('/orders/new');
-        }
-
-        $lines = [];
-        foreach ($partIds as $i => $partId) {
-            $qty = (int) ($quantities[$i] ?? 0);
-            if ($qty <= 0) {
-                continue;
-            }
-
-            $part = Part::find((int) $partId);
-            if ($part === null || (int) $part['client_id'] !== $clientId || $part['status'] !== 'quoted') {
-                continue;
-            }
-
-            // Worked out here from the part's own ratio rather than trusted from
-            // the form. The field in the browser is a convenience — it shows the
-            // client what they will need to send — but it is an input on a page,
-            // and a posted 0 would have created a line that needed no material
-            // and so never waited for any, quietly stepping around the whole
-            // free-issue check-in.
-            //
-            // A *higher* figure is honoured: sending more material than the
-            // ratio calls for is a real thing to do, and the line simply books
-            // in what arrives. Anything lower falls back to the calculation.
-            $required = Part::freeIssueQtyFor($part, $qty);
-            $posted = max(0, (int) ($freeIssueQtys[$i] ?? 0));
-
-            $lines[] = [
-                'part_id' => $part['id'],
-                'qty_ordered' => $qty,
-                'unit_price' => $part['quoted_price'],
-                'needs_free_issue' => Part::hasFreeIssue($part),
-                'qty_free_issue_required' => Part::hasFreeIssue($part) ? max($required, $posted) : 0,
-            ];
-        }
-
-        if ($lines === []) {
-            Flash::error('None of the selected parts could be added — make sure quantities are set and parts are quoted.');
-            Response::redirect('/orders/new');
-        }
-
-        $poRelativePath = Upload::store($poFile, 'pos/' . $clientId);
-
-        $orderId = Order::createWithLines(
-            [
-                'client_id' => $clientId,
-                'po_number' => $poNumber,
-                'po_file_path' => $poRelativePath,
-                'po_original_filename' => Upload::displayName((string) $poFile['name']),
-                'placed_by' => Auth::id(),
-                'notes' => Request::post('notes', ''),
-            ],
-            $lines
-        );
-
-        $order = Order::find($orderId);
-        $placedBy = User::find((int) Auth::id());
-        if ($order !== null && $placedBy !== null) {
-            Notifications::orderConfirmed($order, $placedBy);
-        }
-
-        // One free-issue delivery note per line that needs material sent in,
-        // generated immediately so the client can print it straight away, each
-        // with its own QR back to that line's check-in.
-        foreach (OrderLine::forOrder($orderId) as $line) {
-            if ((int) $line['qty_free_issue_required'] > 0) {
-                $dnId = FreeIssueNoteService::generateForLine((int) $line['id'], (int) Auth::id());
-                Notifications::freeIssueNoteIssued(DeliveryNote::find($dnId), $clientId);
-            }
+            return;
         }
 
         Flash::success('Order placed. Junction will confirm and begin processing it shortly.');

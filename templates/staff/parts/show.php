@@ -1,15 +1,31 @@
 <?php
-/** @var array $part */ /** @var array $files */ /** @var array $photos */ /** @var array $altNumbers */
+/** @var array $part */ /** @var array $files */ /** @var array|null $mainPhoto */
+/** @var array $attachments */ /** @var array $altNumbers */
 /** @var array $freeIssueMaterials */ /** @var array $linkedParts */ /** @var array $orderLines */
 use App\Core\Auth;
 use App\Models\OrderLine;
 use App\Models\Part;
+use App\Models\PartMedia;
+
+$canEditWorkshop = Auth::can('edit_workshop_fields');
 ?>
 <div class="card-header">
-    <div>
-        <h1 class="mt-0 mb-0"><?= e($part['cpn']) ?> <?= status_badge($part['status']) ?></h1>
-        <p class="text-muted mb-0"><?= e($part['client_name']) ?> — <?= e($part['name']) ?></p>
+    <div style="display:flex; gap: var(--space-3); align-items:center">
+        <?php if ($mainPhoto !== null): ?>
+            <a href="<?= url('/files/part-media/' . $mainPhoto['id']) ?>" target="_blank" rel="noopener">
+                <img class="part-hero" src="<?= url('/files/part-media/' . $mainPhoto['id']) ?>" alt="<?= e($part['cpn']) ?>">
+            </a>
+        <?php endif; ?>
+        <div>
+            <h1 class="mt-0 mb-0"><?= e($part['cpn']) ?> <?= status_badge($part['status']) ?></h1>
+            <p class="text-muted mb-0"><?= e($part['client_name']) ?> — <?= e($part['name']) ?></p>
+        </div>
     </div>
+    <?php if (Auth::can('raise_orders') && $part['status'] === 'quoted' && !$part['is_archived']): ?>
+        <a href="<?= url('/staff/orders/new?client_id=' . $part['client_id'] . '&part=' . $part['id']) ?>" class="btn btn-primary">
+            Order this part
+        </a>
+    <?php endif; ?>
 </div>
 
 <div class="grid grid-2">
@@ -46,21 +62,33 @@ use App\Models\Part;
         <?php else: ?>
             <ul class="file-list">
                 <?php foreach ($files as $file): ?>
-                    <li><span><?= e($file['original_filename']) ?> v<?= (int) $file['version_no'] ?></span>
-                        <a href="<?= url('/files/drawings/' . $file['id']) ?>" class="btn btn-sm">View</a></li>
+                    <li>
+                        <span>
+                            <?= e($file['original_filename']) ?>
+                            <span class="text-muted">v<?= (int) $file['version_no'] ?></span>
+                            <?php if ((bool) $file['is_current']): ?>
+                                <span class="badge badge-ok">Current</span>
+                            <?php endif; ?>
+                        </span>
+                        <a href="<?= url('/files/drawings/' . $file['id']) ?>" class="btn btn-sm">View</a>
+                    </li>
                 <?php endforeach; ?>
             </ul>
         <?php endif; ?>
 
-        <?php if ($photos !== []): ?>
-            <h3>Photos</h3>
-            <div style="display:flex; flex-wrap:wrap; gap: var(--space-3)">
-                <?php foreach ($photos as $photo): ?>
-                    <a href="<?= url('/files/part-photos/' . $photo['id']) ?>" target="_blank" rel="noopener">
-                        <img src="<?= url('/files/part-photos/' . $photo['id']) ?>" alt="<?= e($part['cpn']) ?>" style="width:90px;height:90px;object-fit:cover;border-radius:var(--radius-sm);border:1px solid var(--border)">
-                    </a>
-                <?php endforeach; ?>
-            </div>
+        <?php if ($canEditWorkshop): ?>
+            <form method="post" action="<?= url('/staff/parts/' . $part['id'] . '/drawings') ?>" enctype="multipart/form-data" style="margin-top: var(--space-3)">
+                <?= csrf_field() ?>
+                <div class="field">
+                    <label for="drawings">Upload a new revision</label>
+                    <input type="file" id="drawings" name="drawings[]" multiple>
+                    <div class="hint">
+                        Becomes the current revision. The one it replaces is kept and stays viewable —
+                        parts already made were made to it.
+                    </div>
+                </div>
+                <button type="submit" class="btn btn-sm">Upload drawing</button>
+            </form>
         <?php endif; ?>
     </div>
 
@@ -115,6 +143,146 @@ use App\Models\Part;
             </form>
         </div>
         <?php endif; ?>
+
+        <?php /*
+            Reference material for the part rather than for one order. It lived
+            on the order, where it was invisible to whoever set the same part up
+            six months later — which is precisely when it is wanted.
+        */ ?>
+        <div class="card">
+            <h2 class="mt-0" id="setup">Setup and reference</h2>
+            <p class="text-muted">
+                Everything here belongs to the part, so it is in front of whoever runs it next — every
+                order of it, not just the one it was added on.
+            </p>
+
+            <?php if ($mainPhoto !== null): ?>
+                <h3 class="mt-0">Main photo</h3>
+                <div class="media-grid">
+                    <figure class="media-tile">
+                        <a href="<?= url('/files/part-media/' . $mainPhoto['id']) ?>" target="_blank" rel="noopener">
+                            <img src="<?= url('/files/part-media/' . $mainPhoto['id']) ?>" alt="<?= e($part['cpn']) ?>">
+                        </a>
+                        <figcaption>
+                            <?= e($mainPhoto['caption'] ?? '') ?: '<span class="text-muted">The finished part</span>' ?>
+                            <?php if ($canEditWorkshop): ?>
+                                <form method="post" action="<?= url('/staff/parts/' . $part['id'] . '/media/' . $mainPhoto['id'] . '/delete') ?>">
+                                    <?= csrf_field() ?>
+                                    <button type="submit" class="btn btn-sm">Remove</button>
+                                </form>
+                            <?php endif; ?>
+                        </figcaption>
+                    </figure>
+                </div>
+            <?php endif; ?>
+
+            <?php if ($attachments === [] && $mainPhoto === null): ?>
+                <p class="empty-state mb-0">Nothing attached to this part yet.</p>
+            <?php endif; ?>
+
+            <?php foreach ($attachments as $kind => $items): ?>
+                <h3><?= e(PartMedia::KIND_LABELS[$kind]) ?></h3>
+                <?php $images = array_values(array_filter($items, static fn ($i) => PartMedia::isImage($i))); ?>
+                <?php $others = array_values(array_filter($items, static fn ($i) => !PartMedia::isImage($i))); ?>
+
+                <?php if ($images !== []): ?>
+                    <div class="media-grid">
+                        <?php foreach ($images as $item): ?>
+                            <figure class="media-tile">
+                                <a href="<?= url('/files/part-media/' . $item['id']) ?>" target="_blank" rel="noopener">
+                                    <img src="<?= url('/files/part-media/' . $item['id']) ?>" alt="<?= e($item['caption'] ?? $item['original_filename']) ?>">
+                                </a>
+                                <figcaption>
+                                    <?= e($item['caption'] ?? '') ?: e($item['original_filename']) ?>
+                                    <?php if ($canEditWorkshop): ?>
+                                        <span class="media-actions">
+                                            <?php if ($item['kind'] === 'photo'): ?>
+                                                <form method="post" action="<?= url('/staff/parts/' . $part['id'] . '/media/' . $item['id'] . '/main') ?>">
+                                                    <?= csrf_field() ?>
+                                                    <button type="submit" class="btn btn-sm">Make main</button>
+                                                </form>
+                                            <?php endif; ?>
+                                            <form method="post" action="<?= url('/staff/parts/' . $part['id'] . '/media/' . $item['id'] . '/delete') ?>">
+                                                <?= csrf_field() ?>
+                                                <button type="submit" class="btn btn-sm">Remove</button>
+                                            </form>
+                                        </span>
+                                    <?php endif; ?>
+                                </figcaption>
+                            </figure>
+                        <?php endforeach; ?>
+                    </div>
+                <?php endif; ?>
+
+                <?php if ($others !== []): ?>
+                    <ul class="file-list">
+                        <?php foreach ($others as $item): ?>
+                            <li>
+                                <span>
+                                    <?= e($item['original_filename']) ?>
+                                    <?php if ($item['caption']): ?><span class="text-muted">— <?= e($item['caption']) ?></span><?php endif; ?>
+                                </span>
+                                <span class="media-actions">
+                                    <a href="<?= url('/files/part-media/' . $item['id']) ?>" class="btn btn-sm" target="_blank" rel="noopener">Open</a>
+                                    <?php if ($canEditWorkshop): ?>
+                                        <form method="post" action="<?= url('/staff/parts/' . $part['id'] . '/media/' . $item['id'] . '/delete') ?>">
+                                            <?= csrf_field() ?>
+                                            <button type="submit" class="btn btn-sm">Remove</button>
+                                        </form>
+                                    <?php endif; ?>
+                                </span>
+                            </li>
+                        <?php endforeach; ?>
+                    </ul>
+                <?php endif; ?>
+            <?php endforeach; ?>
+
+            <?php if ($canEditWorkshop): ?>
+                <form method="post" action="<?= url('/staff/parts/' . $part['id'] . '/media') ?>" enctype="multipart/form-data" style="margin-top: var(--space-5)">
+                    <?= csrf_field() ?>
+                    <div class="form-row">
+                        <div class="field">
+                            <label for="media_kind">What is it?</label>
+                            <select id="media_kind" name="kind" data-media-kind>
+                                <?php foreach (PartMedia::KINDS as $kindOption): ?>
+                                    <option value="<?= e($kindOption) ?>"><?= e(PartMedia::KIND_LABELS[$kindOption]) ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                            <div class="hint" data-media-hint><?= e(PartMedia::KIND_HINTS['photo']) ?></div>
+                        </div>
+                        <div class="field">
+                            <label for="media_caption">Caption (optional)</label>
+                            <input type="text" id="media_caption" name="caption" placeholder="e.g. Op 20 fixture, soft jaws">
+                        </div>
+                    </div>
+                    <div class="field">
+                        <label for="media_files">File(s)</label>
+                        <input type="file" id="media_files" name="files[]" multiple>
+                    </div>
+                    <label class="checkbox-label" data-media-main>
+                        <input type="checkbox" name="is_main" value="1">
+                        <span>Use as the part's main photo</span>
+                    </label>
+                    <button type="submit" class="btn" style="margin-top: var(--space-3)">Add to this part</button>
+                </form>
+
+                <script>
+                (function () {
+                    var hints = <?= json_encode(PartMedia::KIND_HINTS) ?>;
+                    var select = document.querySelector('[data-media-kind]');
+                    var hint = document.querySelector('[data-media-hint]');
+                    var mainToggle = document.querySelector('[data-media-main]');
+                    if (!select) return;
+
+                    select.addEventListener('change', function () {
+                        hint.textContent = hints[select.value] || '';
+                        // Only a photo can be the part's representative image.
+                        mainToggle.hidden = select.value !== 'photo';
+                    });
+                })();
+                </script>
+            <?php endif; ?>
+        </div>
 
         <?php if ($orderLines !== []): ?>
         <div class="card">

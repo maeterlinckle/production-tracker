@@ -77,7 +77,12 @@ $goodsOutNotes = array_values(array_filter($deliveryNotes, static fn ($dn) => $d
                             <span class="badge <?= $request['status'] === 'pending' ? 'badge-warn' : ($request['status'] === 'applied' ? 'badge-ok' : 'badge-muted') ?>">
                                 <?= e(ucfirst($request['status'])) ?>
                             </span>
-                            <span class="text-muted">asked <?= format_date($request['requested_at']) ?> by <?= e($request['requested_by_name']) ?></span>
+                            <span class="text-muted">
+                                <?= $request['initiated_by'] === 'staff'
+                                    ? 'applied by Junction'
+                                    : 'asked by ' . e($request['requested_by_name']) ?>,
+                                <?= format_date($request['requested_at']) ?>
+                            </span>
                         </p>
                         <?php if ($request['reason']): ?><p class="mb-1"><?= nl2br(e($request['reason'])) ?></p><?php endif; ?>
                         <?php if ($request['reviewed_by_name']): ?>

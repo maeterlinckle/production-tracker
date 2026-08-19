@@ -56,7 +56,7 @@ off, recorded as cancelled, and drop out of what is outstanding.
 
 ## The rest of it
 
-- **Roles that mean something.** Seven of them, several per person. Pricing is
+- **Roles that mean something.** Eight of them, several per person. Pricing is
   omitted from the response entirely for anyone without `view_pricing` — not
   greyed out, not hidden with CSS, absent.
 - **Invitations, not passwords.** Nobody but the account holder ever knows
@@ -83,7 +83,16 @@ off, recorded as cancelled, and drop out of what is outstanding.
   save a placeholder the sending code does not supply.
 - **A report that answers the real question.** Parts on order, totalled per
   part across every purchase order it appears on — so two orders for the same
-  component are one number to set up for, not two.
+  component are one number to set up for, not two. Each line says what material
+  is on the shelf and what it will make: *5 received, 4 available for
+  production — enough for 24 final parts.*
+- **Orders from either end.** Clients place their own; Junction types one in
+  when it arrives on the phone, using the same form against the client's account.
+  Either way it is their order, and they get the confirmation.
+- **Setup knowledge that stays with the part.** A photo of the finished thing,
+  the fixture, the settings sheet, the CNC program — attached to the part, so
+  they are in front of whoever runs it next rather than buried in the one order
+  they happened to be added on.
 - **Light and dark**, sharing a visual language with
   [Kitwell](https://github.com/maeterlinckle/kitwell), Junction's asset
   register. Same family, no shared code.

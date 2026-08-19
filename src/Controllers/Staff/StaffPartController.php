@@ -5,9 +5,11 @@ declare(strict_types=1);
 namespace App\Controllers\Staff;
 
 use App\Core\Auth;
+use App\Core\Config;
 use App\Core\Flash;
 use App\Core\Request;
 use App\Core\Response;
+use App\Core\Upload;
 use App\Core\Validator;
 use App\Core\View;
 use App\Models\Client;
@@ -15,7 +17,7 @@ use App\Models\OrderLine;
 use App\Models\Part;
 use App\Models\PartFile;
 use App\Models\PartLink;
-use App\Models\PartPhoto;
+use App\Models\PartMedia;
 use App\Services\Notifications;
 
 final class StaffPartController
@@ -143,16 +145,186 @@ final class StaffPartController
             return;
         }
 
+        $media = PartMedia::forPart($part['id']);
+
         View::render('staff/parts/show', [
             'title' => $part['cpn'],
             'part' => $part,
             'files' => PartFile::forPart($part['id']),
-            'photos' => PartPhoto::forPart($part['id']),
+            'mainPhoto' => PartMedia::mainPhoto($part['id']),
+            'attachments' => PartMedia::groupAttachments($media),
             'altNumbers' => Part::alternateNumbers($part['id']),
             'freeIssueMaterials' => Part::freeIssueMaterials($part['id']),
             'linkedParts' => PartLink::forPart($part['id']),
             'orderLines' => OrderLine::forPart($part['id']),
         ]);
+    }
+
+    /** AJAX: quoted, orderable siblings of a part, for the order builder. */
+    public function linkedSummary(string $id): void
+    {
+        Auth::authorize('raise_orders');
+
+        $part = Part::find((int) $id);
+        if ($part === null) {
+            Response::json(['results' => []]);
+
+            return;
+        }
+
+        Response::json(['results' => array_map(
+            static fn ($p) => Part::orderableJson($p),
+            Part::linkedOrderable($part['id'])
+        )]);
+    }
+
+    /**
+     * A new revision of the drawing (item 5).
+     *
+     * The same versioning the client's own upload uses: the new file becomes
+     * current and the one it replaces is kept and stays viewable. A drawing is
+     * the record of what was agreed, and parts made to the old revision were
+     * made to something — overwriting it would lose the only evidence of what.
+     */
+    public function uploadDrawing(string $id): void
+    {
+        Auth::authorize('edit_workshop_fields');
+
+        $part = Part::find((int) $id);
+        if ($part === null) {
+            View::renderError(404, 'Part not found', 'That part does not exist.');
+
+            return;
+        }
+
+        $allowed = Config::get('uploads.drawing.extensions');
+        $maxBytes = (int) Config::get('uploads.drawing.max_bytes');
+        $uploaded = 0;
+
+        foreach (Upload::files('drawings') as $file) {
+            $error = Upload::validate($file, $allowed, $maxBytes);
+            if ($error !== null) {
+                Flash::error($error);
+                continue;
+            }
+
+            $relativePath = Upload::store($file, 'drawings/' . $part['id']);
+            $absolutePath = Upload::absolutePath($relativePath);
+
+            PartFile::create([
+                'part_id' => $part['id'],
+                'file_path' => $relativePath,
+                'original_filename' => Upload::displayName((string) $file['name']),
+                'mime_type' => $absolutePath !== null ? Upload::detectMime($absolutePath) : null,
+                'file_size' => (int) $file['size'],
+                'uploaded_by' => Auth::id(),
+            ]);
+            $uploaded++;
+        }
+
+        if ($uploaded > 0) {
+            Flash::success($uploaded === 1
+                ? 'Drawing uploaded. It is now the current revision; the one before it is kept in the history.'
+                : $uploaded . ' drawings uploaded. The last is the current revision.');
+        }
+
+        Response::redirect('/staff/parts/' . $id);
+    }
+
+    // -- Part media library (item 6) -----------------------------------------
+
+    /**
+     * Reference material that belongs to the part rather than to one order:
+     * what the finished thing looks like, how it sits on the machine, what the
+     * settings were, the programs that cut it.
+     */
+    public function uploadMedia(string $id): void
+    {
+        Auth::authorize('edit_workshop_fields');
+
+        $part = Part::find((int) $id);
+        if ($part === null) {
+            View::renderError(404, 'Part not found', 'That part does not exist.');
+
+            return;
+        }
+
+        $kind = (string) Request::post('kind', 'photo');
+        if (!in_array($kind, PartMedia::KINDS, true)) {
+            $kind = 'photo';
+        }
+
+        $rules = match ($kind) {
+            'document' => 'uploads.part_document',
+            'tooling' => 'uploads.part_tooling',
+            default => 'uploads.photo',
+        };
+
+        $allowed = Config::get($rules . '.extensions');
+        $maxBytes = (int) Config::get($rules . '.max_bytes');
+        $caption = trim((string) Request::post('caption', '')) ?: null;
+        $asMain = $kind === 'photo' && (bool) Request::post('is_main');
+        $uploaded = 0;
+
+        foreach (Upload::files('files') as $file) {
+            $error = Upload::validate($file, $allowed, $maxBytes);
+            if ($error !== null) {
+                Flash::error($error);
+                continue;
+            }
+
+            $relativePath = Upload::store($file, 'part-media/' . $part['id']);
+            $absolutePath = Upload::absolutePath($relativePath);
+
+            PartMedia::create([
+                'part_id' => $part['id'],
+                'kind' => $kind,
+                // Only the first of a multi-file upload can be the main photo;
+                // the rest would each demote the one before it and the last
+                // would win, which is not what anybody meant by ticking a box.
+                'is_main' => $asMain && $uploaded === 0,
+                'caption' => $caption,
+                'file_path' => $relativePath,
+                'original_filename' => Upload::displayName((string) $file['name']),
+                'mime_type' => $absolutePath !== null ? Upload::detectMime($absolutePath) : null,
+                'file_size' => (int) $file['size'],
+                'uploaded_by' => Auth::id(),
+            ]);
+            $uploaded++;
+        }
+
+        if ($uploaded > 0) {
+            Flash::success($uploaded . ' file(s) added to this part. They stay with the part for every order of it.');
+        }
+
+        Response::redirect('/staff/parts/' . $id);
+    }
+
+    public function setMainMedia(string $id, string $mediaId): void
+    {
+        Auth::authorize('edit_workshop_fields');
+
+        $item = PartMedia::find((int) $mediaId);
+        if ($item !== null && (int) $item['part_id'] === (int) $id) {
+            PartMedia::setMain((int) $mediaId);
+            Flash::success('Main photo updated.');
+        }
+
+        Response::redirect('/staff/parts/' . $id);
+    }
+
+    public function deleteMedia(string $id, string $mediaId): void
+    {
+        Auth::authorize('edit_workshop_fields');
+
+        $item = PartMedia::find((int) $mediaId);
+        if ($item !== null && (int) $item['part_id'] === (int) $id) {
+            Upload::delete($item['file_path']);
+            PartMedia::delete((int) $mediaId);
+            Flash::success('File removed.');
+        }
+
+        Response::redirect('/staff/parts/' . $id);
     }
 
     public function setPrice(string $id): void

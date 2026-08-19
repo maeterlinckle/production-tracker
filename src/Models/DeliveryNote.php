@@ -81,16 +81,29 @@ final class DeliveryNote
 
     public static function lines(int $deliveryNoteId): array
     {
+        // `is_standing_note` marks the one free-issue note that currently
+        // speaks for a line — the newest. It is the note that shows the line's
+        // full outstanding requirement, so that anything raising that figure
+        // (material rejected, parts failed) appears on the paper the client is
+        // actually looking at. Older notes for the same line stay pegged to
+        // what they originally asked for.
         return Database::all(
-            'SELECT dnl.*, ol.qty_ordered, ol.unit_price, ol.part_id,
+            "SELECT dnl.*, ol.qty_ordered, ol.unit_price, ol.part_id,
                     ol.qty_free_issue_required, ol.qty_free_issue_received, ol.qty_free_issue_rejected,
-                    p.cpn, p.name AS part_name, p.has_free_issue, o.order_number, o.po_number
+                    p.cpn, p.name AS part_name, p.has_free_issue,
+                    p.free_issue_relationship, p.free_issue_factor,
+                    o.order_number, o.po_number,
+                    (dnl.delivery_note_id = (
+                        SELECT MAX(dn2.id) FROM delivery_notes dn2
+                          JOIN delivery_note_lines dnl2 ON dnl2.delivery_note_id = dn2.id
+                         WHERE dnl2.order_line_id = dnl.order_line_id AND dn2.type = 'free_issue_in'
+                    )) AS is_standing_note
                FROM delivery_note_lines dnl
                JOIN order_lines ol ON ol.id = dnl.order_line_id
                JOIN parts p ON p.id = ol.part_id
                JOIN orders o ON o.id = ol.order_id
               WHERE dnl.delivery_note_id = :id
-              ORDER BY dnl.id',
+              ORDER BY dnl.id",
             ['id' => $deliveryNoteId]
         );
     }
@@ -109,7 +122,7 @@ final class DeliveryNote
             "SELECT dn.* FROM delivery_notes dn
                JOIN delivery_note_lines dnl ON dnl.delivery_note_id = dn.id
               WHERE dnl.order_line_id = :id AND dn.type = 'free_issue_in'
-              ORDER BY dn.issued_at DESC LIMIT 1",
+              ORDER BY dn.id DESC LIMIT 1",
             ['id' => $orderLineId]
         );
     }

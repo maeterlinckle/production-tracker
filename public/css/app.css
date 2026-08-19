@@ -1804,66 +1804,127 @@ td.wrap, th.wrap { white-space: normal; min-width: 14rem; }
 }
 
 /* ---------------------------------------------------------------------------
-   The quantity distribution (Prompt 4, item 6)
+   The quantity distribution
    --------------------------------------------------------------------------- */
 
-/* A checkbox and its wording read as one control, so they are one target. */
+/* A checkbox or radio and its wording read as one control, so they are one
+   target. */
 .checkbox-label {
     display: flex;
     align-items: flex-start;
     gap: var(--space-2);
     font-weight: 500;
     cursor: pointer;
+    padding: var(--space-1) 0;
 }
-.checkbox-label input[type="checkbox"] { margin-top: 0.2rem; flex: 0 0 auto; }
+.checkbox-label input { margin-top: 0.2rem; flex: 0 0 auto; }
+
+fieldset { border: 0; margin: 0; padding: 0; }
+legend.label { padding: 0; }
 
 /* One bar per line, divided in proportion to where its quantity sits. This is
    the whole model in one glance: no single colour means no single status. */
 .stage-bar {
     display: flex;
     width: 100%;
-    height: 12px;
+    height: 10px;
     border-radius: 999px;
     overflow: hidden;
     background: var(--bg-sunken);
     border: 1px solid var(--border);
 }
 .stage-bar-segment { height: 100%; }
-.stage-bar-segment[data-stage="awaiting_free_issue"]  { background: var(--warn); }
-.stage-bar-segment[data-stage="ready_for_production"] { background: var(--info); }
-.stage-bar-segment[data-stage="in_production"]        { background: var(--accent); }
-.stage-bar-segment[data-stage="complete"]             { background: var(--ok); }
-.stage-bar-segment[data-stage="delivered"]            { background: var(--ok); opacity: 0.72; }
-.stage-bar-segment[data-stage="invoiced"]             { background: var(--ok); opacity: 0.45; }
-.stage-bar-segment[data-stage="failed"]               { background: var(--danger); }
-.stage-bar-segment[data-stage="cancelled"]            { background: var(--text-muted); opacity: 0.5; }
 
-.stage-key { display: flex; flex-wrap: wrap; gap: var(--space-3); margin-top: var(--space-2); }
-.stage-key-item { display: flex; align-items: center; gap: var(--space-1); font-size: 0.82rem; color: var(--text-muted); }
-.stage-key-dot { width: 10px; height: 10px; border-radius: 3px; flex: 0 0 auto; }
+/* One palette, used by the bar and by the dot beside each row of the table, so
+   a colour means the same thing in both places. */
+.stage-bar-segment[data-stage="awaiting_free_issue"],
+.stage-dot[data-stage="awaiting_free_issue"]  { background: var(--warn); }
+.stage-bar-segment[data-stage="ready_for_production"],
+.stage-dot[data-stage="ready_for_production"] { background: var(--info); }
+.stage-bar-segment[data-stage="in_production"],
+.stage-dot[data-stage="in_production"]        { background: var(--accent); }
+.stage-bar-segment[data-stage="complete"],
+.stage-dot[data-stage="complete"]             { background: var(--ok); }
+.stage-bar-segment[data-stage="delivered"],
+.stage-dot[data-stage="delivered"]            { background: var(--ok); opacity: 0.72; }
+.stage-bar-segment[data-stage="invoiced"],
+.stage-dot[data-stage="invoiced"]             { background: var(--ok); opacity: 0.45; }
+.stage-bar-segment[data-stage="failed"],
+.stage-dot[data-stage="failed"]               { background: var(--danger); }
+.stage-bar-segment[data-stage="cancelled"],
+.stage-dot[data-stage="cancelled"]            { background: var(--text-muted); opacity: 0.5; }
 
-/* One row per occupied stage, each with the move it can make from there. */
-.stage-rows { display: grid; gap: var(--space-2); margin-top: var(--space-4); }
-.stage-row {
+.stage-dot {
+    display: inline-block;
+    width: 9px; height: 9px;
+    border-radius: 3px;
+    margin-right: var(--space-2);
+    flex: 0 0 auto;
+}
+
+/* The production status table. Data left, actions right, and a rule between the
+   two so the eye can run down the quantities without threading between input
+   boxes. */
+.stage-table { width: 100%; }
+.stage-table th, .stage-table td { vertical-align: middle; }
+.stage-table thead th {
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+}
+.stage-table .stage-name {
+    display: flex;
+    align-items: center;
+    font-weight: 600;
+    white-space: nowrap;
+}
+.stage-table .stage-qty {
+    font-variant-numeric: tabular-nums;
+    font-size: 1.05rem;
+    font-weight: 600;
+    white-space: nowrap;
+}
+.stage-table .stage-unit { color: var(--text-muted); font-size: 0.85rem; }
+.stage-table .stage-table-actions {
+    border-left: 1px solid var(--border);
+    width: 1%;
+    white-space: nowrap;
+}
+
+/* An input and the button that acts on it are one row, baseline-aligned. Used
+   everywhere on the order page a text box sits next to a submit. */
+.action-row {
     display: flex;
     flex-wrap: wrap;
-    align-items: flex-end;
+    align-items: center;
     gap: var(--space-2);
-    padding: var(--space-2) var(--space-3);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    background: var(--bg-raised);
+    margin: 0;
 }
-.stage-row-name { font-weight: 600; min-width: 11rem; }
-.stage-row-qty { font-variant-numeric: tabular-nums; min-width: 3rem; }
-.stage-row form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--space-2); margin: 0; }
-.stage-row .field { margin: 0; }
-.stage-row input[type="number"] { width: 6rem; }
-.stage-row input[type="text"] { min-width: 12rem; }
+.action-row .field { margin: 0; }
+.action-row label:not(.sr-only) {
+    margin: 0;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+.action-row input,
+.action-row select,
+.action-row textarea { margin: 0; }
+.action-row .input-qty { width: 6rem; }
+.action-row .input-stage { width: auto; min-width: 12rem; }
+.action-row .input-reason { flex: 1 1 14rem; min-width: 12rem; }
+.action-row .input-grow { flex: 1 1 16rem; min-width: 12rem; }
 
-@media (max-width: 640px) {
-    .stage-row-name { min-width: 100%; }
-    .stage-row input[type="text"] { min-width: 100%; }
+/* Rejection entries on the check-in form: quantity, reason, remove. */
+.reject-row { align-items: flex-end; }
+.reject-row .field-grow { flex: 1 1 18rem; }
+.reject-row .field-shrink { flex: 0 0 auto; display: flex; align-items: flex-end; }
+
+@media (max-width: 900px) {
+    .stage-table .stage-table-actions { border-left: 0; white-space: normal; }
+    .action-row .input-reason,
+    .action-row .input-stage { flex: 1 1 100%; min-width: 0; }
 }
 
 .mb-1 { margin-bottom: var(--space-1); }
@@ -1879,11 +1940,4 @@ td.wrap, th.wrap { white-space: normal; min-width: 14rem; }
     padding: var(--space-3);
     margin-bottom: var(--space-3);
 }
-
-/* An inline form that carries a labelled field is a row, not a phrase. */
-.inline-form:has(.field) {
-    display: inline-flex;
-    flex-wrap: wrap;
-    align-items: flex-end;
-    gap: var(--space-2);
-}
+.callout-ok { border-left-color: var(--ok); }

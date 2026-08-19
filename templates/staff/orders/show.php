@@ -31,8 +31,13 @@ $goodsOutNotes = array_values(array_filter($deliveryNotes, static fn ($dn) => $d
             <p class="text-muted mb-0">Closed down <?= format_date($order['closed_at']) ?><?= $order['close_reason'] ? ' — ' . e($order['close_reason']) : '' ?></p>
         <?php endif; ?>
     </div>
-    <div style="display:flex; gap: var(--space-2)">
+    <div style="display:flex; flex-wrap:wrap; gap: var(--space-2)">
         <a href="<?= url('/files/po/' . $order['id']) ?>" class="btn" target="_blank" rel="noopener">View PO</a>
+        <?php if ($canProduce && $lines !== []): ?>
+            <a href="<?= url('/staff/orders/' . $order['id'] . '/route-cards') ?>" class="btn" target="_blank" rel="noopener">
+                View/print all route cards
+            </a>
+        <?php endif; ?>
         <?php if (Auth::can('issue_delivery_notes')): ?>
             <a href="<?= url('/staff/clients/' . $client['id'] . '/delivery-note/new') ?>" class="btn btn-primary">Create delivery note</a>
         <?php endif; ?>
@@ -52,7 +57,7 @@ $goodsOutNotes = array_values(array_filter($deliveryNotes, static fn ($dn) => $d
         }
     }
     ?>
-    <div class="card">
+    <div class="card" id="line-<?= (int) $line['id'] ?>">
         <div class="card-header">
             <div>
                 <h3 class="mt-0 mb-0"><?= e($line['cpn']) ?> — <?= e($line['part_name']) ?></h3>
@@ -61,6 +66,10 @@ $goodsOutNotes = array_values(array_filter($deliveryNotes, static fn ($dn) => $d
                     <?php if ($showPricing): ?> &middot; Unit price: <?= format_money($line['unit_price']) ?><?php endif; ?>
                     <?php if ($lineClosed): ?> &middot; <span class="badge badge-muted">Closed down</span><?php endif; ?>
                 </p>
+                <?php $conversion = Part::conversionSentence($part ?? [], (int) $line['qty_ordered']); ?>
+                <?php if ($conversion !== null): ?>
+                    <p class="field-hint mb-0"><?= e($conversion) ?></p>
+                <?php endif; ?>
             </div>
             <div style="display:flex; gap: var(--space-2)">
                 <a href="<?= url('/staff/parts/' . $line['part_id']) ?>" class="btn btn-sm">View part</a>
@@ -72,7 +81,7 @@ $goodsOutNotes = array_values(array_filter($deliveryNotes, static fn ($dn) => $d
             </div>
         </div>
 
-        <p class="mb-0"><?= status_badge(OrderLine::headlineStage($line)) ?>
+        <p class="mb-2"><?= status_badge(OrderLine::headlineStage($line)) ?>
             <span class="text-muted"><?= e(OrderLine::statusLabel($line)) ?></span></p>
         <?= partial('partials/stepper', ['line' => $line]) ?>
 
@@ -83,9 +92,7 @@ $goodsOutNotes = array_values(array_filter($deliveryNotes, static fn ($dn) => $d
             </p>
         <?php endif; ?>
 
-        <?php if ($canProduce): ?>
-            <?= partial('partials/stage-moves', ['line' => $line]) ?>
-        <?php endif; ?>
+        <?= partial('partials/stage-moves', ['line' => $line, 'canProduce' => $canProduce]) ?>
 
         <?php // -- Free issue: shown only for parts that actually have any (item 2) ?>
         <div style="margin-top: var(--space-5)">
@@ -126,11 +133,6 @@ $goodsOutNotes = array_values(array_filter($deliveryNotes, static fn ($dn) => $d
                     </div>
                 <?php endif; ?>
 
-                <?php if ($canProduce): ?>
-                    <a href="<?= url('/staff/lines/' . $line['id'] . '/check-in') ?>" class="btn btn-sm">
-                        Check in or reject material
-                    </a>
-                <?php endif; ?>
             <?php endif; ?>
         </div>
 
@@ -154,16 +156,20 @@ $goodsOutNotes = array_values(array_filter($deliveryNotes, static fn ($dn) => $d
                     </ul>
                 <?php endif; ?>
 
-                <?php if ($canProduce && $needsFreeIssue): ?>
-                    <form method="post" action="<?= url('/staff/lines/' . $line['id'] . '/replacement-material') ?>" class="inline-form">
+                <?php if ($canProduce && $needsFreeIssue):
+                    $replacementUnits = OrderLine::replacementUnitsForFailures($line);
+                    $yield = Part::finalPartsFor($part ?? [], $replacementUnits);
+                    ?>
+                    <p class="text-muted">
+                        Making up the shortfall needs <strong><?= $replacementUnits ?></strong>
+                        more <?= $replacementUnits === 1 ? 'piece' : 'pieces' ?> of material<?php
+                        ?><?= $yield > (int) $line['qty_failed'] ? ', which yields ' . $yield . ' and leaves ' . ($yield - (int) $line['qty_failed']) . ' spare' : '' ?>.
+                        The figure is worked out from the current shortfall each time, so it moves on its own
+                        if anything else fails before the material arrives.
+                    </p>
+                    <form method="post" action="<?= url('/staff/lines/' . $line['id'] . '/replacement-material') ?>" class="action-row">
                         <?= csrf_field() ?>
-                        <div class="field">
-                            <label for="replace_<?= (int) $line['id'] ?>">Ask for material to remake</label>
-                            <input type="number" id="replace_<?= (int) $line['id'] ?>" name="qty"
-                                   min="1" max="<?= OrderLine::qtyAt($line, 'failed') ?>"
-                                   value="<?= OrderLine::qtyAt($line, 'failed') ?>" required>
-                        </div>
-                        <button type="submit" class="btn btn-sm">Request replacement material</button>
+                        <button type="submit" class="btn btn-sm">Ask the client for <?= $replacementUnits ?> more</button>
                     </form>
                 <?php endif; ?>
             </div>
@@ -205,20 +211,16 @@ $goodsOutNotes = array_values(array_filter($deliveryNotes, static fn ($dn) => $d
                             <?php endif; ?>
 
                             <div style="display:flex; flex-wrap:wrap; gap: var(--space-2); align-items:flex-end">
-                                <form method="post" action="<?= url('/staff/orders/' . $order['id'] . '/change-requests/' . $request['id'] . '/apply') ?>" class="inline-form">
+                                <form method="post" action="<?= url('/staff/orders/' . $order['id'] . '/change-requests/' . $request['id'] . '/apply') ?>" class="action-row">
                                     <?= csrf_field() ?>
-                                    <div class="field">
-                                        <label for="apply_notes_<?= (int) $request['id'] ?>" class="sr-only">Note to the client</label>
-                                        <input type="text" id="apply_notes_<?= (int) $request['id'] ?>" name="review_notes" placeholder="Note to the client (optional)">
-                                    </div>
+                                    <label for="apply_notes_<?= (int) $request['id'] ?>" class="sr-only">Note to the client</label>
+                                    <input type="text" class="input-grow" id="apply_notes_<?= (int) $request['id'] ?>" name="review_notes" placeholder="Note to the client (optional)">
                                     <button type="submit" class="btn btn-sm btn-primary" <?= $tooLow ? 'disabled' : '' ?>>Apply</button>
                                 </form>
-                                <form method="post" action="<?= url('/staff/orders/' . $order['id'] . '/change-requests/' . $request['id'] . '/decline') ?>" class="inline-form">
+                                <form method="post" action="<?= url('/staff/orders/' . $order['id'] . '/change-requests/' . $request['id'] . '/decline') ?>" class="action-row">
                                     <?= csrf_field() ?>
-                                    <div class="field">
-                                        <label for="decline_notes_<?= (int) $request['id'] ?>" class="sr-only">Reason for declining</label>
-                                        <input type="text" id="decline_notes_<?= (int) $request['id'] ?>" name="review_notes" placeholder="Why not (optional)">
-                                    </div>
+                                    <label for="decline_notes_<?= (int) $request['id'] ?>" class="sr-only">Reason for declining</label>
+                                    <input type="text" class="input-grow" id="decline_notes_<?= (int) $request['id'] ?>" name="review_notes" placeholder="Why not (optional)">
                                     <button type="submit" class="btn btn-sm">Decline</button>
                                 </form>
                             </div>
@@ -237,13 +239,11 @@ $goodsOutNotes = array_values(array_filter($deliveryNotes, static fn ($dn) => $d
                         <button type="submit" class="btn btn-sm">Reopen line</button>
                     </form>
                 <?php else: ?>
-                    <form method="post" action="<?= url('/staff/lines/' . $line['id'] . '/close') ?>" class="inline-form">
+                    <form method="post" action="<?= url('/staff/lines/' . $line['id'] . '/close') ?>" class="action-row">
                         <?= csrf_field() ?>
-                        <div class="field">
-                            <label for="close_<?= (int) $line['id'] ?>">Close this line down</label>
-                            <input type="text" id="close_<?= (int) $line['id'] ?>" name="reason"
-                                   placeholder="Why — this is the record of it" required>
-                        </div>
+                        <label for="close_<?= (int) $line['id'] ?>">Close this line down</label>
+                        <input type="text" class="input-grow" id="close_<?= (int) $line['id'] ?>" name="reason"
+                               placeholder="Why — this is the record of it" required>
                         <button type="submit" class="btn btn-sm">Cancel what is left</button>
                     </form>
                 <?php endif; ?>
@@ -300,15 +300,13 @@ $goodsOutNotes = array_values(array_filter($deliveryNotes, static fn ($dn) => $d
     </div>
 
     <?php if ($canApprove): ?>
-        <form method="post" action="<?= url('/staff/orders/' . $order['id'] . '/po-number') ?>" class="inline-form" style="margin-top: var(--space-4)">
+        <form method="post" action="<?= url('/staff/orders/' . $order['id'] . '/po-number') ?>" class="action-row" style="margin-top: var(--space-4)">
             <?= csrf_field() ?>
-            <div class="field">
-                <label for="po_number">PO number on this order</label>
-                <input type="text" id="po_number" name="po_number" value="<?= e($order['po_number']) ?>" required>
-                <div class="hint">Sent to Clear Books as the invoice reference.</div>
-            </div>
+            <label for="po_number">PO number on this order</label>
+            <input type="text" class="input-grow" id="po_number" name="po_number" value="<?= e($order['po_number']) ?>" required>
             <button type="submit" class="btn btn-sm">Save PO number</button>
         </form>
+        <p class="field-hint">Sent to Clear Books as the invoice reference.</p>
 
         <form method="post" action="<?= url('/staff/orders/' . $order['id'] . '/po-documents') ?>" enctype="multipart/form-data" style="margin-top: var(--space-4)">
             <?= csrf_field() ?>
@@ -411,12 +409,11 @@ $goodsOutNotes = array_values(array_filter($deliveryNotes, static fn ($dn) => $d
         cancelled, not deleted, and stops counting as outstanding from that point. Parts already made still
         have to go out and still have to be invoiced.
     </p>
-    <form method="post" action="<?= url('/staff/orders/' . $order['id'] . '/close') ?>" class="inline-form">
+    <form method="post" action="<?= url('/staff/orders/' . $order['id'] . '/close') ?>" class="action-row">
         <?= csrf_field() ?>
-        <div class="field">
-            <label for="close_order_reason">Reason</label>
-            <input type="text" id="close_order_reason" name="reason" required placeholder="e.g. Client cancelled the programme">
-        </div>
+        <label for="close_order_reason">Reason</label>
+        <input type="text" class="input-grow" id="close_order_reason" name="reason" required
+               placeholder="e.g. Client cancelled the programme">
         <button type="submit" class="btn">Close the order down</button>
     </form>
 </div>

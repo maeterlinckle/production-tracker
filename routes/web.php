@@ -134,6 +134,7 @@ $router->group(['staff'], function (Router $router): void {
     // Built from the order line every time it is asked for, so there is one
     // action rather than a generate/regenerate pair (item 3).
     $router->get('/staff/lines/{id:\d+}/route-card', [StaffOrderController::class, 'routeCard']);
+    $router->get('/staff/orders/{id:\d+}/route-cards', [StaffOrderController::class, 'allRouteCards']);
 
     $router->post('/staff/orders/{id:\d+}/change-requests/{requestId:\d+}/apply', [StaffOrderController::class, 'applyChangeRequest'], ['csrf']);
     $router->post('/staff/orders/{id:\d+}/change-requests/{requestId:\d+}/decline', [StaffOrderController::class, 'declineChangeRequest'], ['csrf']);

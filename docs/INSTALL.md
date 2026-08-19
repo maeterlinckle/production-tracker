@@ -387,18 +387,29 @@ shortfall, an excess or a wrong item is flagged as a discrepancy, shown on the
 line and on the parts-on-order report until somebody clears it — because "the
 numbers match" is not the same as "the material is right".
 
-Checking material in **does not start any parts**. It records what arrived;
-somebody then decides how many parts to advance, on the order page. That is
-what makes a partial delivery useful: five bars turning up is enough to get five
-bars' worth of work going without waiting for the rest.
+Checking material in happens on **one screen**, reached from the "Awaiting free
+issue" row of the production status table or by scanning the QR code on the
+note. It is the only place material is booked in, and the only place anything
+wrong with it is recorded — the order page has no material inputs of its own.
 
-**Rejecting** material is a separate action, and it is not the same as a
-shortage:
+The form asks three things: how many arrived, any notes, and **are all the
+received parts correct?** Answering *yes* puts the whole delivery into ready for
+production. Answering *no* opens a set of rejection rows — a quantity and a
+reason each, as many as you need — and what is left after them goes into
+production instead. Five bars turning up of which one is cracked is four bars'
+worth of work that can start today.
+
+The submit button stays out of reach until the form makes sense: a quantity, an
+answer, and for a rejection every row filled in with a total that does not exceed
+what arrived. The same rules are enforced on the server, because a disabled
+button is a courtesy, not a control.
+
+**Rejecting** material is not the same as a shortage:
 
 | | What it means | What happens |
 |---|---|---|
 | Shortage | It has not arrived yet | Nothing. The free-issue note that is already out still asks for it. |
-| Rejection | It arrived and cannot be used | A return note is raised for what goes back, the same quantity is added to what the line still needs, and the note that is already out asks for it again. |
+| Rejection | It arrived and cannot be used | A return note is raised for what goes back — linked from the screen as soon as it is created — and exactly that quantity goes back on to what the line still needs, so the note already out asks for it again. |
 
 The free-issue note is a **standing request, not a shipment record**. It is
 rendered fresh every time it is opened and shows what is outstanding *today* —
@@ -415,15 +426,32 @@ awaiting free issue → ready for production → in production → complete → 
 ```
 
 Staff move any number of parts one stage at a time, forwards or back, from the
-order page. A line reads "12 awaiting free issue, 5 ready for production, 3 in
-production" because that is what is true; there is no status field anywhere.
+production status table on the order page. A line reads "12 awaiting free issue,
+5 ready for production, 3 in production" because that is what is true; there is
+no status field anywhere. The one move the table will not do is the first —
+material comes in through check-in.
+
+**The first three stages count material, the rest count parts.** For anything but
+a 1:1 part those are different numbers: ten bars at divide-by-2 are ten things in
+the rack and twenty parts once they are through the machine. So awaiting free
+issue, ready for production and in production all read *10*, and completed reads
+*20*. The table says which unit each row is in, and the line carries a note —
+"5 received parts will produce 30 final parts" — so nobody has to do the
+arithmetic. On a 1:1 part none of this appears, because there is nothing to say.
+
+Type quantities in the unit of the row you are moving *from*: that is the pile in
+front of you.
 
 Two more places quantity can end up:
 
 - **Failed** — with a reason, and a record of which stage it failed at. Failed
-  parts are still owed, so they stay in the outstanding figure. Where the part
-  is free-issue, **Request replacement material** adds the material for them to
-  what the line needs; once it arrives, move them back into the flow.
+  parts are still owed, so they stay in the outstanding figure. Where the part is
+  free-issue, the failed section offers to ask the client for replacement
+  material. The quantity is not typed in: it is the current shortfall in parts
+  turned back into material by the part's own ratio, rounded up — one failed part
+  at divide-by-2 still needs a whole bar, and the screen says so, spare and all.
+  Fail two more tomorrow and the same figure moves; it does not stack a second
+  request beside the first.
 - **Cancelled** — **Close the line down** (or the whole order) cancels off
   everything still to be issued, received or made. It is recorded with a reason,
   not deleted, and stops counting as outstanding from that point. Parts already

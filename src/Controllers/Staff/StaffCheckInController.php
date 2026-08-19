@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Controllers\Staff;
 
 use App\Core\Auth;
+use App\Core\Database;
 use App\Core\Flash;
 use App\Core\Request;
 use App\Core\Response;
@@ -19,16 +20,21 @@ use App\Services\Notifications;
 use RuntimeException;
 
 /**
- * Staff-only, QR-reachable page for handling free-issue material on arrival.
+ * Booking free-issue material in, and rejecting what cannot be used.
  *
- * Deliberately a single focused screen -- this is what gets opened by scanning
- * a printed delivery note on a phone in the goods-in bay, not the full order
- * page. Two things happen here and they are different: booking material in, and
- * rejecting material that arrived but cannot be used.
+ * This is the only place either happens. The order page shows where a line's
+ * quantity has got to and links here; it has no material inputs of its own,
+ * because two ways of recording the same arrival is how two different answers
+ * end up on the same line.
  *
- * Booking material in no longer moves any parts. What arrived and what the
- * workshop is ready to start on are separate decisions, and the second one is
- * made on the order page, by somebody choosing how many to advance.
+ * One form, and one question at the middle of it: is what arrived correct? Yes
+ * puts the whole delivery into production. No opens the rejection rows, and
+ * what is left after the rejections goes into production instead — a lorry
+ * bringing ten bars of which three are cracked is seven bars of work that can
+ * start today, not a delivery to be argued about before anything moves.
+ *
+ * Deliberately a single focused screen: it is what gets opened by scanning a
+ * printed delivery note on a phone in the goods-in bay.
  */
 final class StaffCheckInController
 {
@@ -43,6 +49,11 @@ final class StaffCheckInController
         $order = Order::find((int) $line['order_id']);
         $client = Client::find((int) $order['client_id']);
 
+        // Set by the redirect after a check-in that rejected something, so the
+        // return note is one click away at the moment it is wanted.
+        $returnNoteId = (int) Request::query('return_note', 0);
+        $returnNote = $returnNoteId > 0 ? DeliveryNote::find($returnNoteId) : null;
+
         View::render('staff/check-in', [
             'title' => 'Check in ' . $line['cpn'],
             'line' => $line,
@@ -53,9 +64,17 @@ final class StaffCheckInController
             'rejections' => OrderLine::rejections($line['id']),
             'openDiscrepancy' => OrderLine::openDiscrepancy($line['id']),
             'outstanding' => OrderLine::freeIssueOutstanding($line),
+            'returnNote' => $returnNote,
         ], 'layouts/app');
     }
 
+    /**
+     * The whole check-in, in one submission.
+     *
+     * Every rule the form enforces in the browser is enforced again here. The
+     * disabled submit button is a courtesy to the person filling it in, not a
+     * control: this method is reachable without it.
+     */
     public function store(string $id): void
     {
         Auth::authorize('production_control');
@@ -64,81 +83,187 @@ final class StaffCheckInController
             return;
         }
 
-        $qty = (int) Request::post('qty', 0);
-        if ($qty <= 0) {
-            Flash::error('Enter a quantity received.');
-            Response::redirect('/staff/lines/' . $id . '/check-in');
+        $back = '/staff/lines/' . $id . '/check-in';
+        $received = (int) Request::post('qty', 0);
+
+        if ($received <= 0) {
+            Flash::error('Enter how many were received.');
+            Response::redirect($back);
         }
 
-        $discrepancyType = (string) Request::post('discrepancy_type', 'none');
-        $discrepancyNotes = trim((string) Request::post('discrepancy_notes', '')) ?: null;
+        $allCorrect = (string) Request::post('all_correct', '');
+        if (!in_array($allCorrect, ['yes', 'no'], true)) {
+            Flash::error('Say whether all the received parts are correct.');
+            Response::redirect($back);
+        }
 
-        OrderLine::recordFreeIssueReceipt(
-            (int) $id,
-            $qty,
-            (int) Auth::id(),
-            Request::post('notes') ?: null,
-            $discrepancyType,
-            $discrepancyNotes
-        );
+        $rejections = [];
+        if ($allCorrect === 'no') {
+            try {
+                $rejections = $this->collectRejections($received);
+            } catch (RuntimeException $e) {
+                Flash::error($e->getMessage());
+                Response::redirect($back);
+            }
+        }
 
-        $updated = OrderLine::find((int) $id);
+        $rejectedTotal = array_sum(array_column($rejections, 'qty'));
+        $notes = trim((string) Request::post('notes', '')) ?: null;
+        $result = null;
+
+        // One transaction over the lot: the receipt, what was rejected, the
+        // return note, and the parts moving into production. A half-recorded
+        // check-in is worse than a failed one.
+        try {
+            $result = Database::transaction(function () use ($id, $received, $rejections, $rejectedTotal, $notes, $line) {
+                OrderLine::recordFreeIssueReceipt(
+                    (int) $id,
+                    $received,
+                    (int) Auth::id(),
+                    $notes,
+                    $rejections === [] ? 'none' : 'wrong_item',
+                    $rejections === [] ? null : $this->rejectionSummary($rejections),
+                    // Recorded already dealt with: the return note and the
+                    // replacement request are the resolution, and leaving a
+                    // flag open behind them would ask somebody to close
+                    // something that is closed.
+                    $rejections !== []
+                );
+
+                $outcome = $rejections === []
+                    ? null
+                    : FreeIssueNoteService::rejectAndIssueNotes((int) $id, $rejections, (int) Auth::id());
+
+                // What is usable goes straight to ready for production. The
+                // quantity typed in is material units; the ledger is in final
+                // parts, so it converts on the way in.
+                $usableUnits = $received - $rejectedTotal;
+                if ($usableUnits > 0) {
+                    OrderLine::move(
+                        (int) $id,
+                        'awaiting_free_issue',
+                        'ready_for_production',
+                        OrderLine::storedQtyFromEntered($line, 'awaiting_free_issue', $usableUnits),
+                        (int) Auth::id(),
+                        'Checked in: ' . $usableUnits . ' accepted'
+                    );
+                }
+
+                return $outcome;
+            });
+        } catch (RuntimeException $e) {
+            Flash::error($e->getMessage());
+            Response::redirect($back);
+        }
+
+        $this->announce((int) $id, $line, $rejections, $rejectedTotal, $result);
+
+        Response::redirect($result === null
+            ? $back
+            : $back . '?return_note=' . $result['return_note_id']);
+    }
+
+    /**
+     * Read the rejection rows, refusing anything the form should not have let
+     * through.
+     *
+     * @return array<int,array{qty:int,reason:string}>
+     */
+    private function collectRejections(int $received): array
+    {
+        $quantities = Request::post('reject_qty', []);
+        $reasons = Request::post('reject_reason', []);
+
+        if (!is_array($quantities) || !is_array($reasons)) {
+            throw new RuntimeException('Add at least one rejected entry, or say that everything is correct.');
+        }
+
+        $rejections = [];
+        $total = 0;
+
+        foreach ($quantities as $i => $quantity) {
+            $qty = (int) $quantity;
+            $reason = trim((string) ($reasons[$i] ?? ''));
+
+            // A wholly blank row is somebody who added one and changed their
+            // mind; a half-filled one is a mistake worth stopping.
+            if ($qty <= 0 && $reason === '') {
+                continue;
+            }
+
+            if ($qty <= 0) {
+                throw new RuntimeException('Every rejected entry needs a quantity.');
+            }
+
+            if ($reason === '') {
+                throw new RuntimeException('Every rejected entry needs a reason — it goes on the return note.');
+            }
+
+            $rejections[] = ['qty' => $qty, 'reason' => $reason];
+            $total += $qty;
+        }
+
+        if ($rejections === []) {
+            throw new RuntimeException('Add at least one rejected entry, or say that everything is correct.');
+        }
+
+        if ($total > $received) {
+            throw new RuntimeException(
+                'You cannot reject ' . $total . ' out of ' . $received . ' received.'
+            );
+        }
+
+        return $rejections;
+    }
+
+    /** @param array<int,array{qty:int,reason:string}> $rejections */
+    private function rejectionSummary(array $rejections): string
+    {
+        return implode('; ', array_map(
+            static fn (array $rejection): string => $rejection['qty'] . ' × ' . $rejection['reason'],
+            $rejections
+        ));
+    }
+
+    /**
+     * Tell the client what happened, and the person at the screen what to do
+     * next.
+     *
+     * @param array<int,array{qty:int,reason:string}> $rejections
+     */
+    private function announce(int $lineId, array $line, array $rejections, int $rejectedTotal, ?array $result): void
+    {
+        $updated = OrderLine::find($lineId);
         $order = Order::find((int) $line['order_id']);
 
         Notifications::freeIssueCheckedIn($updated, $order, (int) $order['client_id']);
 
-        if ($discrepancyType !== 'none') {
-            Flash::error(
-                'Recorded with a ' . OrderLine::DISCREPANCY_LABELS[$discrepancyType] . ' flag. '
-                . 'If the material is wrong rather than simply short, reject it below so it goes back and a replacement is asked for.'
-            );
-        } else {
+        if ($result === null) {
             $outstanding = OrderLine::freeIssueOutstanding($updated);
+
             Flash::success($outstanding > 0
-                ? 'Receipt recorded — ' . $outstanding . ' still to come. Advance whatever parts you can start on from the order page.'
-                : 'Receipt recorded. All the material for this line is now in.');
-        }
+                ? 'Checked in and moved to ready for production. ' . $outstanding . ' still to come.'
+                : 'Checked in and moved to ready for production. All the material for this line is now in.');
 
-        Response::redirect('/staff/lines/' . $id . '/check-in');
-    }
-
-    /**
-     * Reject material that arrived and cannot be used.
-     *
-     * Not the same thing as a shortage, and handled differently on purpose: a
-     * shortage is material that has not turned up, already covered by the note
-     * that is out. This is material that turned up wrong, so it goes back on a
-     * return note and the same quantity is asked for again.
-     */
-    public function reject(string $id): void
-    {
-        Auth::authorize('production_control');
-        $line = $this->findLine((int) $id);
-        if ($line === null) {
             return;
         }
 
-        $qty = (int) Request::post('qty', 0);
-        $reason = trim((string) Request::post('reason', ''));
-
-        try {
-            $result = FreeIssueNoteService::rejectAndIssueNotes((int) $id, $qty, $reason, (int) Auth::id());
-        } catch (RuntimeException $e) {
-            Flash::error($e->getMessage());
-            Response::redirect('/staff/lines/' . $id . '/check-in');
-        }
-
         $returnNote = DeliveryNote::find($result['return_note_id']);
-        $order = Order::find((int) $line['order_id']);
-        $updated = OrderLine::find((int) $id);
 
-        Notifications::materialRejected($updated, $order, $returnNote, $qty, $reason, (int) $order['client_id']);
+        Notifications::materialRejected(
+            $updated,
+            $order,
+            $returnNote,
+            $rejectedTotal,
+            $this->rejectionSummary($rejections),
+            (int) $order['client_id']
+        );
 
         Flash::success(
-            'Return note ' . $returnNote['reference'] . ' raised for ' . $qty . '. '
-            . 'The same quantity has been added back to what this line still needs, so the free-issue note asks for it again.'
+            $rejectedTotal . ' rejected and returned on ' . $returnNote['reference'] . '. '
+            . 'The same ' . $rejectedTotal . ' has been added back to what this line still needs, so the '
+            . 'free-issue note asks for it again.'
         );
-        Response::redirect('/staff/lines/' . $id . '/check-in');
     }
 
     public function resolveDiscrepancy(string $id, string $receiptId): void

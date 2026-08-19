@@ -117,13 +117,27 @@ final class StaffOrderController
             Response::redirect('/staff/orders/' . $line['order_id']);
         }
 
+        // Material arrives and is booked in on the check-in screen, which is
+        // also where anything wrong with it is dealt with. Letting the order
+        // page push parts out of the first stage as well would be a second way
+        // of recording the same arrival.
+        if ($from === 'awaiting_free_issue' && $to === 'ready_for_production') {
+            Flash::error('Material is booked in from the check-in screen, which is where rejections are handled too.');
+            Response::redirect('/staff/orders/' . $line['order_id']);
+        }
+
         if ($to === 'failed' && $reason === null) {
             Flash::error('Say why the parts failed — that reason is the only record of it.');
             Response::redirect('/staff/orders/' . $line['order_id']);
         }
 
+        // Before completion a person is counting pieces of material; after it
+        // they are counting parts. The number typed in is in the unit of the
+        // stage it is being taken from, and converts on the way to the ledger.
+        $stored = OrderLine::storedQtyFromEntered($line, $from, $qty);
+
         try {
-            OrderLine::move((int) $id, $from, $to, $qty, (int) Auth::id(), $reason);
+            OrderLine::move((int) $id, $from, $to, $stored, (int) Auth::id(), $reason);
         } catch (RuntimeException $e) {
             Flash::error($e->getMessage());
             Response::redirect('/staff/orders/' . $line['order_id']);
@@ -155,11 +169,18 @@ final class StaffOrderController
     }
 
     /**
-     * Ask the client for replacement material for parts that failed.
+     * Put the request for replacement material in front of the client.
      *
-     * Only ever reached from failed quantity. An ordinary shortage does not come
-     * through here -- there the material has not arrived yet and the free-issue
-     * note that is already out is the request for it.
+     * The quantity is not entered and not stored. It is the shortfall in final
+     * parts — everything currently failed on this line — turned back into
+     * material units by the part's own ratio, rounded up, and it is worked out
+     * again from scratch every time anything moves. Two parts failing tomorrow
+     * raises the same one figure rather than adding a second request beside it.
+     *
+     * All this action does is make sure there is a note carrying that figure
+     * and tell the client it has changed. An ordinary shortage never comes
+     * through here: the material has not arrived yet, and the note already out
+     * is the request for it.
      */
     public function requestReplacementMaterial(string $id): void
     {
@@ -175,22 +196,25 @@ final class StaffOrderController
             Response::redirect('/staff/orders/' . $line['order_id']);
         }
 
-        $qtyParts = (int) Request::post('qty', 0);
-        $failed = OrderLine::qtyAt($line, 'failed');
-
-        if ($qtyParts <= 0 || $qtyParts > $failed) {
-            Flash::error('Enter how many of the ' . $failed . ' failed parts need replacement material.');
+        $failedParts = (int) $line['qty_failed'];
+        if ($failedParts <= 0) {
+            Flash::error('Nothing has failed on this line, so there is no shortfall to make up.');
             Response::redirect('/staff/orders/' . $line['order_id']);
         }
 
-        $materialQty = Part::freeIssueQtyFor($part, $qtyParts);
-        $noteId = FreeIssueNoteService::requestReplacementForFailures((int) $id, $materialQty, (int) Auth::id());
+        $units = OrderLine::replacementUnitsForFailures($line);
+        $noteId = FreeIssueNoteService::standingNoteFor((int) $id, (int) Auth::id());
+        $note = DeliveryNote::find($noteId);
 
-        Notifications::freeIssueNoteIssued(DeliveryNote::find($noteId), (int) $line['client_id']);
+        Notifications::freeIssueNoteIssued($note, (int) $line['client_id']);
+
+        $spare = Part::finalPartsFor($part, $units) - $failedParts;
 
         Flash::success(
-            'Asked for ' . $materialQty . ' more to replace ' . $qtyParts . ' failed part(s). '
-            . 'It is on free-issue note ' . DeliveryNote::find($noteId)['reference'] . '.'
+            'Free-issue note ' . $note['reference'] . ' now asks for ' . $units
+            . ' more to remake ' . $failedParts . ' failed part(s)'
+            . ($spare > 0 ? ', which will leave ' . $spare . ' spare — material comes in whole pieces' : '')
+            . '. The figure follows the shortfall, so it moves again if anything else fails.'
         );
         Response::redirect('/staff/orders/' . $line['order_id']);
     }
@@ -423,6 +447,34 @@ final class StaffOrderController
 
         $card = RouteCardService::render((int) $id);
         Response::inlineBytes($card['bytes'], $card['filename'], 'application/pdf');
+    }
+
+    /**
+     * Every line's route card in one document, for the person who is about to
+     * walk the whole order out to the machines.
+     *
+     * One card per page, in line order, built now like the single one — going
+     * to eight lines individually and printing each is the same paper and eight
+     * more chances to miss one.
+     */
+    public function allRouteCards(string $id): void
+    {
+        Auth::authorize('production_control');
+        $order = Order::find((int) $id);
+        if ($order === null) {
+            View::renderError(404, 'Order not found', 'That order does not exist.');
+
+            return;
+        }
+
+        $lines = OrderLine::forOrder((int) $id);
+        if ($lines === []) {
+            Flash::error('That order has no lines to print.');
+            Response::redirect('/staff/orders/' . $id);
+        }
+
+        $cards = RouteCardService::renderForOrder((int) $id);
+        Response::inlineBytes($cards['bytes'], $cards['filename'], 'application/pdf');
     }
 
     // -- Photos ---------------------------------------------------------------

@@ -66,7 +66,13 @@ off, recorded as cancelled, and drop out of what is outstanding.
   PDF; every free-issue note carries a QR code that opens the check-in screen
   for that exact order line on a phone in the goods-in bay. Route cards and
   free-issue notes are built at the moment they are asked for, from live data —
-  a saved copy of either is out of date as soon as anybody moves anything.
+  a saved copy of either is out of date as soon as anybody moves anything — and
+  a whole order's route cards print in one action, a card to a page.
+- **Bars are not parts.** Where a part is machined several to a bar, the stages
+  before completion count the bars and everything after counts the parts, so
+  "10" and "20" both appear on the same line and both are right. The line says
+  which is which, and says it in words as well: *5 received parts will produce
+  30 final parts.*
 - **Changes of mind, handled.** A client can ask to change a quantity on a line
   that is already running, with the amended purchase order attached; Junction
   applies or declines it. A reduction cannot eat into what has already been

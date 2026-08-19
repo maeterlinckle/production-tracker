@@ -77,9 +77,27 @@ final class Database
         return (int) self::connection()->lastInsertId();
     }
 
+    /**
+     * Run a callback inside a transaction, joining one that is already open.
+     *
+     * PDO has no nested transactions, so a model method that opens its own
+     * cannot be called from inside another one — and several of them need to
+     * be. Checking free-issue material in records a receipt, records what was
+     * rejected, raises the return note and moves the parts on, and either all
+     * of that happened or none of it did.
+     *
+     * Joining rather than starting a second is safe because the outer call owns
+     * the commit: an exception raised in here propagates out to it and rolls
+     * the whole thing back.
+     */
     public static function transaction(callable $callback): mixed
     {
         $pdo = self::connection();
+
+        if ($pdo->inTransaction()) {
+            return $callback($pdo);
+        }
+
         $pdo->beginTransaction();
 
         try {

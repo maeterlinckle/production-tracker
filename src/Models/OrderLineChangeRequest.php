@@ -166,12 +166,8 @@ final class OrderLineChangeRequest
         ];
     }
 
-    /**
-     * Apply the request: this is the only thing that changes qty_ordered.
-     *
-     * @param callable(int):int $freeIssueForQty maps a part quantity to the material it needs
-     */
-    public static function apply(int $id, int $userId, ?string $notes, callable $freeIssueForQty): void
+    /** Apply the request: this is the only thing that changes qty_ordered. */
+    public static function apply(int $id, int $userId, ?string $notes): void
     {
         $request = self::find($id);
         if ($request === null || $request['status'] !== 'pending') {
@@ -203,7 +199,7 @@ final class OrderLineChangeRequest
 
         $reference = 'Change request #' . $id;
 
-        Database::transaction(static function (PDO $pdo) use ($id, $userId, $notes, $line, $delta, $reference, $freeIssueForQty): void {
+        Database::transaction(static function (PDO $pdo) use ($id, $userId, $notes, $line, $delta, $reference): void {
             $lineId = (int) $line['id'];
 
             if ($delta > 0) {
@@ -227,30 +223,10 @@ final class OrderLineChangeRequest
                 }
             }
 
-            // The material requirement moves by the difference the quantity
-            // change makes, not to whatever the ratio says the new quantity
-            // needs from scratch.
-            //
-            // Recomputing it outright looked equivalent and was not: a line that
-            // had asked for replacement material — for parts that failed, or for
-            // material rejected and sent back — carries a requirement above what
-            // the ratio alone gives, and setting it from the ratio silently
-            // cancelled those requests. Applying the difference keeps them.
-            //
-            // Never below what has already usefully arrived: material on the
-            // shelf is on the shelf whatever the order now says.
-            $oldQty = (int) $line['qty_ordered'];
-            $requiredDelta = $freeIssueForQty($oldQty + $delta) - $freeIssueForQty($oldQty);
-
-            $pdo->prepare(
-                'UPDATE order_lines
-                    SET qty_free_issue_required = GREATEST(
-                            CAST(qty_free_issue_required AS SIGNED) + :required_delta,
-                            CAST(qty_free_issue_received AS SIGNED) - CAST(qty_free_issue_rejected AS SIGNED),
-                            0
-                        )
-                  WHERE id = :id AND qty_free_issue_required > 0'
-            )->execute(['required_delta' => $requiredDelta, 'id' => $lineId]);
+            // The material requirement needs no adjustment here. It is derived
+            // from the ordered, cancelled and failed quantities, all of which
+            // the moves above have just changed, and OrderLine::moveWithin()
+            // recomputes it as part of every move.
 
             $pdo->prepare(
                 "UPDATE order_line_change_requests

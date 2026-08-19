@@ -233,10 +233,55 @@ despatch screen and the ageing queries read, but nothing writes to them by hand:
 `recalculateTotals()` derives all five from the distribution after every move.
 They are a maintained projection, not a second source of truth.
 
-Booking free-issue material in moves no parts. What arrived and what the
-workshop is ready to start on are separate decisions, and staff make the second
-one explicitly — automatic advancement was the old behaviour and it made partial
-receipts unusable, because everything moved or nothing did.
+`qty_free_issue_required` joined them in migration `006`. It is worked out, not
+accumulated:
+
+```
+enough for what is still on the order  (qty_ordered - qty_cancelled)
++ enough to remake what has failed     (qty_failed)
+```
+
+rounded up separately, because a single failed part still needs a whole bar and
+the spare that leaves is the honest answer. Rejected material needs no term of
+its own — it counts as received and is subtracted again when the outstanding
+figure is worked out, so rejecting three puts exactly three back on to what is
+owed. Deriving it is what makes the replacement figure move with the shortfall:
+adding a top-up each time something failed stacked requests that stopped
+matching reality the moment anything else went wrong.
+
+### Two units of measure
+
+Before a part is machined, the thing on the floor is a piece of material; after
+it, a finished part. For anything but a 1:1 ratio those are different counts, and
+counting bars as parts is how somebody goes looking for twenty of something when
+there are ten.
+
+- `awaiting_free_issue`, `ready_for_production`, `in_production` are **read and
+  entered in material units**.
+- `complete`, `delivered`, `invoiced`, `failed`, `cancelled` are **final parts**.
+
+Storage does not change: everything is held in final parts, because that is the
+only quantity the whole order agrees on and it keeps the distribution summing to
+`qty_ordered`. The conversion happens where a person reads or types a number —
+`OrderLine::displayQty()` on the way out, `storedQtyFromEntered()` on the way in
+— and the rule for input is that you type in the unit of the stage you are
+taking from, because that is the pile in front of you.
+
+Ten bars at divide-by-2 therefore read as 10 at every stage up to production and
+become 20 the moment they are complete. On a 1:1 part every conversion is the
+identity, so the model costs those lines nothing and shows them nothing: the
+"counted in" column and the unit words only appear where the two counts differ.
+
+Checking free-issue material in is the one and only way quantity leaves
+`awaiting_free_issue`, and the check-in screen is the only place it happens. The
+order page shows where a line has got to and links there; it has no material
+inputs of its own, and the move endpoint refuses that transition, because two
+ways of recording the same arrival is how two different answers end up on one
+line.
+
+What is accepted at check-in goes straight to ready for production. Ten bars of
+which three are cracked is seven bars of work that can start today, not a
+delivery to be argued about before anything moves.
 
 ### Configuration and operations
 
@@ -259,6 +304,8 @@ receipts unusable, because everything moved or nothing did.
 | `003_invites_templates_reminders.sql` | `email_templates`, `user_invites`, `reminder_runs`, `users.password_set_at`, free-issue attribution columns and the 2–10 factor CHECK. |
 | `004_backfill_completed_quantities.sql` | Data repair: `qty_completed` on lines marked complete before `setStage()` kept them in step. |
 | `005_quantity_workflow.sql` | The quantity distribution and its movement log; `parts.has_free_issue`; `orders.po_number` and `order_po_documents`; `order_line_change_requests`; `free_issue_rejections` and the `material_return` note type; close-down columns. Backfills the distribution from the old columns, migrates `production_status_log` into the movement log and drops it, drops `order_lines.stage` and drops `route_cards`. |
+
+| `006_derive_free_issue_requirement.sql` | Data repair: recomputes `qty_free_issue_required` on every line under the new derivation, so rows carrying accumulated one-off top-ups come on to the calculated footing. |
 
 `005` is the one migration that is genuinely forward-only: it reads
 `production_status_log` and then drops it, so a second run has nothing to read.
@@ -347,7 +394,34 @@ The `migrations` table is what stops that happening.
 | 8 | Client-requested quantity changes with PO history | Done — staff apply or decline; a decrease cannot eat into what is made |
 | 9 | PO number on the order, through to Clear Books | Done — the invoice `reference` field |
 
-**The two decisions left open, and how they were taken.**
+### Check-in and unit-accuracy round (19 August 2026)
+
+| # | Item | Status |
+|---|---|---|
+| 1 | Check-in moved out of the production status table | Done — that row links out; the move endpoint refuses the transition too |
+| 2 | Production status table redesigned | Done — a real table, data left, actions right, one colour language with the bar |
+| 3 | Check-in as a single conditional form | Done — Yes/No with no default, rejection rows revealed by No, submit gated on both |
+| 4 | Check-in submission logic | Done — accepted quantity straight to ready for production, return note linked afterwards, replacement asks for exactly what was rejected |
+| 5 | Quantities in physical units before completion | Done — see "Two units of measure"; replacement material derived from the live shortfall |
+| 6 | Inputs aligned with their buttons | Done — one `.action-row` rule across the page |
+| 7 | All route cards for an order in one action | Done — one card to a page, built live like the single one |
+
+**The two decisions left open on this round, and how they were taken.**
+
+*The table's design.* A table rather than a stack of bordered rows: stage,
+quantity, unit, action, with a rule separating the data from the controls so the
+quantities can be read straight down without threading between input boxes. Each
+row carries the same colour as its segment of the bar above it, so a colour means
+one thing on the page.
+
+*Where "request additional material" lives.* Inline, in the failed section of the
+line it belongs to, with the figure and its arithmetic spelled out beside the
+button — "2 more pieces, which yields 12 and leaves 5 spare". It takes no
+quantity input at all, because there is nothing to choose: the figure is the
+current shortfall converted by the part's own ratio, and typing one in would
+invite it to disagree.
+
+**The earlier decisions from the quantity round, and how they were taken.**
 
 *Stage names.* The Prompt 1 vocabulary was kept where it fitted, and the two
 stages the old model handled with columns rather than states — `delivered` and

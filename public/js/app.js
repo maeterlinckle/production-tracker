@@ -190,6 +190,130 @@
     });
 
     /**
+     * The free-issue check-in form.
+     *
+     * One question decides the shape of it: are the received parts correct?
+     * "No" reveals the rejection rows, and the submit button stays out of reach
+     * until every one of them has a quantity and a reason and the total does
+     * not exceed what arrived.
+     *
+     * All of this is a courtesy to whoever is filling it in on a phone in the
+     * goods-in bay — the controller enforces the same rules, because a disabled
+     * button is not a control.
+     */
+    var checkinForm = document.querySelector('[data-checkin-form]');
+
+    if (checkinForm) {
+        var received = checkinForm.querySelector('[data-checkin-received]');
+        var rejectionPanel = checkinForm.querySelector('[data-checkin-rejections]');
+        var rejectRows = checkinForm.querySelector('[data-reject-rows]');
+        var submit = checkinForm.querySelector('[data-checkin-submit]');
+        var errorLine = checkinForm.querySelector('[data-checkin-error]');
+        var echo = checkinForm.querySelector('[data-checkin-echo]');
+
+        function chosenAnswer() {
+            var picked = checkinForm.querySelector('[data-checkin-correct]:checked');
+            return picked ? picked.value : '';
+        }
+
+        function rejectionRows() {
+            return Array.prototype.slice.call(rejectRows.querySelectorAll('.reject-row'));
+        }
+
+        function receivedQty() {
+            return parseInt(received.value, 10) || 0;
+        }
+
+        /** @return {string} the reason this cannot be submitted, or '' if it can. */
+        function problem() {
+            if (receivedQty() <= 0) return 'Enter how many were received.';
+
+            var answer = chosenAnswer();
+            if (answer === '') return '';
+            if (answer === 'yes') return '';
+
+            var rows = rejectionRows();
+            var total = 0;
+            var incomplete = false;
+
+            rows.forEach(function (row) {
+                var qty = parseInt(row.querySelector('[data-reject-qty]').value, 10) || 0;
+                var reason = row.querySelector('[data-reject-reason]').value.trim();
+
+                if (qty <= 0 || reason === '') {
+                    incomplete = true;
+                    return;
+                }
+                total += qty;
+            });
+
+            if (incomplete) return 'Every rejected entry needs both a quantity and a reason.';
+            if (total === 0) return 'Enter what was rejected.';
+            if (total > receivedQty()) {
+                return 'You cannot reject ' + total + ' out of ' + receivedQty() + ' received.';
+            }
+
+            return '';
+        }
+
+        function refresh() {
+            var answer = chosenAnswer();
+            rejectionPanel.hidden = answer !== 'no';
+
+            if (echo) {
+                echo.textContent = receivedQty() > 0 ? String(receivedQty()) : 'of them';
+            }
+
+            var reason = problem();
+            // No answer chosen yet is not an error to show, just a reason to
+            // wait: nothing has gone wrong, the form is simply unfinished.
+            var ready = answer !== '' && reason === '';
+
+            submit.disabled = !ready;
+
+            if (errorLine) {
+                var showable = answer === 'no' && reason !== '' && receivedQty() > 0;
+                errorLine.hidden = !showable;
+                errorLine.textContent = showable ? reason : '';
+            }
+        }
+
+        function syncRemoveButtons() {
+            var rows = rejectionRows();
+            rows.forEach(function (row) {
+                var button = row.querySelector('[data-reject-remove]');
+                if (button) button.hidden = rows.length < 2;
+            });
+        }
+
+        checkinForm.addEventListener('input', refresh);
+        checkinForm.addEventListener('change', refresh);
+
+        checkinForm.addEventListener('click', function (event) {
+            if (event.target.closest('[data-reject-add]')) {
+                var template = rejectionRows()[0];
+                var copy = template.cloneNode(true);
+
+                copy.querySelectorAll('input').forEach(function (input) { input.value = ''; });
+                rejectRows.appendChild(copy);
+                syncRemoveButtons();
+                refresh();
+                return;
+            }
+
+            var remove = event.target.closest('[data-reject-remove]');
+            if (remove && rejectionRows().length > 1) {
+                remove.closest('.reject-row').remove();
+                syncRemoveButtons();
+                refresh();
+            }
+        });
+
+        syncRemoveButtons();
+        refresh();
+    }
+
+    /**
      * Generic AJAX search combobox. Markup:
      *   <div data-combobox data-url="/search-endpoint">
      *     <input type="text" data-combobox-input placeholder="Search...">

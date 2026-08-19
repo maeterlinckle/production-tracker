@@ -45,10 +45,12 @@ final class FreeIssueNoteService
     /**
      * What a free-issue note line should print today.
      *
-     * The quantity asked for is capped at what this note originally covered:
-     * with the usual one note per line the cap never bites, and where staff have
-     * built a note covering part of a line it stops that note quietly growing
-     * into a request for the whole thing.
+     * The note that currently speaks for a line asks for the line's whole
+     * outstanding requirement, so that material rejected and sent back, or a
+     * replacement for parts that failed, appears on the piece of paper the
+     * client has in front of them rather than on a second one they have to
+     * find. Superseded notes stay pegged to what they originally asked for, so
+     * an old printout never quietly grows.
      *
      * @param array<string,mixed> $noteLine a row from DeliveryNote::lines()
      * @return array{required:int,original:int,received:int,rejected:int,outstanding_sentence:string}
@@ -65,7 +67,9 @@ final class FreeIssueNoteService
             'qty_free_issue_rejected' => $rejected,
         ]);
 
-        $required = min($original, $lineOutstanding);
+        $required = !empty($noteLine['is_standing_note'])
+            ? $lineOutstanding
+            : min($original, $lineOutstanding);
 
         return [
             'required' => $required,
@@ -98,68 +102,82 @@ final class FreeIssueNoteService
     }
 
     /**
-     * Reject received material, hand it back, and ask for it again (item 6).
+     * Reject material that arrived and cannot be used, hand it back, and ask
+     * for it again.
      *
-     * Three things happen and they belong together: the material is recorded as
-     * received-wrong, a return note is raised for what is going back, and the
-     * line's requirement goes up by the same amount so the standing free-issue
-     * request asks for a replacement. A plain shortage does none of this — the
-     * material simply has not arrived yet, and the request already covers it.
+     * Takes every rejection recorded in one check-in together, because they are
+     * one event: the material goes back in one parcel, so it goes back on one
+     * note, with each reason listed on it. The rejections are separate rows —
+     * "three cracked, two the wrong grade" is two different conversations to
+     * have with the client — but one piece of paper.
      *
-     * @return array{rejection_id:int,return_note_id:int,replacement_note_id:int}
+     * The replacement asks for exactly what was rejected, no more. That falls
+     * out of the requirement being derived: rejected material counts as
+     * received and is subtracted again by freeIssueOutstanding(), so rejecting
+     * three puts three back on to what is owed and leaves the rest alone.
+     *
+     * A plain shortage does none of this. The material simply has not arrived,
+     * and the note already out is the request for it.
+     *
+     * @param array<int,array{qty:int,reason:string}> $rejections
+     * @return array{rejection_ids:array<int,int>,return_note_id:int,replacement_note_id:int,qty_rejected:int}
      */
-    public static function rejectAndIssueNotes(int $orderLineId, int $qty, string $reason, int $userId): array
+    public static function rejectAndIssueNotes(int $orderLineId, array $rejections, int $userId): array
     {
-        $rejectionId = OrderLine::rejectFreeIssue($orderLineId, $qty, $reason, $userId);
+        $rejectionIds = [];
+        $summaries = [];
+        $total = 0;
+
+        foreach ($rejections as $rejection) {
+            $qty = (int) $rejection['qty'];
+            $reason = trim((string) $rejection['reason']);
+
+            $rejectionIds[] = OrderLine::rejectFreeIssue($orderLineId, $qty, $reason, $userId);
+            $summaries[] = $qty . ' × ' . $reason;
+            $total += $qty;
+        }
 
         $line = OrderLine::find($orderLineId);
         $clientId = self::clientIdForLine($line);
 
         $returnNoteId = DeliveryNote::createReturnNote(
             $clientId,
-            [['order_line_id' => $orderLineId, 'qty' => $qty]],
+            [['order_line_id' => $orderLineId, 'qty' => $total]],
             $userId,
-            'Rejected free-issue material returned. Reason: ' . trim($reason)
+            'Rejected free-issue material returned. ' . implode('; ', $summaries)
         );
 
         self::buildStoredPdf($returnNoteId, '/staff/delivery-notes/' . $returnNoteId);
 
-        // The replacement is the same request, asking again. Raising the
-        // requirement is what makes it reappear on the note that is already out.
-        OrderLine::addFreeIssueRequirement($orderLineId, $qty);
+        $replacementNoteId = self::standingNoteFor($orderLineId, $userId);
 
-        $replacement = DeliveryNote::openFreeIssueNoteForLine($orderLineId);
-        $replacementNoteId = $replacement !== null
-            ? (int) $replacement['id']
-            : self::generateForLine($orderLineId, $userId);
-
-        OrderLine::linkRejectionNotes($rejectionId, $returnNoteId, $replacementNoteId);
+        foreach ($rejectionIds as $rejectionId) {
+            OrderLine::linkRejectionNotes($rejectionId, $returnNoteId, $replacementNoteId);
+        }
 
         return [
-            'rejection_id' => $rejectionId,
+            'rejection_ids' => $rejectionIds,
             'return_note_id' => $returnNoteId,
             'replacement_note_id' => $replacementNoteId,
+            'qty_rejected' => $total,
         ];
     }
 
     /**
-     * Ask for replacement material for parts that failed in production.
+     * The one free-issue note that stands for a line, creating it if there is
+     * none.
      *
-     * The other half of the rule that only failed or rejected quantity triggers
-     * a new request: a shortage is already covered by the outstanding one.
-     *
-     * @return int the delivery note the request now sits on
+     * Everything that needs more material — a rejection, a failure — points at
+     * this rather than raising paperwork of its own, which is what keeps the
+     * client looking at a single figure.
      */
-    public static function requestReplacementForFailures(int $orderLineId, int $materialQty, int $userId): int
+    public static function standingNoteFor(int $orderLineId, int $userId): int
     {
-        OrderLine::addFreeIssueRequirement($orderLineId, $materialQty);
-
         $existing = DeliveryNote::openFreeIssueNoteForLine($orderLineId);
-        if ($existing !== null) {
-            return (int) $existing['id'];
-        }
 
-        return self::generateForLine($orderLineId, $userId);
+        return $existing !== null
+            ? (int) $existing['id']
+            : self::generateForLine($orderLineId, $userId);
     }
 
     private static function clientIdForLine(array $line): int

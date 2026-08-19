@@ -319,10 +319,69 @@ final class Part
         };
     }
 
-    /** The single question every free-issue field on every screen is gated on (item 2). */
+    /** The single question every free-issue field on every screen is gated on. */
     public static function hasFreeIssue(array $part): bool
     {
         return (bool) ($part['has_free_issue'] ?? false);
+    }
+
+    /**
+     * How many final parts a given number of free-issue units yields.
+     *
+     * The other direction from freeIssueQtyFor(), and the reason both exist:
+     * for anything but a 1:1 part, the number of physical things on the shop
+     * floor before the machining is not the number of parts that come out of
+     * it. Ten bars at divide-by-2 are ten things to trip over and twenty parts
+     * to invoice.
+     *
+     * Division rounds down here where the other rounds up, and both are the
+     * cautious direction: you cannot get a whole part out of half the castings
+     * it takes, and you cannot send half a bar.
+     */
+    public static function finalPartsFor(array $part, int $units): int
+    {
+        if (!self::hasFreeIssue($part)) {
+            return $units;
+        }
+
+        $factor = max(1, (int) ($part['free_issue_factor'] ?? 1));
+
+        return match ($part['free_issue_relationship'] ?? 'none') {
+            'divide' => $units * $factor,
+            'multiply' => intdiv($units, $factor),
+            default => $units,
+        };
+    }
+
+    /**
+     * Does this part count differently before and after it is machined?
+     *
+     * False for everything 1:1, which is most parts — and where it is false
+     * every conversion in the application is the identity, so the two-unit
+     * model costs those parts nothing and shows them nothing.
+     */
+    public static function convertsQuantity(array $part): bool
+    {
+        return self::hasFreeIssue($part)
+            && ($part['free_issue_relationship'] ?? 'none') !== 'none'
+            && (int) ($part['free_issue_factor'] ?? 1) > 1;
+    }
+
+    /**
+     * The relationship in plain words, for the note on an order line.
+     *
+     * Deliberately phrased with both real figures from the order rather than
+     * as a ratio: "divide by 2" makes a reader do the arithmetic, and the
+     * arithmetic is the thing people get wrong.
+     */
+    public static function conversionSentence(array $part, int $orderedParts): ?string
+    {
+        if (!self::convertsQuantity($part)) {
+            return null;
+        }
+
+        return self::freeIssueQtyFor($part, $orderedParts) . ' received parts will produce '
+             . $orderedParts . ' final parts.';
     }
 
     // -- Alternate numbers --------------------------------------------------

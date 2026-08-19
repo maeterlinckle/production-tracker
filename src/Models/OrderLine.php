@@ -104,7 +104,8 @@ final class OrderLine
     public static function find(int $id): ?array
     {
         $line = Database::one(
-            'SELECT ol.*, p.cpn, p.name AS part_name, p.has_free_issue, o.order_number, o.client_id
+            'SELECT ol.*, p.cpn, p.name AS part_name, p.has_free_issue,
+                    p.free_issue_relationship, p.free_issue_factor, o.order_number, o.client_id
                FROM order_lines ol
                JOIN parts p ON p.id = ol.part_id
                JOIN orders o ON o.id = ol.order_id
@@ -143,7 +144,8 @@ final class OrderLine
     public static function forOrder(int $orderId): array
     {
         return self::withDistributions(Database::all(
-            'SELECT ol.*, p.cpn, p.name AS part_name, p.has_free_issue
+            'SELECT ol.*, p.cpn, p.name AS part_name, p.has_free_issue,
+                    p.free_issue_relationship, p.free_issue_factor
                FROM order_lines ol
                JOIN parts p ON p.id = ol.part_id
               WHERE ol.order_id = :order_id
@@ -155,9 +157,12 @@ final class OrderLine
     public static function forPart(int $partId): array
     {
         return self::withDistributions(Database::all(
-            'SELECT ol.*, o.order_number, o.po_number
+            'SELECT ol.*, o.order_number, o.po_number,
+                    p.cpn, p.name AS part_name, p.has_free_issue,
+                    p.free_issue_relationship, p.free_issue_factor
                FROM order_lines ol
                JOIN orders o ON o.id = ol.order_id
+               JOIN parts p ON p.id = ol.part_id
               WHERE ol.part_id = :part_id
               ORDER BY ol.created_at DESC',
             ['part_id' => $partId]
@@ -169,7 +174,8 @@ final class OrderLine
     {
         return self::withDistributions(Database::all(
             "SELECT ol.*, o.order_number, o.client_id, c.name AS client_name,
-                    p.cpn, p.name AS part_name, p.has_free_issue
+                    p.cpn, p.name AS part_name, p.has_free_issue,
+                    p.free_issue_relationship, p.free_issue_factor
                FROM order_lines ol
                JOIN orders o ON o.id = ol.order_id
                JOIN clients c ON c.id = o.client_id
@@ -243,6 +249,85 @@ final class OrderLine
     public static function qtyAt(array $line, string $stage): int
     {
         return (int) ($line['quantities'][$stage] ?? 0);
+    }
+
+    // -- Two units of measure -------------------------------------------------
+
+    /**
+     * The stages where the thing being counted is a piece of free-issue
+     * material rather than a finished part.
+     *
+     * For a part machined two-at-a-time from a bar, ten bars awaiting material
+     * are ten things in the rack; they become twenty parts on the far side of
+     * the machine. Counting them as twenty before they exist is how somebody
+     * ends up looking for twenty bars.
+     *
+     * Everything is stored in final parts — that is the only quantity the whole
+     * order agrees on, and it keeps the distribution summing to qty_ordered.
+     * The conversion happens where a person reads or types a number.
+     */
+    public const UNIT_STAGES = ['awaiting_free_issue', 'ready_for_production', 'in_production'];
+
+    public static function isUnitStage(string $stage): bool
+    {
+        return in_array($stage, self::UNIT_STAGES, true);
+    }
+
+    /**
+     * What to print for a stage: material units before completion, parts after
+     * it.
+     *
+     * Gated on the part actually converting rather than on it having free
+     * issue at all. freeIssueQtyFor() answers "how much material to ask the
+     * client for", which is nothing when Junction buys it — a true answer to a
+     * different question, and reading it here showed every stage of every
+     * bought-material line as zero.
+     */
+    public static function displayQty(array $line, string $stage): int
+    {
+        $stored = self::qtyAt($line, $stage);
+
+        if (!self::isUnitStage($stage) || !Part::convertsQuantity($line)) {
+            return $stored;
+        }
+
+        return Part::freeIssueQtyFor($line, $stored);
+    }
+
+    /**
+     * Turn a quantity somebody typed into the quantity to store.
+     *
+     * The rule is that you type in the unit of the stage you are taking from,
+     * because that is the pile in front of you. Moving three bars out of "ready
+     * for production" is three, whatever those bars become later.
+     *
+     * Capped at what is actually there: rounding up when converting means three
+     * bars can read as covering more parts than the stage holds, and a move
+     * that took more than existed would break the sum.
+     */
+    public static function storedQtyFromEntered(array $line, string $fromStage, int $entered): int
+    {
+        if (!self::isUnitStage($fromStage) || !Part::convertsQuantity($line)) {
+            return $entered;
+        }
+
+        $available = self::qtyAt($line, $fromStage);
+
+        return min($available, Part::finalPartsFor($line, $entered));
+    }
+
+    /**
+     * "unit" or "part", agreeing with the number it sits beside.
+     *
+     * Pass the quantity: these appear mid-sentence in the status line, and "1
+     * units awaiting free issue" is the sort of thing that makes a reader
+     * distrust the number as well as the grammar.
+     */
+    public static function unitNoun(array $line, string $stage, int $qty = 2): string
+    {
+        $noun = Part::convertsQuantity($line) && self::isUnitStage($stage) ? 'unit' : 'part';
+
+        return $qty === 1 ? $noun : $noun . 's';
     }
 
     /**
@@ -319,9 +404,20 @@ final class OrderLine
             return self::STAGE_LABELS[array_key_first($occupied)];
         }
 
+        $converts = Part::convertsQuantity($line);
         $phrases = [];
+
         foreach ($occupied as $stage => $qty) {
-            $phrases[] = $qty . ' ' . self::STAGE_SENTENCE_LABELS[$stage];
+            $shown = self::displayQty($line, $stage);
+            $phrase = $shown . ' ';
+
+            // Only spelled out where the two counts differ. On a 1:1 part the
+            // word would be noise on every line in the application.
+            if ($converts) {
+                $phrase .= self::unitNoun($line, $stage, $shown) . ' ';
+            }
+
+            $phrases[] = $phrase . self::STAGE_SENTENCE_LABELS[$stage];
         }
 
         return ucfirst(implode(', ', $phrases));
@@ -504,6 +600,44 @@ final class OrderLine
                                   WHERE q.order_line_id = ol.id AND q.stage = 'cancelled')
              WHERE ol.id = :id"
         )->execute(['id' => $lineId]);
+
+        self::recalculateFreeIssueRequirement($pdo, $lineId);
+    }
+
+    /**
+     * How much material this line needs in total, worked out rather than
+     * accumulated.
+     *
+     * Two parts to it: enough for the quantity still on the order, plus enough
+     * to remake whatever has failed. Both are rounded up separately and on
+     * purpose — a single failed part still needs a whole bar, and the spare
+     * that leaves is the honest answer rather than an accounting one.
+     *
+     * Derived, not incremented, because the failure figure moves. Adding a
+     * one-off top-up each time something failed stacked requests that no longer
+     * matched the shortfall the moment anything else went wrong or was put
+     * right; recomputing from the current totals cannot drift.
+     *
+     * Rejected material needs no term of its own: it counts as received and is
+     * then subtracted again by freeIssueOutstanding(), so rejecting three puts
+     * exactly three back on to what is still owed.
+     */
+    public static function recalculateFreeIssueRequirement(PDO $pdo, int $lineId): void
+    {
+        $pdo->prepare(
+            "UPDATE order_lines ol
+               JOIN parts p ON p.id = ol.part_id
+                SET ol.qty_free_issue_required = CASE
+                    WHEN p.has_free_issue = 0 THEN 0
+                    WHEN p.free_issue_relationship = 'divide' THEN
+                        CEIL(GREATEST(ol.qty_ordered - ol.qty_cancelled, 0) / p.free_issue_factor)
+                        + CEIL(ol.qty_failed / p.free_issue_factor)
+                    WHEN p.free_issue_relationship = 'multiply' THEN
+                        (GREATEST(ol.qty_ordered - ol.qty_cancelled, 0) + ol.qty_failed) * p.free_issue_factor
+                    ELSE GREATEST(ol.qty_ordered - ol.qty_cancelled, 0) + ol.qty_failed
+                END
+              WHERE ol.id = :id"
+        )->execute(['id' => $lineId]);
     }
 
     /** Puts the whole ordered quantity at the entry stage. Called when a line is created. */
@@ -552,15 +686,10 @@ final class OrderLine
                 'UPDATE order_lines SET closed_at = NOW(), closed_by = :user, close_reason = :reason WHERE id = :id'
             )->execute(['user' => $userId, 'reason' => $reason, 'id' => $lineId]);
 
-            // Nothing is waiting for material any more, so nothing should still
-            // be asking the client for any. Only ever lowered to what has
-            // already arrived: material that is here is here.
-            $pdo->prepare(
-                'UPDATE order_lines
-                    SET qty_free_issue_required = GREATEST(qty_free_issue_received - qty_free_issue_rejected, 0)
-                  WHERE id = :id
-                    AND qty_free_issue_required > GREATEST(qty_free_issue_received - qty_free_issue_rejected, 0)'
-            )->execute(['id' => $lineId]);
+            // Nothing is waiting for material any more, and nothing should
+            // still be asking the client for any. That falls out of the
+            // requirement being derived: the cancelled quantity has already
+            // been taken off the figure it is worked out from.
 
             return $cancelled;
         });
@@ -645,19 +774,35 @@ final class OrderLine
         int $receivedBy,
         ?string $notes = null,
         string $discrepancyType = 'none',
-        ?string $discrepancyNotes = null
+        ?string $discrepancyNotes = null,
+        bool $alreadyResolved = false
     ): void {
         if (!in_array($discrepancyType, self::DISCREPANCY_TYPES, true)) {
             $discrepancyType = 'none';
         }
 
-        Database::transaction(static function (PDO $pdo) use ($lineId, $qty, $receivedBy, $notes, $discrepancyType, $discrepancyNotes): void {
+        Database::transaction(static function (PDO $pdo) use (
+            $lineId,
+            $qty,
+            $receivedBy,
+            $notes,
+            $discrepancyType,
+            $discrepancyNotes,
+            $alreadyResolved
+        ): void {
             $pdo->prepare(
-                'INSERT INTO free_issue_receipts (order_line_id, qty_received, received_by, notes, discrepancy_type, discrepancy_notes)
-                 VALUES (:line_id, :qty, :received_by, :notes, :discrepancy_type, :discrepancy_notes)'
+                'INSERT INTO free_issue_receipts (
+                    order_line_id, qty_received, received_by, notes, discrepancy_type, discrepancy_notes,
+                    resolved_at, resolved_by
+                 ) VALUES (
+                    :line_id, :qty, :received_by, :notes, :discrepancy_type, :discrepancy_notes,
+                    :resolved_at, :resolved_by
+                 )'
             )->execute([
                 'line_id' => $lineId, 'qty' => $qty, 'received_by' => $receivedBy, 'notes' => $notes,
                 'discrepancy_type' => $discrepancyType, 'discrepancy_notes' => $discrepancyNotes,
+                'resolved_at' => $alreadyResolved ? date('Y-m-d H:i:s') : null,
+                'resolved_by' => $alreadyResolved ? $receivedBy : null,
             ]);
 
             $pdo->prepare(
@@ -802,17 +947,17 @@ final class OrderLine
         );
     }
 
-    /** Raise the material requirement, e.g. to replace rejected or failed quantity. */
-    public static function addFreeIssueRequirement(int $lineId, int $qty): void
+    /**
+     * The extra material this line needs purely because parts have failed,
+     * in material units.
+     *
+     * Recomputed from the current failed total every time it is asked for, so
+     * failing two more parts before the first replacement arrives raises one
+     * outstanding figure rather than adding a second request beside it.
+     */
+    public static function replacementUnitsForFailures(array $line): int
     {
-        if ($qty <= 0) {
-            return;
-        }
-
-        Database::query(
-            'UPDATE order_lines SET qty_free_issue_required = qty_free_issue_required + :qty WHERE id = :id',
-            ['qty' => $qty, 'id' => $lineId]
-        );
+        return Part::freeIssueQtyFor($line, (int) $line['qty_failed']);
     }
 
     // -- Despatch and invoicing ---------------------------------------------

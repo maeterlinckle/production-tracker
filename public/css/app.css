@@ -1859,25 +1859,56 @@ legend.label { padding: 0; }
     width: 9px; height: 9px;
     border-radius: 3px;
     margin-right: var(--space-2);
-    flex: 0 0 auto;
+    vertical-align: 0.05em;
 }
 
-/* The production status table. Data left, actions right, and a rule between the
-   two so the eye can run down the quantities without threading between input
-   boxes. */
-.stage-table { width: 100%; }
+/* An order line's card is a summary followed by several sections. Giving them a
+   rule and a consistent rhythm is what turns one long column of controls into
+   parts a reader can skip between; before this they were separated only by a
+   margin and ran together. */
+.line-summary { display: flex; align-items: baseline; gap: var(--space-2); flex-wrap: wrap; }
+
+.line-section {
+    margin-top: var(--space-5);
+    padding-top: var(--space-4);
+    border-top: 1px solid var(--border);
+}
+.line-section-title {
+    margin: 0 0 var(--space-3);
+    font-size: 0.82rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    font-weight: 600;
+}
+
+/* The production status table.
+
+   `table-layout: fixed` with a colgroup, so the widths below are honoured
+   instead of being a suggestion the browser weighs against content. Auto layout
+   sized these columns by their text and gave the action cell — four form
+   controls — whatever was left, which was a fifth of the table and four stacked
+   rows. The three data columns are as wide as their content ever gets; the
+   action column takes everything else. */
+.stage-table { width: 100%; table-layout: fixed; }
+.stage-table .col-stage  { width: 15rem; }
+.stage-table .col-qty    { width: 7rem; }
+.stage-table .col-unit   { width: 7rem; }
+/* col-action: no width — fixed layout gives it the remainder. */
+
 .stage-table th, .stage-table td { vertical-align: middle; }
 .stage-table thead th {
     font-size: 0.78rem;
     text-transform: uppercase;
     letter-spacing: 0.04em;
     color: var(--text-muted);
+    font-weight: 600;
 }
 .stage-table .stage-name {
-    display: flex;
-    align-items: center;
     font-weight: 600;
     white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 .stage-table .stage-qty {
     font-variant-numeric: tabular-nums;
@@ -1886,11 +1917,7 @@ legend.label { padding: 0; }
     white-space: nowrap;
 }
 .stage-table .stage-unit { color: var(--text-muted); font-size: 0.85rem; }
-.stage-table .stage-table-actions {
-    border-left: 1px solid var(--border);
-    width: 1%;
-    white-space: nowrap;
-}
+.stage-table .stage-table-actions { border-left: 1px solid var(--border); }
 
 /* An input and the button that acts on it are one row, baseline-aligned. Used
    everywhere on the order page a text box sits next to a submit. */
@@ -1911,20 +1938,35 @@ legend.label { padding: 0; }
 .action-row input,
 .action-row select,
 .action-row textarea { margin: 0; }
-.action-row .input-qty { width: 6rem; }
-.action-row .input-stage { width: auto; min-width: 12rem; }
-.action-row .input-reason { flex: 1 1 14rem; min-width: 12rem; }
-.action-row .input-grow { flex: 1 1 16rem; min-width: 12rem; }
+.action-row .input-qty { flex: 0 0 auto; width: 5.5rem; }
+.action-row .input-stage { flex: 0 1 auto; width: auto; min-width: 9rem; }
+.action-row .input-reason { flex: 1 1 8rem; min-width: 0; }
+/* Grows to fill a row, but only so far. A PO number is a dozen characters and
+   a field eight hundred pixels wide for it reads as a mistake. */
+.action-row .input-grow { flex: 1 1 16rem; min-width: 8rem; max-width: 32rem; }
+.action-row .btn { flex: 0 0 auto; }
+
+/* Inside the table the row must stay a row: it sits in a cell of a known width,
+   so the flexible field gives way rather than the whole thing folding. Outside
+   the table — the PO number, closing a line down — wrapping is fine and the
+   default above still applies. */
+.stage-table .action-row { flex-wrap: nowrap; }
 
 /* Rejection entries on the check-in form: quantity, reason, remove. */
 .reject-row { align-items: flex-end; }
 .reject-row .field-grow { flex: 1 1 18rem; }
 .reject-row .field-shrink { flex: 0 0 auto; display: flex; align-items: flex-end; }
 
+/* Below this the four controls genuinely do not fit on one line, so the table
+   drops its column model and the row is allowed to wrap. Measured rather than
+   guessed: at 1000px the row still fits with room to spare, and the first
+   breakpoint tried here folded rows that had no need to fold. */
 @media (max-width: 900px) {
-    .stage-table .stage-table-actions { border-left: 0; white-space: normal; }
-    .action-row .input-reason,
-    .action-row .input-stage { flex: 1 1 100%; min-width: 0; }
+    .stage-table { table-layout: auto; }
+    .stage-table .stage-table-actions { border-left: 0; }
+    .stage-table .action-row { flex-wrap: wrap; }
+    .action-row .input-reason { flex: 1 1 12rem; }
+    .action-row .input-stage { flex: 1 1 12rem; }
 }
 
 .mb-1 { margin-bottom: var(--space-1); }

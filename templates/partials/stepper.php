@@ -7,6 +7,10 @@
  * one — showing the furthest-on dot overstated progress and showing the
  * furthest-back understated it. A bar divided in proportion says both at once.
  *
+ * It carries no figures of its own. The table underneath names every stage and
+ * its quantity, and printing the same numbers twice on top of each other was
+ * most of what made the line card hard to read.
+ *
  * @var array $line an order line with its distribution attached
  */
 use App\Models\OrderLine;
@@ -20,14 +24,6 @@ $total = array_sum($occupied);
             <div class="stage-bar-segment"
                  data-stage="<?= e($stage) ?>"
                  style="width: <?= round(($qty / $total) * 100, 2) ?>%"></div>
-        <?php endforeach; ?>
-    </div>
-    <div class="stage-key">
-        <?php foreach ($occupied as $stage => $qty): ?>
-            <span class="stage-key-item">
-                <span class="stage-key-dot stage-bar-segment" data-stage="<?= e($stage) ?>"></span>
-                <?= (int) $qty ?> <?= e(OrderLine::STAGE_SENTENCE_LABELS[$stage]) ?>
-            </span>
         <?php endforeach; ?>
     </div>
 <?php endif; ?>

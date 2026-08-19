@@ -27,7 +27,21 @@ $converts = Part::convertsQuantity($line);
 $canProduce = $canProduce ?? false;
 ?>
 <div class="table-wrap">
+    <?php /*
+        The column widths are declared rather than negotiated. Left to itself
+        the browser hands surplus width to the columns holding plain text and
+        squeezes the one holding form controls, which is exactly backwards: a
+        stage name is twenty characters and never changes, while the action cell
+        carries a number field, a select, a text field and a button. It ended up
+        with a fifth of the table and stacked all four onto separate lines.
+    */ ?>
     <table class="stage-table">
+        <colgroup>
+            <col class="col-stage">
+            <col class="col-qty">
+            <?php if ($converts): ?><col class="col-unit"><?php endif; ?>
+            <col class="col-action">
+        </colgroup>
         <thead>
             <tr>
                 <th scope="col">Stage</th>
@@ -48,8 +62,7 @@ $canProduce = $canProduce ?? false;
             ?>
             <tr>
                 <th scope="row" class="stage-name">
-                    <span class="stage-dot" data-stage="<?= e($stage) ?>" aria-hidden="true"></span>
-                    <?= e(OrderLine::STAGE_LABELS[$stage]) ?>
+                    <span class="stage-dot" data-stage="<?= e($stage) ?>" aria-hidden="true"></span><?= e(OrderLine::STAGE_LABELS[$stage]) ?>
                 </th>
                 <?php $shown = OrderLine::displayQty($line, $stage); ?>
                 <td class="align-right stage-qty"><?= $shown ?></td>

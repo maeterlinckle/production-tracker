@@ -81,22 +81,30 @@ $goodsOutNotes = array_values(array_filter($deliveryNotes, static fn ($dn) => $d
             </div>
         </div>
 
-        <p class="mb-2"><?= status_badge(OrderLine::headlineStage($line)) ?>
+        <?php /*
+            The summary first: one badge, one sentence, one bar. Everything a
+            person wants from a glance is in these three lines, and the table
+            below is for when they want the detail or want to move something.
+        */ ?>
+        <p class="line-summary mb-2"><?= status_badge(OrderLine::headlineStage($line)) ?>
             <span class="text-muted"><?= e(OrderLine::statusLabel($line)) ?></span></p>
         <?= partial('partials/stepper', ['line' => $line]) ?>
 
         <?php if ($lineClosed): ?>
-            <p class="text-muted">
+            <p class="text-muted mb-0">
                 Closed down <?= format_date($line['closed_at']) ?><?= $line['close_reason'] ? ' — ' . e($line['close_reason']) : '' ?>.
                 Cancelled quantity no longer counts as outstanding.
             </p>
         <?php endif; ?>
 
-        <?= partial('partials/stage-moves', ['line' => $line, 'canProduce' => $canProduce]) ?>
+        <div class="line-section">
+            <h4 class="line-section-title">Production status</h4>
+            <?= partial('partials/stage-moves', ['line' => $line, 'canProduce' => $canProduce]) ?>
+        </div>
 
-        <?php // -- Free issue: shown only for parts that actually have any (item 2) ?>
-        <div style="margin-top: var(--space-5)">
-            <h4 class="mt-0 mb-2">Free-issue material</h4>
+        <?php // -- Free issue: shown only for parts that actually have any ?>
+        <div class="line-section">
+            <h4 class="line-section-title">Free-issue material</h4>
             <?php if (!$needsFreeIssue): ?>
                 <p class="text-muted">No free-issue material required.</p>
             <?php else: $outstanding = OrderLine::freeIssueOutstanding($line); ?>
@@ -138,8 +146,8 @@ $goodsOutNotes = array_values(array_filter($deliveryNotes, static fn ($dn) => $d
 
         <?php // -- Failed quantity and replacement material (item 6) ?>
         <?php if (OrderLine::qtyAt($line, 'failed') > 0): ?>
-            <div style="margin-top: var(--space-5)">
-                <h4 class="mt-0 mb-2"><?= OrderLine::qtyAt($line, 'failed') ?> failed</h4>
+            <div class="line-section">
+                <h4 class="line-section-title"><?= OrderLine::qtyAt($line, 'failed') ?> failed</h4>
                 <p class="text-muted">
                     Still owed on this line: failed parts are parked rather than deducted, and go back into the
                     flow once there is something to remake them from.
@@ -177,8 +185,8 @@ $goodsOutNotes = array_values(array_filter($deliveryNotes, static fn ($dn) => $d
 
         <?php // -- Quantity change requests (item 8) ?>
         <?php if (($detail['change_requests'] ?? []) !== []): ?>
-            <div style="margin-top: var(--space-5)">
-                <h4 class="mt-0 mb-2">Quantity change requests</h4>
+            <div class="line-section">
+                <h4 class="line-section-title">Quantity change requests</h4>
                 <?php foreach ($detail['change_requests'] as $request): ?>
                     <div class="callout">
                         <p class="mb-1">
@@ -232,7 +240,7 @@ $goodsOutNotes = array_values(array_filter($deliveryNotes, static fn ($dn) => $d
 
         <?php // -- Close down (item 6) ?>
         <?php if ($canClose): ?>
-            <div style="margin-top: var(--space-5)">
+            <div class="line-section">
                 <?php if ($lineClosed): ?>
                     <form method="post" action="<?= url('/staff/lines/' . $line['id'] . '/reopen') ?>">
                         <?= csrf_field() ?>

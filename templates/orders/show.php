@@ -198,65 +198,13 @@ $noteHref = static fn (array $dn): string => $isStaff
         <?php if (OrderLine::qtyAt($line, 'failed') > 0): ?>
             <div class="line-section">
                 <h4 class="line-section-title"><?= OrderLine::qtyAt($line, 'failed') ?> failed</h4>
-                <?php
-                // Every failure ever recorded on the line, which is not the same
-                // number as the bucket holds: a failure put back into production
-                // stays on the record and leaves the bucket. Said plainly, because
-                // a table of three rows under a heading reading "2 failed" is
-                // otherwise a contradiction the reader has to resolve.
-                $failureTotal = array_sum(array_map(static fn (array $f): int => (int) $f['qty'], $detail['failures'] ?? []));
-                ?>
                 <p class="text-muted">
                     Still owed on this line: failed parts are parked rather than deducted, and go back into the
                     flow once there is something to remake them from.
-                    <?php if ($failureTotal > OrderLine::qtyAt($line, 'failed')): ?>
-                        Everything ever failed on this line is listed below — <?= $failureTotal - OrderLine::qtyAt($line, 'failed') ?>
-                        of it has since gone back into production, which is why the list totals more than the figure above.
+                    <?php if ($isStaff && ($detail['failures'] ?? []) !== []): ?>
+                        Why, and at which stage, is under <em>Failed part history</em> at the foot of this line.
                     <?php endif; ?>
                 </p>
-                <?php /*
-                    Always on show, for both audiences, whenever anything is in
-                    this bucket (item 7). It used to be a staff-only list and
-                    everything else about a line was a table, which made the one
-                    stage people most want the detail of the one stage they had
-                    to go looking for. A client is now capable of putting
-                    quantity in here themselves by returning parts, so hiding
-                    the breakdown from them would have been hiding their own
-                    entries back from them.
-                */ ?>
-                <?php if (($detail['failures'] ?? []) !== []): ?>
-                    <div class="table-wrap">
-                        <table class="failed-table">
-                            <colgroup>
-                                <col class="col-fail-date">
-                                <col class="col-fail-qty">
-                                <col class="col-fail-stage">
-                                <col class="col-fail-reason">
-                                <?php if ($isStaff): ?><col class="col-fail-by"><?php endif; ?>
-                            </colgroup>
-                            <thead>
-                                <tr>
-                                    <th scope="col">Failed</th>
-                                    <th scope="col" class="align-right">Qty</th>
-                                    <th scope="col">At stage</th>
-                                    <th scope="col">Reason</th>
-                                    <?php if ($isStaff): ?><th scope="col">By</th><?php endif; ?>
-                                </tr>
-                            </thead>
-                            <tbody>
-                            <?php foreach ($detail['failures'] as $failure): ?>
-                                <tr>
-                                    <td><?= format_date($failure['moved_at']) ?></td>
-                                    <td class="align-right"><?= (int) $failure['qty'] ?></td>
-                                    <td><?= e(OrderLine::STAGE_SENTENCE_LABELS[$failure['from_stage']] ?? 'an unknown stage') ?></td>
-                                    <td class="wrap"><?= e($failure['reason'] ?? '') ?: '<span class="text-muted">No reason recorded</span>' ?></td>
-                                    <?php if ($isStaff): ?><td><?= e($failure['moved_by_name']) ?></td><?php endif; ?>
-                                </tr>
-                            <?php endforeach; ?>
-                            </tbody>
-                        </table>
-                    </div>
-                <?php endif; ?>
 
                 <?php if ($canProduce && $needsFreeIssue):
                     $replacementUnits = OrderLine::replacementUnitsForFailures($line);
@@ -394,6 +342,81 @@ $noteHref = static fn (array $dn): string => $isStaff
                     </form>
                 <?php endif; ?>
             </div>
+        <?php endif; ?>
+
+        <?php /*
+            Junction's record of what has been condemned on this line, and why.
+            Shown whenever anything has ever failed here — not only while the
+            bucket still holds something — because a failure put back into
+            production leaves the bucket and stays on the record, and "what went
+            wrong with this job" is a question asked long after the remake.
+
+            Collapsed, beside the movement history, because it is the same kind
+            of thing: a log somebody opens when they have a reason to, rather
+            than a figure they need at a glance. The quantity itself is still on
+            show in the failed section above, and in the stage table.
+        */ ?>
+        <?php if ($isStaff && ($detail['failures'] ?? []) !== []):
+            $failureTotal = array_sum(array_map(static fn (array $f): int => (int) $f['qty'], $detail['failures']));
+            ?>
+            <details style="margin-top: var(--space-4)">
+                <summary>Failed part history (<?= count($detail['failures']) ?>)</summary>
+                <?php
+                // The log and the bucket are different numbers whenever anything
+                // has been put back into production, so the difference is named
+                // rather than left as an arithmetic puzzle. When the bucket is
+                // empty there is no failed section above to compare against, so
+                // the sentence says where everything went instead.
+                $stillFailed = OrderLine::qtyAt($line, 'failed');
+                $returned = $failureTotal - $stillFailed;
+                $hasHave = static fn (int $n): string => $n === 1 ? 'has' : 'have';
+                ?>
+                <?php if ($returned > 0): ?>
+                    <p class="text-muted" style="margin-top: var(--space-2)">
+                        <?php if ($stillFailed > 0): ?>
+                            <?= $failureTotal ?> have failed on this line in total, of which
+                            <?= $returned ?> <?= $hasHave($returned) ?> since gone back into production.
+                            That is why this list totals more than the <?= $stillFailed ?> failed above.
+                        <?php else: ?>
+                            <?= $failureTotal ?> <?= $hasHave($failureTotal) ?> failed on this line at one time
+                            or another, and <?= $failureTotal === 1 ? 'it has' : 'they have all' ?> since gone
+                            back into production. Nothing is sitting in the failed stage now.
+                        <?php endif; ?>
+                    </p>
+                <?php endif; ?>
+                <div class="table-wrap" style="margin-top: var(--space-2)">
+                    <table class="failed-table">
+                        <colgroup>
+                            <col class="col-fail-date">
+                            <col class="col-fail-qty">
+                            <col class="col-fail-stage">
+                            <col class="col-fail-reason">
+                            <col class="col-fail-by">
+                        </colgroup>
+                        <thead>
+                            <tr>
+                                <th scope="col">Failed</th>
+                                <th scope="col" class="align-right">Qty</th>
+                                <th scope="col">At stage</th>
+                                <th scope="col">Reason</th>
+                                <th scope="col">By</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                        <?php /* Already newest-first out of failureHistory(), unlike the movement log below. */ ?>
+                        <?php foreach ($detail['failures'] as $failure): ?>
+                            <tr>
+                                <td><?= format_date($failure['moved_at']) ?></td>
+                                <td class="align-right"><?= (int) $failure['qty'] ?></td>
+                                <td><?= e(OrderLine::STAGE_SENTENCE_LABELS[$failure['from_stage']] ?? 'an unknown stage') ?></td>
+                                <td class="wrap"><?= e($failure['reason'] ?? '') ?: '<span class="text-muted">No reason recorded</span>' ?></td>
+                                <td><?= e($failure['moved_by_name']) ?></td>
+                            </tr>
+                        <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+            </details>
         <?php endif; ?>
 
         <?php if ($isStaff && ($detail['moves'] ?? []) !== []): ?>

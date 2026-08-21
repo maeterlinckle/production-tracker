@@ -544,7 +544,7 @@ already covered by the note that is out, and does nothing.
 | 4 | Columns aligned across the four tables | Done — one partial, one colgroup, measured identical |
 | 5 | Quantity column on Free-Issue Sent | Done — outstanding over total, e.g. `4/5` |
 | 6 | Renames applied everywhere | Done — tables, buttons, PDFs, emails, preferences |
-| 7 | Failed parts table always shown | Done — a table now, for both audiences |
+| 7 | Failed parts section always shown | Done — the quantity always on show; the history is a collapsed staff-only log beside the movement history |
 
 **The fourth movement.** Three note types covered material going to Junction and
 parts and material coming back to the client. The one movement with no paperwork
@@ -605,15 +605,27 @@ mistake: two people on a phone call about a piece of paper need to say its name
 and mean the same document. Each new name says what moved and which way, so it
 reads correctly from either end without rewording.
 
-**The failed table.** Was a staff-only bulleted list while everything else about a
-line was a table, which made the one stage people most want detail of the one they
-had to go looking for. It is now a table, always shown when the bucket holds
-anything, for both audiences — a client can put quantity in there themselves by
-returning parts, so hiding the breakdown from them would have been hiding their
-own entries back from them. Where the list totals more than the bucket (a failure
-since put back into production stays on the record and leaves the bucket) the
-strap says so and by how much, rather than leaving a contradiction for the reader
-to resolve.
+**The failed quantity and the failed history are two different things**, and they
+are now shown as two.
+
+The quantity — "2 failed", the strap explaining that failed parts are parked
+rather than deducted, and the replacement-material action — stays on show to both
+audiences whenever the bucket holds anything. That is the figure somebody needs at
+a glance.
+
+The history is Junction's record of what has been condemned and why. It was a
+staff-only bulleted list while everything else about a line was a table; it is a
+table now, in a collapsed `<details>` beside the movement history, because it is
+the same kind of thing — a log opened when there is a reason to, not a figure read
+in passing. It is staff-only, matching the movement history it sits with.
+
+It appears whenever anything has **ever** failed on the line, not only while the
+bucket still holds something: a failure put back into production leaves the bucket
+and stays on the record, and "what went wrong with this job" is a question asked
+long after the remake. Where the log totals more than the bucket, the difference is
+named rather than left as an arithmetic puzzle — and where the bucket is empty
+there is no figure above to compare against, so the sentence says where everything
+went instead.
 
 **Found in passing.** `POST /staff/lines/{id}/check-in/reject` still routed to a
 `reject()` method deleted when Prompt 5 folded rejection into the single check-in

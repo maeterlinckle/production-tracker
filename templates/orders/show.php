@@ -14,6 +14,8 @@
  * @var array  $parts
  * @var array  $deliveryNotes
  * @var array  $invoicesByDn
+ * @var array  $freeIssueTotals
+ * @var array  $returnableLines
  * @var array  $poDocuments
  * @var array  $photos
  * @var array  $notes
@@ -21,6 +23,7 @@
  * @var string $rollupStatus
  */
 use App\Core\Auth;
+use App\Models\DeliveryNote;
 use App\Models\Order;
 use App\Models\OrderLine;
 use App\Models\OrderLineChangeRequest;
@@ -42,6 +45,26 @@ $partHref = $isStaff ? '/staff/parts/' : '/parts/';
 $freeIssueNotes = array_values(array_filter($deliveryNotes, static fn ($dn) => $dn['type'] === 'free_issue_in'));
 $returnNotes = array_values(array_filter($deliveryNotes, static fn ($dn) => $dn['type'] === 'material_return'));
 $goodsOutNotes = array_values(array_filter($deliveryNotes, static fn ($dn) => $dn['type'] === 'goods_out'));
+$partsReturnNotes = array_values(array_filter($deliveryNotes, static fn ($dn) => $dn['type'] === 'parts_return'));
+
+// How much of each despatch has since come back, so the row for the delivery
+// says so rather than leaving the two facts on separate tables.
+$returnedByNote = [];
+foreach ($partsReturnNotes as $dn) {
+    $related = (int) ($dn['related_note_id'] ?? 0);
+    if ($related > 0) {
+        $returnedByNote[$related] = ($returnedByNote[$related] ?? 0) + (int) $dn['qty_total'];
+    }
+}
+
+// Only despatches with something left to send back. A part already returned in
+// full is not a choice, and offering it as one — greyed out, or worse, as the
+// only option on a required select — is offering a form that cannot be sent.
+$returnable = array_values(array_filter(
+    $returnableLines,
+    static fn (array $l): bool => (int) $l['qty_sent'] - (int) $l['qty_already_returned'] > 0
+));
+$canReturnParts = !$isStaff && Auth::can('return_rejected_parts') && $returnable !== [];
 
 // Clients read a delivery note straight as a PDF; staff have a page for it
 // with the invoicing controls on.
@@ -175,20 +198,64 @@ $noteHref = static fn (array $dn): string => $isStaff
         <?php if (OrderLine::qtyAt($line, 'failed') > 0): ?>
             <div class="line-section">
                 <h4 class="line-section-title"><?= OrderLine::qtyAt($line, 'failed') ?> failed</h4>
+                <?php
+                // Every failure ever recorded on the line, which is not the same
+                // number as the bucket holds: a failure put back into production
+                // stays on the record and leaves the bucket. Said plainly, because
+                // a table of three rows under a heading reading "2 failed" is
+                // otherwise a contradiction the reader has to resolve.
+                $failureTotal = array_sum(array_map(static fn (array $f): int => (int) $f['qty'], $detail['failures'] ?? []));
+                ?>
                 <p class="text-muted">
                     Still owed on this line: failed parts are parked rather than deducted, and go back into the
                     flow once there is something to remake them from.
+                    <?php if ($failureTotal > OrderLine::qtyAt($line, 'failed')): ?>
+                        Everything ever failed on this line is listed below — <?= $failureTotal - OrderLine::qtyAt($line, 'failed') ?>
+                        of it has since gone back into production, which is why the list totals more than the figure above.
+                    <?php endif; ?>
                 </p>
-                <?php if ($isStaff && ($detail['failures'] ?? []) !== []): ?>
-                    <ul class="plain-list">
-                        <?php foreach ($detail['failures'] as $failure): ?>
-                            <li>
-                                <?= (int) $failure['qty'] ?> at <?= e(OrderLine::STAGE_SENTENCE_LABELS[$failure['from_stage']] ?? 'an unknown stage') ?>
-                                — <?= e($failure['reason'] ?? 'no reason recorded') ?>
-                                <span class="text-muted">(<?= e($failure['moved_by_name']) ?>, <?= format_date($failure['moved_at']) ?>)</span>
-                            </li>
-                        <?php endforeach; ?>
-                    </ul>
+                <?php /*
+                    Always on show, for both audiences, whenever anything is in
+                    this bucket (item 7). It used to be a staff-only list and
+                    everything else about a line was a table, which made the one
+                    stage people most want the detail of the one stage they had
+                    to go looking for. A client is now capable of putting
+                    quantity in here themselves by returning parts, so hiding
+                    the breakdown from them would have been hiding their own
+                    entries back from them.
+                */ ?>
+                <?php if (($detail['failures'] ?? []) !== []): ?>
+                    <div class="table-wrap">
+                        <table class="failed-table">
+                            <colgroup>
+                                <col class="col-fail-date">
+                                <col class="col-fail-qty">
+                                <col class="col-fail-stage">
+                                <col class="col-fail-reason">
+                                <?php if ($isStaff): ?><col class="col-fail-by"><?php endif; ?>
+                            </colgroup>
+                            <thead>
+                                <tr>
+                                    <th scope="col">Failed</th>
+                                    <th scope="col" class="align-right">Qty</th>
+                                    <th scope="col">At stage</th>
+                                    <th scope="col">Reason</th>
+                                    <?php if ($isStaff): ?><th scope="col">By</th><?php endif; ?>
+                                </tr>
+                            </thead>
+                            <tbody>
+                            <?php foreach ($detail['failures'] as $failure): ?>
+                                <tr>
+                                    <td><?= format_date($failure['moved_at']) ?></td>
+                                    <td class="align-right"><?= (int) $failure['qty'] ?></td>
+                                    <td><?= e(OrderLine::STAGE_SENTENCE_LABELS[$failure['from_stage']] ?? 'an unknown stage') ?></td>
+                                    <td class="wrap"><?= e($failure['reason'] ?? '') ?: '<span class="text-muted">No reason recorded</span>' ?></td>
+                                    <?php if ($isStaff): ?><td><?= e($failure['moved_by_name']) ?></td><?php endif; ?>
+                                </tr>
+                            <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                    </div>
                 <?php endif; ?>
 
                 <?php if ($canProduce && $needsFreeIssue):
@@ -453,96 +520,145 @@ $noteHref = static fn (array $dn): string => $isStaff
     <?php endif; ?>
 </div>
 
-<div class="card">
-    <h2 class="mt-0"><?= $isStaff ? 'Free-issue material notes' : 'Free-issue material to send' ?></h2>
-    <?php if ($freeIssueNotes === []): ?>
-        <p class="empty-state mb-0">Nothing on this order is made from free-issue material.</p>
-    <?php else: ?>
-        <p class="text-muted">
-            <?php if ($isStaff): ?>
-                Standing requests for material the client has to send in. Each one asks for whatever is still outstanding today.
-            <?php else: ?>
-                Print the note and enclose it with the material. Each one asks for whatever is still outstanding,
-                so it is always worth reprinting rather than reusing an old copy.
-            <?php endif; ?>
-        </p>
-        <div class="table-wrap">
-            <table>
-                <thead><tr><th>Reference</th><th>CPN</th><th>Issued</th><th></th></tr></thead>
-                <tbody>
-                <?php foreach ($freeIssueNotes as $dn): ?>
-                    <tr>
-                        <td><?= e($dn['reference']) ?></td>
-                        <td><?= e($dn['cpns'] ?? '—') ?></td>
-                        <td><?= format_date($dn['issued_at']) ?></td>
-                        <td><a href="<?= url($noteHref($dn)) ?>" <?= $isStaff ? '' : 'target="_blank" rel="noopener"' ?>><?= $isStaff ? 'View' : 'View PDF' ?></a></td>
-                    </tr>
-                <?php endforeach; ?>
-                </tbody>
-            </table>
+<?php /*
+    Every piece of paper on this order, under one heading.
+ *
+    They were three cards and a fourth was about to be added, scattered down the
+    page with the purchase orders and the photos between them. Somebody asking
+    "what has moved between us on this job?" was reading four separate lists
+    and holding the answer in their head. The four movements are one subject:
+    material in, material back, parts out, parts back.
+*/ ?>
+<div class="card" id="delivery-notes">
+    <h2 class="mt-0">Delivery Notes</h2>
+    <p class="text-muted">
+        Everything that has travelled between <?= $isStaff ? e($client['name']) . ' and Junction' : 'you and Junction' ?>
+        on this order, in both directions.
+    </p>
+
+    <div class="line-section">
+        <h3 class="line-section-title"><?= e(DeliveryNote::TYPE_LABELS['free_issue_in']) ?></h3>
+        <?php if ($freeIssueNotes === []): ?>
+            <p class="empty-state mb-0">Nothing on this order is made from free-issue material.</p>
+        <?php else: ?>
+            <p class="text-muted">
+                <?php if ($isStaff): ?>
+                    Standing requests for material the client has to send in. Each one asks for whatever is still outstanding today.
+                <?php else: ?>
+                    Print the note and enclose it with the material. Each one asks for whatever is still outstanding,
+                    so it is always worth reprinting rather than reusing an old copy.
+                <?php endif; ?>
+                The quantity column reads <em>still to come</em> over <em>needed in total</em>.
+            </p>
+            <?= partial('partials/delivery-note-table', [
+                'notes' => $freeIssueNotes,
+                'kind' => 'free_issue_in',
+                'noteHref' => $noteHref,
+                'isStaff' => $isStaff,
+                'showPricing' => $showPricing,
+                'freeIssueTotals' => $freeIssueTotals,
+            ]) ?>
+        <?php endif; ?>
+    </div>
+
+    <?php if ($returnNotes !== []): ?>
+        <div class="line-section">
+            <h3 class="line-section-title"><?= e(DeliveryNote::TYPE_LABELS['material_return']) ?></h3>
+            <p class="text-muted">
+                Free-issue material that arrived and could not be used, going back to
+                <?= $isStaff ? 'the client' : 'you' ?>. A replacement was asked for at the same time,
+                on the free-issue note above.
+            </p>
+            <?= partial('partials/delivery-note-table', [
+                'notes' => $returnNotes,
+                'kind' => 'material_return',
+                'noteHref' => $noteHref,
+                'isStaff' => $isStaff,
+                'showPricing' => $showPricing,
+            ]) ?>
         </div>
     <?php endif; ?>
-</div>
 
-<?php if ($returnNotes !== []): ?>
-<div class="card">
-    <h2 class="mt-0"><?= $isStaff ? 'Material returned' : 'Material returned to you' ?></h2>
-    <p class="text-muted">
-        Free-issue material that arrived and could not be used. A replacement was asked for at the same time,
-        on the free-issue note above.
-    </p>
-    <div class="table-wrap">
-        <table>
-            <thead><tr><th>Reference</th><th>CPN</th><th>Qty</th><th>Issued</th><th></th></tr></thead>
-            <tbody>
-            <?php foreach ($returnNotes as $dn): ?>
-                <tr>
-                    <td><?= e($dn['reference']) ?></td>
-                    <td><?= e($dn['cpns'] ?? '—') ?></td>
-                    <td><?= (int) $dn['qty_total'] ?></td>
-                    <td><?= format_date($dn['issued_at']) ?></td>
-                    <td><a href="<?= url($noteHref($dn)) ?>" <?= $isStaff ? '' : 'target="_blank" rel="noopener"' ?>><?= $isStaff ? 'View' : 'View PDF' ?></a></td>
-                </tr>
-            <?php endforeach; ?>
-            </tbody>
-        </table>
+    <div class="line-section">
+        <h3 class="line-section-title"><?= e(DeliveryNote::TYPE_LABELS['goods_out']) ?></h3>
+        <?php if ($goodsOutNotes === []): ?>
+            <p class="empty-state mb-0">Nothing despatched yet.</p>
+        <?php else: ?>
+            <p class="text-muted">Finished parts that have gone out to <?= $isStaff ? 'the client' : 'you' ?>.</p>
+            <?= partial('partials/delivery-note-table', [
+                'notes' => $goodsOutNotes,
+                'kind' => 'goods_out',
+                'noteHref' => $noteHref,
+                'isStaff' => $isStaff,
+                'showPricing' => $showPricing,
+                'invoicesByDn' => $invoicesByDn,
+                'returnedByNote' => $returnedByNote,
+            ]) ?>
+        <?php endif; ?>
+
+        <?php if ($canReturnParts): ?>
+            <?php /*
+                Sits directly under the despatches because that is what it acts
+                on: you cannot send a part back without saying which parcel it
+                came out of, and the list of parcels is the table immediately
+                above.
+            */ ?>
+            <details class="disclosure-action">
+                <summary class="btn">Return rejected parts to Junction</summary>
+                <p class="text-muted" style="margin-top: var(--space-3)">
+                    For finished parts that failed your own inspection. Raising this prints a note to
+                    enclose with the parts; Junction books them in when they arrive, and only then do they
+                    stop counting as delivered and start counting as still to be made.
+                </p>
+                <form method="post" action="<?= url($clientBase . '/parts-returns') ?>">
+                    <?= csrf_field() ?>
+                    <div class="form-row">
+                        <div class="field field-grow">
+                            <label for="return_target">Which delivery, and which part</label>
+                            <select id="return_target" name="return_target" required>
+                                <?php foreach ($returnable as $candidate):
+                                    $left = (int) $candidate['qty_sent'] - (int) $candidate['qty_already_returned'];
+                                    ?>
+                                    <option value="<?= (int) $candidate['note_id'] ?>:<?= (int) $candidate['order_line_id'] ?>"><?=
+                                        e($candidate['reference']) . ' — ' . e($candidate['cpn']) . ' ' . e($candidate['part_name'])
+                                        . ' (' . $left . ' of ' . (int) $candidate['qty_sent'] . ' still returnable)'
+                                    ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <div class="field field-shrink">
+                            <label for="return_qty">How many</label>
+                            <input type="number" class="input-qty" id="return_qty" name="qty" min="1" required>
+                        </div>
+                    </div>
+                    <div class="field">
+                        <label for="return_problem">What is wrong with them</label>
+                        <textarea id="return_problem" name="problem" rows="3" required
+                                  placeholder="e.g. Bore undersize on three of them — will not take the bearing"></textarea>
+                        <div class="hint">This is what Junction reads, and it is printed on the note. Say enough to act on.</div>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Raise return note</button>
+                </form>
+            </details>
+        <?php endif; ?>
     </div>
-</div>
-<?php endif; ?>
 
-<div class="card">
-    <h2 class="mt-0"><?= $isStaff ? 'Goods out' : 'Goods delivered' ?></h2>
-    <?php if ($goodsOutNotes === []): ?>
-        <p class="empty-state mb-0">Nothing despatched yet.</p>
-    <?php else: ?>
-        <div class="table-wrap">
-            <table>
-                <thead>
-                    <tr>
-                        <th>Reference</th><th>CPN</th><th>Qty</th><th>Issued</th>
-                        <?php if ($isStaff && $showPricing): ?><th>Invoiced</th><?php endif; ?>
-                        <th></th>
-                    </tr>
-                </thead>
-                <tbody>
-                <?php foreach ($goodsOutNotes as $dn): $invoice = $invoicesByDn[$dn['id']] ?? null; ?>
-                    <tr>
-                        <td><?= e($dn['reference']) ?></td>
-                        <td><?= e($dn['cpns'] ?? '—') ?></td>
-                        <td><?= (int) $dn['qty_total'] ?></td>
-                        <td><?= format_date($dn['issued_at']) ?></td>
-                        <?php if ($isStaff && $showPricing): ?>
-                            <td>
-                                <span class="badge <?= $dn['invoiced'] ? 'badge-ok' : 'badge-warn' ?>">
-                                    <?= $dn['invoiced'] ? e($invoice['clearbooks_invoice_number'] ?? 'Invoiced') : 'Not invoiced' ?>
-                                </span>
-                            </td>
-                        <?php endif; ?>
-                        <td><a href="<?= url($noteHref($dn)) ?>" <?= $isStaff ? '' : 'target="_blank" rel="noopener"' ?>><?= $isStaff ? 'View' : 'View PDF' ?></a></td>
-                    </tr>
-                <?php endforeach; ?>
-                </tbody>
-            </table>
+    <?php if ($partsReturnNotes !== []): ?>
+        <div class="line-section">
+            <h3 class="line-section-title"><?= e(DeliveryNote::TYPE_LABELS['parts_return']) ?></h3>
+            <p class="text-muted">
+                Finished parts <?= $isStaff ? 'the client has' : 'you have' ?> rejected and sent back to be
+                remade. Nothing moves on the order until Junction books them in; once booked in they count
+                as failed, which means still owed rather than delivered.
+            </p>
+            <?= partial('partials/delivery-note-table', [
+                'notes' => $partsReturnNotes,
+                'kind' => 'parts_return',
+                'noteHref' => $noteHref,
+                'isStaff' => $isStaff,
+                'showPricing' => $showPricing,
+                'canProduce' => $canProduce,
+            ]) ?>
         </div>
     <?php endif; ?>
 </div>

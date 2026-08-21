@@ -1674,6 +1674,13 @@ td.wrap, th.wrap { white-space: normal; min-width: 14rem; }
 .form-row { display: flex; gap: var(--space-4); flex-wrap: wrap; }
 .form-row > .field { flex: 1 1 200px; }
 
+/* Two fields on a row are rarely two equal fields. A quantity box wants to be
+   a quantity box whatever is beside it: left to the default flex basis it grew
+   to half the row and invited somebody to type an essay into it. These are the
+   general forms of the modifiers the check-in rejection rows already used. */
+.form-row > .field-grow   { flex: 4 1 18rem; }
+.form-row > .field-shrink { flex: 0 1 9rem; }
+
 /* --- Order stepper --------------------------------------------------------
    The coarse stage of one order line, drawn as a row of dots. The connecting
    rule is an ::after on each step rather than a background on the row, so it
@@ -2088,3 +2095,52 @@ legend.label { padding: 0; }
 /* A sub-line that is a caution rather than detail — the price-under-review
    flag beside a part being added to an order. */
 .cell-warn { color: var(--warn); font-weight: 600; }
+
+/* --- The Delivery Notes card ----------------------------------------------
+   Four tables under one heading, holding the four movements between a client
+   and Junction. They are drawn from one partial, and the columns are declared
+   here rather than negotiated per table, so the reference column starts in the
+   same place in all four. Left to auto layout each table sized itself to its
+   own content and the card read as four unrelated lists stacked up. */
+.dn-table { width: 100%; table-layout: fixed; }
+.dn-table .col-dn-ref    { width: 11rem; }
+.dn-table .col-dn-cpn    { width: 10rem; }
+.dn-table .col-dn-qty    { width: 7rem; }
+.dn-table .col-dn-date   { width: 8rem; }
+.dn-table .col-dn-status { width: 13rem; }
+/* col-dn-action: no width — fixed layout gives it the remainder. */
+
+.dn-table th, .dn-table td { vertical-align: middle; }
+.dn-table td:first-child { font-variant-numeric: tabular-nums; }
+.dn-table .cell-sub { white-space: normal; }
+
+/* Actions sit on one line at the right-hand end: a link to the document, and
+   for a return waiting at the door, the way to book it in. */
+.dn-actions { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+
+@media (max-width: 900px) {
+    .dn-table { table-layout: auto; }
+}
+
+/* A client-side action that would crowd the page if it were always open --
+   returning rejected parts. Shut it is a button; open it is a form. The
+   summary carries .btn, so it reads as the button the workflow describes
+   rather than as a stray triangle. */
+.disclosure-action { margin-top: var(--space-4); }
+.disclosure-action > summary { display: inline-flex; list-style: none; cursor: pointer; }
+.disclosure-action > summary::-webkit-details-marker { display: none; }
+
+/* --- Failed parts ---------------------------------------------------------
+   Shown whenever a line has anything in the failed bucket, to whoever is
+   looking. Same shape as the stage table above it so the two read as one
+   account of the line rather than a table and a list. */
+.failed-table { width: 100%; table-layout: fixed; }
+.failed-table .col-fail-date  { width: 8rem; }
+.failed-table .col-fail-qty   { width: 5rem; }
+.failed-table .col-fail-stage { width: 11rem; }
+.failed-table .col-fail-by    { width: 10rem; }
+/* col-fail-reason: no width — fixed layout gives it the remainder. */
+
+@media (max-width: 900px) {
+    .failed-table { table-layout: auto; }
+}

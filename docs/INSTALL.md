@@ -139,12 +139,12 @@ machine where `manage.sh` has not been installed.
 |---|---|---|
 | Client | `client.admin` | Everything below, plus manage users/roles for their own company (**Team** in their nav) |
 | Client | `client.purchaser` | Create/edit parts, place orders |
-| Client | `client.production` | View orders, raise/answer queries — no pricing, no ordering |
+| Client | `client.production` | View orders, raise/answer queries, return rejected parts — no pricing, no ordering |
 | Staff | `staff.admin` | Everything, including Settings |
 | Staff | `staff.invoicing` | Raise Clear Books invoices |
 | Staff | `staff.quoting` | Set part pricing, raise parts for a client, decide quantity changes |
 | Staff | `staff.raise_orders` | Place an order on a client's behalf, and amend one when the PO changes |
-| Staff | `staff.production` | Check in free issue, update production status, generate paperwork |
+| Staff | `staff.production` | Check in free issue and returned parts, update production status, generate paperwork |
 
 `staff.raise_orders` is separate from `staff.quoting` on purpose: deciding a
 price and committing a client to buy at it are different jobs, and one person

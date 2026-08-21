@@ -143,14 +143,14 @@ HTML,
 
         // -- Free issue ------------------------------------------------------
         'free_issue_note_issued' => [
-            'name'        => 'Free-issue delivery note issued',
+            'name'        => 'Free-Issue Sent note issued',
             'description' => 'Sent when the paperwork for material the client has to send in is generated. Each note carries the QR code Junction scans to book the material in.',
             'group'       => 'Free issue',
-            'subject'     => 'Free-issue delivery note {{reference}} — {{app_name}}',
+            'subject'     => 'Free-Issue Sent note {{reference}} — {{app_name}}',
             'body'        => <<<'HTML'
 <p>Hello {{recipient_name}},</p>
 
-<p>Free-issue delivery note <strong>{{reference}}</strong> has been generated for
+<p>Free-Issue Sent note <strong>{{reference}}</strong> has been generated for
 {{cpn}} — {{part_name}} on order {{order_number}}.</p>
 
 <div class="items">
@@ -263,7 +263,7 @@ HTML,
 
         // -- Despatch and invoicing ------------------------------------------
         'delivery_note_issued' => [
-            'name'        => 'Goods-out delivery note issued',
+            'name'        => 'Completed Parts Sent note issued',
             'description' => 'Sent when finished parts are despatched.',
             'group'       => 'Despatch and invoicing',
             'subject'     => 'Delivery note {{reference}} issued — {{app_name}}',
@@ -286,6 +286,53 @@ HTML,
                 'reference' => 'DN-2026-0009',
                 'items'     => "ORD-2026-0004  ACME-100 Spindle housing — 12\nORD-2026-0004  ACME-200 End cap — 12",
                 'note_url'  => 'https://tracker.example.com/delivery-notes/9/pdf',
+            ],
+        ],
+
+        'parts_returned' => [
+            'name'        => 'Rejected parts being returned',
+            'description' => 'Sent to Junction when a client raises a Rejected Parts Returned note. Goes only to staff: the client raised it, so they already know. It is a warning that parts are physically on their way back and will need booking in.',
+            'group'       => 'Despatch and invoicing',
+            'subject'     => '{{qty}} × {{cpn}} being returned on {{reference}} — {{app_name}}',
+            'body'        => <<<'HTML'
+<p>Hello {{recipient_name}},</p>
+
+<p>{{client_name}} has rejected {{qty}} of <strong>{{cpn}} — {{part_name}}</strong>
+from order {{order_number}} and is returning them to us.</p>
+
+<div class="items">
+  Return note: {{reference}}<br>
+  Sent out on: {{related_reference}}<br>
+  Problem: {{problem}}
+</div>
+
+<p>Book the parts in when they arrive. What is booked in moves into the failed
+quantity on the order line, so it stops counting as delivered and starts
+counting as still owed.</p>
+
+<p><a href="{{check_in_url}}">Book the returned parts in</a></p>
+HTML,
+            'fields' => [
+                'client_name'       => 'The client returning the parts',
+                'order_number'      => 'The Junction order number',
+                'cpn'               => 'The client part number',
+                'part_name'         => 'The part name',
+                'qty'               => 'How many parts are coming back',
+                'reference'         => 'The reference of the return note',
+                'related_reference' => 'The delivery note the parts originally went out on',
+                'problem'           => 'What the client says is wrong with them',
+                'check_in_url'      => 'A direct link to the screen for booking them in',
+            ],
+            'sample' => [
+                'client_name'       => 'Acme Engineering',
+                'order_number'      => 'ORD-2026-0004',
+                'cpn'               => 'ACME-100',
+                'part_name'         => 'Spindle housing',
+                'qty'               => '3',
+                'reference'         => 'RPN-2026-0001',
+                'related_reference' => 'DN-2026-0009',
+                'problem'           => 'Bore undersize on three of them — will not take the bearing',
+                'check_in_url'      => 'https://tracker.example.com/staff/parts-returns/11/check-in',
             ],
         ],
 

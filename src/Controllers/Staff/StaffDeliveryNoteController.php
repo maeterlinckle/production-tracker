@@ -82,7 +82,7 @@ final class StaffDeliveryNoteController
         $id = DeliveryNote::createFreeIssueNote((int) $clientId, $lines, (int) Auth::id(), Request::post('notes') ?: null);
         Notifications::freeIssueNoteIssued(DeliveryNote::find($id), (int) $clientId);
 
-        Flash::success('Free-issue delivery note generated.');
+        Flash::success('Free-Issue Sent note generated.');
         Response::redirect('/staff/delivery-notes/' . $id);
     }
 

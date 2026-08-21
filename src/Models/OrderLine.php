@@ -973,4 +973,55 @@ final class OrderLine
     {
         self::moveWithin($pdo, $lineId, 'delivered', 'invoiced', $qty, $userId, 'Invoice ' . $reference);
     }
+
+    // -- Parts coming back ---------------------------------------------------
+
+    /**
+     * Finished parts rejected by the client and booked back in at Junction.
+     *
+     * They go to 'failed', which is where a part that has to be made again
+     * lives whoever condemned it. That keeps one truthful set of totals: the
+     * parts stop counting as delivered, they start counting as owed, and the
+     * free-issue requirement — derived from qty_failed — asks for the material
+     * to remake them without anybody having to remember to.
+     *
+     * Taken out of 'delivered' first and 'invoiced' only for the remainder.
+     * Both are honest destinations for a part that has come back, but an
+     * invoiced one is a credit-note conversation as well as a workshop one, so
+     * it is left alone while there is any uninvoiced quantity to take instead.
+     * The moves are logged separately, so which of the two happened is on the
+     * record rather than inferred.
+     *
+     * @return array<string,int> stage => quantity taken from it
+     */
+    public static function recordPartsReturn(PDO $pdo, int $lineId, int $qty, int $userId, string $reason): array
+    {
+        $distribution = self::distribution($lineId);
+        $taken = [];
+        $remaining = $qty;
+
+        foreach (['delivered', 'invoiced'] as $stage) {
+            if ($remaining <= 0) {
+                break;
+            }
+
+            $available = min($remaining, $distribution[$stage] ?? 0);
+            if ($available <= 0) {
+                continue;
+            }
+
+            self::moveWithin($pdo, $lineId, $stage, 'failed', $available, $userId, $reason);
+            $taken[$stage] = $available;
+            $remaining -= $available;
+        }
+
+        if ($remaining > 0) {
+            throw new RuntimeException(
+                'Only ' . ($qty - $remaining) . ' of those ' . $qty . ' are recorded as having gone out on this line. '
+                . 'Check what was despatched before booking the return in.'
+            );
+        }
+
+        return $taken;
+    }
 }

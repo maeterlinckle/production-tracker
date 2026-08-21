@@ -10,19 +10,22 @@ use PDO;
 
 final class DeliveryNote
 {
-    public const TYPES = ['free_issue_in', 'goods_out', 'material_return'];
+    public const TYPES = ['free_issue_in', 'goods_out', 'material_return', 'parts_return'];
 
+    /**
+     * What each type is called, on every screen and on the paper.
+     *
+     * One set of names rather than one for Junction and another for the client.
+     * There used to be two, and it was a mistake: the two people on a phone call
+     * about a piece of paper need to be able to say its name and mean the same
+     * document. Each name says what moved and which way, so it reads correctly
+     * from either end without needing to be reworded.
+     */
     public const TYPE_LABELS = [
-        'free_issue_in' => 'Free issue in',
-        'goods_out' => 'Goods out',
-        'material_return' => 'Material return',
-    ];
-
-    /** How each type reads to the client, whose side of the transaction is the other one. */
-    public const CLIENT_TYPE_LABELS = [
-        'free_issue_in' => 'Free issue — please send with material',
-        'goods_out' => 'Goods received',
-        'material_return' => 'Material returned to you',
+        'free_issue_in' => 'Free-Issue Sent',
+        'goods_out' => 'Completed Parts Sent',
+        'material_return' => 'Rejected Free-Issue Returned',
+        'parts_return' => 'Rejected Parts Returned',
     ];
 
     public static function find(int $id): ?array
@@ -66,15 +69,91 @@ final class DeliveryNote
     {
         return Database::all(
             "SELECT dn.*,
+                    rel.reference AS related_reference,
                     GROUP_CONCAT(DISTINCT p.cpn ORDER BY p.cpn SEPARATOR ', ') AS cpns,
-                    SUM(dnl.qty) AS qty_total
+                    SUM(dnl.qty) AS qty_total,
+                    (SELECT COALESCE(SUM(r.qty_received), 0) FROM parts_return_receipts r
+                      WHERE r.delivery_note_id = dn.id) AS qty_checked_in
                FROM delivery_notes dn
                JOIN delivery_note_lines dnl ON dnl.delivery_note_id = dn.id
                JOIN order_lines ol ON ol.id = dnl.order_line_id
                JOIN parts p ON p.id = ol.part_id
+               LEFT JOIN delivery_notes rel ON rel.id = dn.related_note_id
               WHERE ol.order_id = :order_id
               GROUP BY dn.id
               ORDER BY dn.issued_at",
+            ['order_id' => $orderId]
+        );
+    }
+
+    /**
+     * How much material each free-issue note on an order is still waiting for,
+     * against how much that note's lines need in total.
+     *
+     * A free-issue note carries no quantity of its own worth printing on a list
+     * — it is a standing request, and what it asks for changes as material
+     * arrives and is rejected. What is worth printing is the pair: 4 of 10 still
+     * to come. Both halves come from the order lines the note covers, never
+     * from the quantity frozen on the note when it was raised.
+     *
+     * Grouped by (note, line) first so a note that somehow lists the same order
+     * line twice counts that line once.
+     *
+     * @return array<int,array{outstanding:int,required:int}> keyed by note id
+     */
+    public static function freeIssueTotalsForOrder(int $orderId): array
+    {
+        $rows = Database::all(
+            "SELECT dnl.delivery_note_id AS note_id,
+                    ol.qty_free_issue_required, ol.qty_free_issue_received, ol.qty_free_issue_rejected
+               FROM delivery_note_lines dnl
+               JOIN delivery_notes dn ON dn.id = dnl.delivery_note_id
+               JOIN order_lines ol ON ol.id = dnl.order_line_id
+              WHERE ol.order_id = :order_id AND dn.type = 'free_issue_in'
+              GROUP BY dnl.delivery_note_id, ol.id",
+            ['order_id' => $orderId]
+        );
+
+        $totals = [];
+        foreach ($rows as $row) {
+            $noteId = (int) $row['note_id'];
+            $totals[$noteId] ??= ['outstanding' => 0, 'required' => 0];
+            $totals[$noteId]['required'] += (int) $row['qty_free_issue_required'];
+            $totals[$noteId]['outstanding'] += OrderLine::freeIssueOutstanding($row);
+        }
+
+        return $totals;
+    }
+
+    /**
+     * The goods-out notes on an order that still have parts on them the client
+     * could send back, line by line.
+     *
+     * "Could send back" is what went out on that note less what has already
+     * been raised against it — the same part on two despatches is two separate
+     * allowances, because the client is telling us which parcel the bad parts
+     * came from.
+     *
+     * @return array<int,array<string,mixed>>
+     */
+    public static function returnableLinesForOrder(int $orderId): array
+    {
+        return Database::all(
+            "SELECT dn.id AS note_id, dn.reference, dn.issued_at,
+                    dnl.order_line_id, dnl.qty AS qty_sent,
+                    p.cpn, p.name AS part_name,
+                    (SELECT COALESCE(SUM(rl.qty), 0)
+                       FROM delivery_notes rn
+                       JOIN delivery_note_lines rl ON rl.delivery_note_id = rn.id
+                      WHERE rn.type = 'parts_return'
+                        AND rn.related_note_id = dn.id
+                        AND rl.order_line_id = dnl.order_line_id) AS qty_already_returned
+               FROM delivery_notes dn
+               JOIN delivery_note_lines dnl ON dnl.delivery_note_id = dn.id
+               JOIN order_lines ol ON ol.id = dnl.order_line_id
+               JOIN parts p ON p.id = ol.part_id
+              WHERE ol.order_id = :order_id AND dn.type = 'goods_out'
+              ORDER BY dn.issued_at, p.cpn",
             ['order_id' => $orderId]
         );
     }
@@ -88,11 +167,18 @@ final class DeliveryNote
         // actually looking at. Older notes for the same line stay pegged to
         // what they originally asked for.
         return Database::all(
-            "SELECT dnl.*, ol.qty_ordered, ol.unit_price, ol.part_id,
+            "SELECT dnl.*, ol.qty_ordered, ol.unit_price, ol.part_id, ol.order_id,
                     ol.qty_free_issue_required, ol.qty_free_issue_received, ol.qty_free_issue_rejected,
                     p.cpn, p.name AS part_name, p.has_free_issue,
+                    p.description AS part_description,
                     p.free_issue_relationship, p.free_issue_factor,
                     o.order_number, o.po_number,
+                    -- The drawing whoever reads this note would work to. Named
+                    -- rather than linked, because the note is usually on paper.
+                    (SELECT CONCAT(pf.original_filename, ' (rev ', pf.version_no, ')')
+                       FROM part_files pf
+                      WHERE pf.part_id = p.id AND pf.is_current = 1
+                      ORDER BY pf.version_no DESC LIMIT 1) AS drawing_reference,
                     (dnl.delivery_note_id = (
                         SELECT MAX(dn2.id) FROM delivery_notes dn2
                           JOIN delivery_note_lines dnl2 ON dnl2.delivery_note_id = dn2.id
@@ -150,24 +236,53 @@ final class DeliveryNote
         return self::createNote('material_return', 'RTN', $clientId, $lines, $issuedBy, $notes);
     }
 
+    /**
+     * Rejected parts going back to Junction.
+     *
+     * The one note in the family the client raises rather than reads, and the
+     * only one that travels towards the workshop with finished parts in it.
+     * `$relatedNoteId` is the despatch they went out on, which is what bounds
+     * how many may come back.
+     */
+    public static function createPartsReturnNote(
+        int $clientId,
+        int $relatedNoteId,
+        int $orderLineId,
+        int $qty,
+        int $raisedBy,
+        string $problem
+    ): int {
+        return self::createNote(
+            'parts_return',
+            'RPN',
+            $clientId,
+            [['order_line_id' => $orderLineId, 'qty' => $qty]],
+            $raisedBy,
+            $problem,
+            $relatedNoteId
+        );
+    }
+
     private static function createNote(
         string $type,
         string $prefix,
         int $clientId,
         array $lines,
         int $issuedBy,
-        ?string $notes
+        ?string $notes,
+        ?int $relatedNoteId = null
     ): int {
-        return Database::transaction(static function (PDO $pdo) use ($type, $prefix, $clientId, $lines, $issuedBy, $notes): int {
+        return Database::transaction(static function (PDO $pdo) use ($type, $prefix, $clientId, $lines, $issuedBy, $notes, $relatedNoteId): int {
             $reference = ReferenceNumber::next($prefix, $pdo);
 
             $statement = $pdo->prepare(
-                'INSERT INTO delivery_notes (type, client_id, reference, issued_by, notes)
-                 VALUES (:type, :client_id, :reference, :issued_by, :notes)'
+                'INSERT INTO delivery_notes (type, client_id, related_note_id, reference, issued_by, notes)
+                 VALUES (:type, :client_id, :related_note_id, :reference, :issued_by, :notes)'
             );
             $statement->execute([
                 'type' => $type,
                 'client_id' => $clientId,
+                'related_note_id' => $relatedNoteId,
                 'reference' => $reference,
                 'issued_by' => $issuedBy,
                 'notes' => $notes,
@@ -211,6 +326,32 @@ final class DeliveryNote
 
             return $id;
         });
+    }
+
+    /**
+     * Every booking-in against a rejected-parts return, newest last.
+     *
+     * @return array<int,array<string,mixed>>
+     */
+    public static function partsReturnReceipts(int $deliveryNoteId): array
+    {
+        return Database::all(
+            'SELECT r.*, u.name AS received_by_name
+               FROM parts_return_receipts r
+               JOIN users u ON u.id = r.received_by
+              WHERE r.delivery_note_id = :id
+              ORDER BY r.received_at, r.id',
+            ['id' => $deliveryNoteId]
+        );
+    }
+
+    /** How much of a rejected-parts return has actually turned up so far. */
+    public static function qtyCheckedIn(int $deliveryNoteId): int
+    {
+        return (int) Database::one(
+            'SELECT COALESCE(SUM(qty_received), 0) AS qty FROM parts_return_receipts WHERE delivery_note_id = :id',
+            ['id' => $deliveryNoteId]
+        )['qty'];
     }
 
     public static function setPdfPath(int $id, string $path): void

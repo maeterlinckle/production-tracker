@@ -76,6 +76,11 @@ final class OrderView
             'parts' => $parts,
             'deliveryNotes' => $deliveryNotes,
             'invoicesByDn' => $invoicesByDn,
+            'freeIssueTotals' => DeliveryNote::freeIssueTotalsForOrder($orderId),
+            // What the client could still send back, and off which despatch.
+            // Assembled for both audiences: the form is theirs, but the figures
+            // are the same ones Junction is looking at.
+            'returnableLines' => DeliveryNote::returnableLinesForOrder($orderId),
             'poDocuments' => OrderPoDocument::forOrder($orderId),
             'photos' => OrderPhoto::forOrder($orderId),
             'notes' => OrderNote::forOrder($orderId),

@@ -11,6 +11,7 @@ use App\Core\Request;
 use App\Core\Response;
 use App\Core\Upload;
 use App\Core\View;
+use App\Models\Client;
 use App\Models\DeliveryNote;
 use App\Models\Order;
 use App\Models\OrderLine;
@@ -23,6 +24,7 @@ use App\Models\Part;
 use App\Services\Notifications;
 use App\Services\OrderPlacement;
 use App\Services\OrderView;
+use App\Services\PartsReturnService;
 use RuntimeException;
 
 final class OrderController
@@ -160,6 +162,62 @@ final class OrderController
 
         Flash::success('Change request sent to Junction. Nothing on the order has changed yet — they will confirm.');
         Response::redirect('/orders/' . $id);
+    }
+
+    /**
+     * Send finished parts back because they failed the client's own inspection.
+     *
+     * Raises the paperwork and nothing else. The parts are still in the
+     * client's building at this point, so nothing on the order moves: what
+     * moves quantity is Junction booking the parcel in at the other end, which
+     * is the same shape as free-issue material arriving.
+     */
+    public function raisePartsReturn(string $id): void
+    {
+        Auth::authorize('return_rejected_parts');
+
+        $order = $this->findVisibleOrder((int) $id);
+        if ($order === null) {
+            return;
+        }
+
+        // One control, one value: the select carries the despatch and the part
+        // together, because "which part" only means anything once "off which
+        // delivery" has been answered.
+        [$noteId, $lineId] = array_pad(explode(':', (string) Request::post('return_target', '')), 2, '');
+
+        try {
+            $returnNoteId = PartsReturnService::raise(
+                (int) $order['id'],
+                (int) $noteId,
+                (int) $lineId,
+                (int) Request::post('qty', 0),
+                (string) Request::post('problem', ''),
+                (int) Auth::id()
+            );
+        } catch (RuntimeException $e) {
+            Flash::error($e->getMessage());
+            Response::redirect('/orders/' . $id . '#delivery-notes');
+
+            return;
+        }
+
+        $note = DeliveryNote::find($returnNoteId);
+        $lines = DeliveryNote::lines($returnNoteId);
+
+        Notifications::partsReturned(
+            $note,
+            $lines[0],
+            $order,
+            Client::find((int) $order['client_id']),
+            (string) $note['notes']
+        );
+
+        Flash::success(
+            'Return note ' . $note['reference'] . ' raised. Print it and send it back with the parts — '
+            . 'Junction will book them in when they arrive.'
+        );
+        Response::redirect('/orders/' . $id . '#delivery-notes');
     }
 
     /** Add a purchase order document to an order's history without a change request. */

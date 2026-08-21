@@ -32,6 +32,14 @@ final class Capabilities
         // first place rather than with everybody who can read it.
         'request_quantity_change' => ['client.purchaser', 'client.admin'],
 
+        // Sending finished parts back because they failed the client's own
+        // inspection. Every client role, deliberately including production:
+        // the person who finds the bad part is the one standing at the bench
+        // with it, and making them ask a purchaser to fill the form in is how
+        // a rejection sits in somebody's inbox for a week. It commits nobody to
+        // spending anything, which is what separates it from a quantity change.
+        'return_rejected_parts' => ['client.production', 'client.purchaser', 'client.admin'],
+
         // Both sides. Reading an order and talking about it are not client-only
         // activities: every staff role works from the order pages, and a query
         // is a conversation, so either side has to be able to open one. Listing

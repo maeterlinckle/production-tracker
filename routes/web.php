@@ -82,6 +82,10 @@ $router->group(['auth'], function (Router $router): void {
     $router->post('/orders/{id:\d+}/lines/{lineId:\d+}/change-request', [OrderController::class, 'requestQuantityChange'], ['csrf']);
     $router->post('/orders/{id:\d+}/po-documents', [OrderController::class, 'uploadPoDocument'], ['csrf']);
 
+    // Rejected parts going the other way: the client raises the note, and
+    // Junction moves the quantity when the parcel actually turns up.
+    $router->post('/orders/{id:\d+}/parts-returns', [OrderController::class, 'raisePartsReturn'], ['csrf']);
+
     $router->get('/delivery-notes/{id:\d+}/pdf', [DeliveryNoteController::class, 'downloadPdf']);
 
     $router->get('/files/drawings/{id:\d+}', [FileController::class, 'drawing']);
@@ -167,8 +171,10 @@ $router->group(['staff'], function (Router $router): void {
 
     $router->get('/staff/lines/{id:\d+}/check-in', [StaffCheckInController::class, 'show']);
     $router->post('/staff/lines/{id:\d+}/check-in', [StaffCheckInController::class, 'store'], ['csrf']);
-    $router->post('/staff/lines/{id:\d+}/check-in/reject', [StaffCheckInController::class, 'reject'], ['csrf']);
     $router->post('/staff/lines/{id:\d+}/check-in/discrepancy/{receiptId:\d+}/resolve', [StaffCheckInController::class, 'resolveDiscrepancy'], ['csrf']);
+
+    $router->get('/staff/parts-returns/{id:\d+}/check-in', [StaffCheckInController::class, 'showPartsReturn']);
+    $router->post('/staff/parts-returns/{id:\d+}/check-in', [StaffCheckInController::class, 'storePartsReturn'], ['csrf']);
 
     $router->get('/staff/clients/{clientId:\d+}/free-issue-note/new', [StaffDeliveryNoteController::class, 'createFreeIssue']);
     $router->post('/staff/clients/{clientId:\d+}/free-issue-note', [StaffDeliveryNoteController::class, 'storeFreeIssue'], ['csrf']);

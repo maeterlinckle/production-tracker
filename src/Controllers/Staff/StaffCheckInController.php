@@ -17,6 +17,7 @@ use App\Models\OrderLine;
 use App\Models\Part;
 use App\Services\FreeIssueNoteService;
 use App\Services\Notifications;
+use App\Services\PartsReturnService;
 use RuntimeException;
 
 /**
@@ -264,6 +265,87 @@ final class StaffCheckInController
             . 'The same ' . $rejectedTotal . ' has been added back to what this line still needs, so the '
             . 'free-issue note asks for it again.'
         );
+    }
+
+    // -- Rejected parts coming back ------------------------------------------
+
+    /**
+     * Booking in finished parts the client has sent back.
+     *
+     * Its own screen rather than a mode of the free-issue one. The two look
+     * alike from a distance — confirm what turned up against what was declared
+     * — but nothing else about them matches: this counts finished parts and
+     * that counts material, this has one declared quantity from a note and that
+     * has a running requirement, and this has no rejection rows because the
+     * rejecting has already been done by the client. Folding them together
+     * would have meant a form that hid half of itself either way.
+     */
+    public function showPartsReturn(string $id): void
+    {
+        Auth::authorize('production_control');
+
+        $note = DeliveryNote::find((int) $id);
+        if ($note === null || $note['type'] !== 'parts_return') {
+            View::renderError(404, 'Return note not found', 'That rejected-parts return note does not exist.');
+
+            return;
+        }
+
+        $lines = DeliveryNote::lines((int) $id);
+        $line = $lines[0] ?? null;
+        if ($line === null) {
+            View::renderError(404, 'Return note empty', 'That return note has nothing on it.');
+
+            return;
+        }
+
+        $orderLine = OrderLine::find((int) $line['order_line_id']);
+        $order = Order::find((int) $orderLine['order_id']);
+
+        View::render('staff/parts-return-check-in', [
+            'title' => 'Check in ' . $note['reference'],
+            'note' => $note,
+            'relatedNote' => $note['related_note_id'] !== null ? DeliveryNote::find((int) $note['related_note_id']) : null,
+            'line' => $line,
+            'orderLine' => $orderLine,
+            'order' => $order,
+            'client' => Client::find((int) $note['client_id']),
+            'receipts' => DeliveryNote::partsReturnReceipts((int) $id),
+            'outstanding' => PartsReturnService::outstanding($note),
+        ], 'layouts/app');
+    }
+
+    public function storePartsReturn(string $id): void
+    {
+        Auth::authorize('production_control');
+
+        $back = '/staff/parts-returns/' . $id . '/check-in';
+
+        try {
+            $result = PartsReturnService::checkIn(
+                (int) $id,
+                (int) Request::post('qty', 0),
+                trim((string) Request::post('notes', '')) ?: null,
+                (int) Auth::id()
+            );
+        } catch (RuntimeException $e) {
+            Flash::error($e->getMessage());
+            Response::redirect($back);
+
+            return;
+        }
+
+        $fromInvoiced = $result['taken']['invoiced'] ?? 0;
+
+        Flash::success(
+            $result['qty'] . ' booked back in and moved to failed, so they count as still owed rather than delivered.'
+            . ($fromInvoiced > 0
+                ? ' ' . $fromInvoiced . ' of them had already been invoiced — that will need a credit note raising in Clear Books.'
+                : '')
+            . ($result['outstanding'] > 0 ? ' ' . $result['outstanding'] . ' still to arrive on this note.' : '')
+        );
+
+        Response::redirect($back);
     }
 
     public function resolveDiscrepancy(string $id, string $receiptId): void

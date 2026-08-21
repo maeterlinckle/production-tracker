@@ -68,6 +68,13 @@ off, recorded as cancelled, and drop out of what is outstanding.
   free-issue notes are built at the moment they are asked for, from live data —
   a saved copy of either is out of date as soon as anybody moves anything — and
   a whole order's route cards print in one action, a card to a page.
+- **Parts come back too.** Every piece of paper between a client and Junction
+  sits under one heading on the order, and there are four: material in,
+  material back, parts out, and parts back. The last is the client returning
+  finished work that failed their own inspection — they raise the note, and
+  Junction books the parcel in when it arrives. What is booked in lands in the
+  failed bucket, so it stops counting as delivered, starts counting as owed,
+  and the material to remake it is asked for without anybody remembering to.
 - **Bars are not parts.** Where a part is machined several to a bar, the stages
   before completion count the bars and everything after counts the parts, so
   "10" and "20" both appear on the same line and both are right. The line says

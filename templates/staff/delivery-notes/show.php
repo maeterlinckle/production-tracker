@@ -4,14 +4,33 @@ use App\Models\DeliveryNote;
 use App\Services\FreeIssueNoteService;
 
 $isFreeIssue = $note['type'] === 'free_issue_in';
+$isPartsReturn = $note['type'] === 'parts_return';
 ?>
 <div class="card-header">
     <div>
         <h1 class="mt-0 mb-0"><?= e($note['reference']) ?></h1>
         <p class="text-muted mb-0"><?= e($client['name']) ?> &middot; <?= format_date($note['issued_at']) ?> &middot; <?= e(DeliveryNote::TYPE_LABELS[$note['type']] ?? $note['type']) ?></p>
     </div>
-    <a href="<?= url('/staff/delivery-notes/' . $note['id'] . '/pdf') ?>" class="btn btn-primary" target="_blank" rel="noopener">View PDF</a>
+    <div style="display:flex; flex-wrap:wrap; gap: var(--space-2)">
+        <?php if ($isPartsReturn && Auth::can('production_control')): ?>
+            <a href="<?= url('/staff/parts-returns/' . $note['id'] . '/check-in') ?>" class="btn">Book the parts in</a>
+        <?php endif; ?>
+        <a href="<?= url('/staff/delivery-notes/' . $note['id'] . '/pdf') ?>" class="btn btn-primary" target="_blank" rel="noopener">View PDF</a>
+    </div>
 </div>
+
+<?php if (trim((string) $note['notes']) !== ''): ?>
+    <?php /*
+        Shown here as well as on the PDF. On a rejected-parts return it is the
+        substance of the document — what the client says is wrong — and opening
+        the note from the list to find only a quantity was sending somebody to
+        the PDF to read the one thing they came for.
+    */ ?>
+    <div class="card">
+        <h2 class="mt-0"><?= $isPartsReturn ? 'Problem reported' : 'Notes' ?></h2>
+        <p class="mb-0"><?= nl2br(e($note['notes'])) ?></p>
+    </div>
+<?php endif; ?>
 
 <div class="card">
     <h2 class="mt-0">Lines</h2>

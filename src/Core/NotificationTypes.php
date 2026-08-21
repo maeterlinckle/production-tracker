@@ -35,7 +35,7 @@ final class NotificationTypes
     private const GROUPS = [
         'orders' => 'Orders',
         'free_issue' => 'Free-issue material',
-        'despatch' => 'Despatch and invoicing',
+        'despatch' => 'Despatch, returns and invoicing',
         'questions' => 'Questions and changes',
         'workload' => 'Junction workload',
     ];
@@ -46,11 +46,15 @@ final class NotificationTypes
         'order_confirmed'        => ['An order has been confirmed', 'both', null, 'orders'],
         'order_in_production'    => ['An order line has started production', 'both', null, 'orders'],
 
-        'free_issue_note_issued' => ['A free-issue delivery note has been issued', 'both', null, 'free_issue'],
+        'free_issue_note_issued' => ['A Free-Issue Sent note has been issued', 'both', null, 'free_issue'],
         'free_issue_checked_in'  => ['Free-issue material has been checked in', 'both', null, 'free_issue'],
         'material_rejected'      => ['Free-issue material has been rejected and is being returned', 'both', null, 'free_issue'],
 
-        'delivery_note_issued'   => ['A delivery note has been issued', 'both', null, 'despatch'],
+        'delivery_note_issued'   => ['Completed parts have been sent out on a delivery note', 'both', null, 'despatch'],
+        // Staff-only: the client raises this one themselves, so telling them
+        // about it would be telling them what they have just done. Junction is
+        // the side that needs to know parts are on their way back.
+        'parts_returned'         => ['A client is returning rejected parts', 'staff', null, 'despatch'],
         'invoice_raised'         => ['An invoice has been raised', 'both', 'view_pricing', 'despatch'],
 
         'query_raised'           => ['A new query has been raised on an order', 'both', null, 'questions'],

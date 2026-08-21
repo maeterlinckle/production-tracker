@@ -217,6 +217,35 @@ final class Notifications
     }
 
     /**
+     * A client sending finished parts back.
+     *
+     * Goes to Junction rather than to the client, which is the opposite of most
+     * of these: the client raised the note, so a message telling them it exists
+     * would be a receipt for their own form. Junction is the side with a parcel
+     * arriving that somebody has to book in.
+     */
+    public static function partsReturned(array $note, array $line, array $order, array $client, string $problem): void
+    {
+        $related = $note['related_note_id'] !== null ? DeliveryNote::find((int) $note['related_note_id']) : null;
+
+        $fields = [
+            'client_name'       => (string) $client['name'],
+            'order_number'      => (string) $order['order_number'],
+            'cpn'               => (string) $line['cpn'],
+            'part_name'         => (string) $line['part_name'],
+            'qty'               => (string) (int) $line['qty'],
+            'reference'         => (string) $note['reference'],
+            'related_reference' => (string) ($related['reference'] ?? '—'),
+            'problem'           => $problem,
+            'check_in_url'      => absolute_url('/staff/parts-returns/' . $note['id'] . '/check-in'),
+        ];
+
+        foreach (User::allStaff() as $user) {
+            self::notifyUser((int) $user['id'], 'parts_returned', $fields, 'delivery_note', (int) $note['id']);
+        }
+    }
+
+    /**
      * Contains the invoice amount, so — per the pricing-visibility rule — only
      * goes to recipients who hold view_pricing, regardless of what they have
      * opted into. A client.production user simply never gets this one, not a

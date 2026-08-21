@@ -192,8 +192,9 @@ overridable by staff, with the override attributed.
 | `order_line_stage_moves` | Every movement of quantity, including the ones that create and destroy it. |
 | `order_line_change_requests` | Client-requested quantity changes, `pending`/`applied`/`declined`. |
 | `free_issue_receipts` | One row per check-in event, with `discrepancy_type` (`none`/`shortfall`/`excess`/`wrong_item`), notes, and `resolved_at`/`resolved_by`. |
+| `parts_return_receipts` | One row per booking-in of finished parts a client has sent back. What is booked in here — not what was declared — is what moves into the failed stage. |
 | `free_issue_rejections` | Material that arrived and could not be used, with the return note out and the replacement request in. |
-| `delivery_notes`, `delivery_note_lines` | `type` = `free_issue_in`, `goods_out` or `material_return`. |
+| `delivery_notes`, `delivery_note_lines` | `type` = `free_issue_in`, `goods_out`, `material_return` or `parts_return`; `related_note_id` points a parts return at the despatch it came off. |
 | `invoices` | Clear Books reference + amount, per delivery note. |
 | `order_notes`, `order_queries`, `order_query_replies` | Timestamped log and threaded queries. |
 | `order_photos` | Staff-only progress/setup photos. |
@@ -311,6 +312,7 @@ delivery to be argued about before anything moves.
 | `007_staff_orders_and_part_media.sql` | The `staff.raise_orders` role; `part_media` (with `part_photos` read into it and dropped); `order_line_change_requests.initiated_by`. |
 | `008_part_housekeeping.sql` | `parts.updated_by` (who last changed a part) and `parts.price_under_review` (the flag that says the price is about to move). |
 | `009_photo_thumbnails.sql` | `thumb_path` on `part_media` and `order_photos`. |
+| `010_rejected_parts_returns.sql` | The `parts_return` note type, `delivery_notes.related_note_id`, and `parts_return_receipts` — booking finished parts back in when a client returns them. |
 
 `005` is the one migration that is genuinely forward-only: it reads
 `production_status_log` and then drops it, so a second run has nothing to read.
@@ -531,6 +533,92 @@ overlapping material is the state in which somebody sends twice, or sends
 nothing because they assume the other note covers it. If no note is open, one is
 created. Only failed or rejected quantity triggers this; an ordinary shortage is
 already covered by the note that is out, and does nothing.
+
+### Returns and delivery-note consolidation round (21 August 2026)
+
+| # | Item | Status |
+|---|---|---|
+| 1 | Delivery-note family under one heading | Done — one card, four subheadings, straps kept |
+| 2 | New note type: Rejected Parts Returned | Done — client raises it, PDF matches the family |
+| 3 | Check-in for returned parts | Done — a small dedicated screen; what is booked in lands in Failed |
+| 4 | Columns aligned across the four tables | Done — one partial, one colgroup, measured identical |
+| 5 | Quantity column on Free-Issue Sent | Done — outstanding over total, e.g. `4/5` |
+| 6 | Renames applied everywhere | Done — tables, buttons, PDFs, emails, preferences |
+| 7 | Failed parts table always shown | Done — a table now, for both audiences |
+
+**The fourth movement.** Three note types covered material going to Junction and
+parts and material coming back to the client. The one movement with no paperwork
+was finished parts failing the client's own inspection and going back to be
+remade. It is a fourth `delivery_notes.type` rather than a table of its own: it
+needs the same numbering, the same PDF, the same place in the client's list of
+paperwork and the same row on the order page, and a parallel table would have had
+to grow all four again.
+
+**Raising and receiving are deliberately two steps.** The client raises the note,
+which is a declaration and a piece of paper for the box; nothing on the order
+moves. Junction books the parcel in when it arrives, and *that* is what moves
+quantity. The two facts are genuinely different — parts declared as coming back
+are not parts on the bench — and an order that wrote off a dozen finished parts
+the moment somebody submitted a form would be lying about what Junction holds.
+
+**Where the quantity lands.** In `failed`, which already means "made, not
+acceptable, still owed". That keeps one set of totals honest: the parts stop
+counting as delivered, they start counting as owed, and because
+`qty_free_issue_required` is derived from `qty_failed`, the material to remake
+them is asked for without anybody having to remember. Taken out of `delivered`
+first and `invoiced` only for the remainder — both are honest destinations for a
+part that has come back, but an invoiced one is a credit-note conversation as
+well as a workshop one, so it is left alone while there is uninvoiced quantity to
+take instead. The screen says so before the button is pressed, and the flash says
+so after. The two moves are logged separately, so which happened is on the record
+rather than inferred.
+
+**How much may be returned** is bounded by what went out on the despatch being
+named, less anything already raised against that same despatch and part. The
+bound is per-note on purpose: the same part on two deliveries is two allowances,
+because the client is telling us which parcel the bad parts came out of.
+
+**Who may raise one.** A new `return_rejected_parts` capability, held by all three
+client roles including `client.production`. The person who finds the bad part is
+standing at the bench with it; making them ask a purchaser to fill the form in is
+how a rejection sits in an inbox for a week. It commits nobody to spending
+anything, which is what separates it from a quantity change. Staff do not hold it
+— this is the client's own declaration.
+
+**One partial for four tables.** The four had drifted into four shapes — three
+columns here, five there, quantities in a different place on each — which was
+tolerable while they were scattered down the page and unreadable once they were
+stacked in one card. `templates/partials/delivery-note-table.php` declares the six
+columns once. Measured at 1280px, all four tables have identical column edges
+(67/243/403/515/643/851/1199). Where a kind has nothing to say in a column it
+still occupies it: an aligned dash reads as "nothing here", where a missing column
+shifts everything after it and reads as a different table.
+
+**The status column** is the one that genuinely differs, so it carries its own
+heading per kind rather than a generic word meaning four things. A Completed Parts
+Sent row also says how many of it have since come back, so the despatch and its
+return are not two facts on two tables.
+
+**One vocabulary, not two.** `DeliveryNote::CLIENT_TYPE_LABELS` is deleted. There
+were two sets of names — one for Junction, one for the client — and it was a
+mistake: two people on a phone call about a piece of paper need to say its name
+and mean the same document. Each new name says what moved and which way, so it
+reads correctly from either end without rewording.
+
+**The failed table.** Was a staff-only bulleted list while everything else about a
+line was a table, which made the one stage people most want detail of the one they
+had to go looking for. It is now a table, always shown when the bucket holds
+anything, for both audiences — a client can put quantity in there themselves by
+returning parts, so hiding the breakdown from them would have been hiding their
+own entries back from them. Where the list totals more than the bucket (a failure
+since put back into production stays on the record and leaves the bucket) the
+strap says so and by how much, rather than leaving a contradiction for the reader
+to resolve.
+
+**Found in passing.** `POST /staff/lines/{id}/check-in/reject` still routed to a
+`reject()` method deleted when Prompt 5 folded rejection into the single check-in
+form. Nothing linked to it and it would have fatalled on the first request.
+Removed.
 
 ---
 

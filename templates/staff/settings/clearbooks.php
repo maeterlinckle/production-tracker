@@ -11,7 +11,7 @@
 <div class="page-head">
     <div>
         <h1>Clear Books</h1>
-        <p class="muted">The accounting connection used to raise a sales invoice from a goods-out delivery note.</p>
+        <p class="muted">The accounting connection used to raise a sales invoice from a Completed Parts Sent note.</p>
     </div>
     <a href="<?= url('/staff/settings') ?>" class="btn">Back to settings</a>
 </div>

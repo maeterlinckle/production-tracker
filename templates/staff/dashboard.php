@@ -22,7 +22,7 @@
         <a href="<?= url('/staff/delivery-notes?filter=uninvoiced') ?>">View all &rarr;</a>
     </div>
     <?php if ($uninvoiced === []): ?>
-        <p class="empty-state">Nothing outstanding — every goods-out delivery note has been invoiced.</p>
+        <p class="empty-state">Nothing outstanding — every Completed Parts Sent note has been invoiced.</p>
     <?php else: ?>
         <div class="table-wrap">
             <table>

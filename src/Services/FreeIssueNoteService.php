@@ -203,6 +203,9 @@ final class FreeIssueNoteService
             [
                 'deliveryNote' => $note,
                 'client' => $client,
+                'relatedNote' => $note['related_note_id'] !== null
+                    ? DeliveryNote::find((int) $note['related_note_id'])
+                    : null,
                 'lines' => DeliveryNote::lines($deliveryNoteId),
                 'qrDataUri' => QrCodeService::pngDataUri(QrCodeService::jobUrl($qrPath)),
             ],

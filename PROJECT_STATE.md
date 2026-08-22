@@ -632,6 +632,95 @@ went instead.
 form. Nothing linked to it and it would have fatalled on the first request.
 Removed.
 
+### Getting back out, and tables that agree (22 August 2026)
+
+| # | Item | Status |
+|---|---|---|
+| 1 | Return link at the top of a delivery note | Done — to the order it belongs to |
+| 2 | Return links wherever else they were missing | Done — sixteen templates, one shared partial; three of them already had one in a different place |
+| 3 | A favicon | Done — the app's own mark, theme-aware |
+| 4 | Columns lined up between tables showing the same thing | Done — orders, parts, people, receipts |
+| 5 | Fixed-width destination dropdown on the order page | Done — measured before and after |
+
+**One way back, in one place.** `templates/partials/back-link.php` renders a quiet
+text link above the heading. Above, because it is navigation and not a
+conclusion: somebody who has landed in the wrong place wants out before they
+read the page. Text and not a button, because it sits beside the header's real
+actions and going back is the one thing on a page nobody needs persuading to do.
+
+The two check-in screens already had a return, at the foot of the page, and the
+email settings page had one at the top in its own hand-rolled markup. Both now
+use the partial, so every page in the application puts its return in the same
+place.
+
+*Where it points.* Not always at the parent in the nav — every top-level list is
+already one sidebar click from anywhere, so a link to one of those earns its
+place only where the page has no other parent. What the sidebar cannot offer is
+the particular order, client or part this page came out of, and that is the link
+worth having. A delivery note goes back to its order; a new despatch goes back to
+the order it was opened from, or to the client when it was not; a part edit form
+goes back to the part.
+
+A goods-out note can cover several orders at once, and then there is no single
+order to return to, so that case falls back to the list of delivery notes. Both
+branches were exercised.
+
+*Deliberately left alone:* the index pages and dashboards, which are nav
+destinations themselves; the part and order pages, which are reached from
+everywhere and cross-link heavily; and the five settings pages that already carry
+a "Back to settings" button in their header.
+
+**The favicon** is `public/favicon.svg`, following Kitwell's arrangement — one
+static SVG, linked from each layout with `asset_url()` so it carries a cache-
+busting stamp — but drawing this application's own mark rather than Kitwell's:
+the same rounded accent tile with PT on it that the header already wears, at the
+same 26% corner radius as `.brand-mark`. Letters are rectangles rather than
+`<text>`, because a favicon renders outside the page and cannot rely on a font
+being installed; substitution would give a different mark on every machine. The
+colours follow `prefers-color-scheme`, so the tile stays legible against dark
+browser chrome. Rasterised at 16 and 32px to check the letterforms survive, and
+the light variant measured at 6.7:1 contrast.
+
+The two `theme-color` meta tags went in at the same time, replacing a single
+hard-coded white one that was wrong half the time.
+
+**Tables that show the same thing now agree.** Four families, each with its
+widths declared once in `app.css` and a `<colgroup>` on every table in the
+family — the same mechanism as `.dn-table` and `.stage-table`, including the
+fallback to auto layout below 900px.
+
+Aligning them turned up three tables missing a column their sibling had:
+
+- Junction's list of every order showed no status and no line count, so the one
+  list covering the whole shop was the one place you could not see what state an
+  order was in. Both lists now derive those from `Order::withRollup()`, so they
+  cannot come to different answers about the same order — verified identical
+  across all seven orders.
+- The staff parts list had no price column, so the quoting desk's own list was
+  the one that would not show what it had quoted. Gated on `view_pricing` like
+  everywhere else.
+- The client's team page had no "last signed in", which is exactly the question
+  a client administrator is asking when they wonder whether a colleague still
+  needs an account.
+
+Measured at 1280px: every declared column is identical across each pair, and the
+people tables are identical in all five. Only the one unsized column differs, by
+the width of the staff-only client column, which is the intent.
+
+`OrderLine::forOrders()` came out of this. Rolling up per order would have been
+two queries a row on the longest list in the application; it is two queries in
+total however many orders there are.
+
+**The destination dropdown** on the order page sized itself to its own option
+text, and the options differ per row — "to in production" on one, "to ready for
+production" on the next. Measured on one line card: the select was 161px on one
+row and 212px on the next, so the reason field started 51px further right and
+the Action column was visibly ragged. Fixed at 14rem, which is 12px clear of the
+widest the browser asks for. Every select is now the same width, nothing is
+clipped, and every action cell is the same height. Below 900px it goes back to
+flexible, because the fixed width exists to line rows up beside each other and
+there is no row beside it down there.
+
 ---
 
 ## 5. Clear Books — what the verification found

@@ -1,6 +1,9 @@
 <?php
 /** @var array $client */ /** @var array|null $preselectPart */
 ?>
+<?php /* Back to picking a client, which is the step immediately before this one. */ ?>
+<?= partial('partials/back-link', ['href' => '/staff/orders/new', 'label' => 'Back to choosing a client']) ?>
+
 <div class="card-header">
     <div>
         <h1 class="mt-0 mb-0">Place order for <?= e($client['name']) ?></h1>

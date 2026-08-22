@@ -9,6 +9,11 @@ $hasFreeIssue = Part::hasFreeIssue($part ?? []);
 $usable = (int) $line['qty_free_issue_received'] - (int) $line['qty_free_issue_rejected'];
 $conversion = Part::conversionSentence($part ?? [], (int) $line['qty_ordered']);
 ?>
+<?= partial('partials/back-link', [
+    'href' => '/staff/orders/' . $order['id'],
+    'label' => 'Back to order ' . $order['order_number'],
+]) ?>
+
 <h1 class="mt-0">Free-issue material</h1>
 <p class="text-muted">
     <?= e($client['name']) ?> &middot; <?= e($order['order_number']) ?><?php if ($order['po_number'] !== ''): ?> &middot; PO <?= e($order['po_number']) ?><?php endif; ?>
@@ -154,13 +159,19 @@ $conversion = Part::conversionSentence($part ?? [], (int) $line['qty_ordered']);
 <div class="card">
     <h2 class="mt-0">Receipt history</h2>
     <div class="table-wrap">
-        <table>
-            <thead><tr><th>Date</th><th>Qty</th><th>By</th><th>Notes</th></tr></thead>
+        <table class="table-receipts">
+            <colgroup>
+                <col class="col-receipt-date">
+                <col class="col-receipt-qty">
+                <col class="col-receipt-by">
+                <col class="col-receipt-notes">
+            </colgroup>
+            <thead><tr><th scope="col">Date</th><th scope="col" class="align-right">Qty</th><th scope="col">By</th><th scope="col">Notes</th></tr></thead>
             <tbody>
             <?php foreach ($receipts as $r): ?>
                 <tr>
                     <td><?= format_datetime($r['received_at']) ?></td>
-                    <td><?= (int) $r['qty_received'] ?></td>
+                    <td class="align-right"><?= (int) $r['qty_received'] ?></td>
                     <td><?= e($r['received_by_name']) ?></td>
                     <td class="wrap">
                         <?= e($r['notes'] ?? '') ?>
@@ -175,5 +186,3 @@ $conversion = Part::conversionSentence($part ?? [], (int) $line['qty_ordered']);
     </div>
 </div>
 <?php endif; ?>
-
-<p><a href="<?= url('/staff/orders/' . $order['id']) ?>">&larr; Back to order <?= e($order['order_number']) ?></a></p>

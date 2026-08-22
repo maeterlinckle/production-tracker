@@ -17,9 +17,16 @@ use App\Core\Auth;
     </div>
 
     <div class="table-wrap">
-        <table class="table">
+        <table class="table table-people">
+        <colgroup>
+            <col class="col-person-name">
+            <col class="col-person-roles">
+            <col class="col-person-status">
+            <col class="col-person-seen">
+            <col class="col-person-action">
+        </colgroup>
             <thead>
-                <tr><th>Name</th><th>Roles</th><th>Status</th><th>Last signed in</th><th></th></tr>
+                <tr><th scope="col">Name</th><th scope="col">Roles</th><th scope="col">Status</th><th scope="col">Last signed in</th><th scope="col"><span class="sr-only">Actions</span></th></tr>
             </thead>
             <tbody>
             <?php foreach ($users as $user): ?>

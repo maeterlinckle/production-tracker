@@ -1,4 +1,5 @@
 <?php /** @var array $client */ /** @var array $lines */ ?>
+<?= partial("partials/back-link", ["href" => "/staff/clients/" . $client["id"], "label" => "Back to " . $client["name"]]) ?>
 <h1 class="mt-0">New free-issue delivery note — <?= e($client['name']) ?></h1>
 <p class="text-muted">This generates a note for the client to enclose with the free-issue material they send. It does not record receipt — check the material in from the order once it actually arrives. Outstanding below includes anything rejected and sent back, since that has to come again.</p>
 

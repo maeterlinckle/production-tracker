@@ -1,4 +1,5 @@
 <?php /** @var array $clients */ ?>
+<?= partial("partials/back-link", ["href" => "/staff/orders", "label" => "Back to orders"]) ?>
 <h1 class="mt-0">Place an order</h1>
 <p class="text-muted">
     Choose whose order this is. Everything after that is the form the client would fill in themselves —

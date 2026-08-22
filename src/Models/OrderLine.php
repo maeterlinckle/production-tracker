@@ -154,6 +154,43 @@ final class OrderLine
         ));
     }
 
+    /**
+     * The same, for several orders at once, grouped by order id.
+     *
+     * Two queries whatever the number of orders — one for the lines, one for
+     * every distribution behind them. The order lists call this: Junction's
+     * covers every order in the shop, and asking per order would have been two
+     * queries a row on the longest list in the application.
+     *
+     * @param array<int,int> $orderIds
+     * @return array<int,array<int,array<string,mixed>>> order id => its lines
+     */
+    public static function forOrders(array $orderIds): array
+    {
+        $orderIds = array_values(array_unique(array_map('intval', $orderIds)));
+        if ($orderIds === []) {
+            return [];
+        }
+
+        // Cast to int immediately above, so interpolating is the same string a
+        // placeholder list would have produced — and keeps this to one query.
+        $lines = self::withDistributions(Database::all(
+            'SELECT ol.*, p.cpn, p.name AS part_name, p.has_free_issue,
+                    p.free_issue_relationship, p.free_issue_factor
+               FROM order_lines ol
+               JOIN parts p ON p.id = ol.part_id
+              WHERE ol.order_id IN (' . implode(',', $orderIds) . ')
+              ORDER BY ol.order_id, ol.line_no'
+        ));
+
+        $grouped = array_fill_keys($orderIds, []);
+        foreach ($lines as $line) {
+            $grouped[(int) $line['order_id']][] = $line;
+        }
+
+        return $grouped;
+    }
+
     public static function forPart(int $partId): array
     {
         return self::withDistributions(Database::all(

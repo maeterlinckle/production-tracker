@@ -32,15 +32,7 @@ final class OrderController
     public function index(): void
     {
         Auth::authorize('view_orders');
-        $orders = Order::forClient((int) Auth::clientId());
-
-        $orders = array_map(static function (array $order): array {
-            $lines = OrderLine::forOrder((int) $order['id']);
-            $order['rollup_status'] = Order::rollupStatus($lines);
-            $order['line_count'] = count($lines);
-
-            return $order;
-        }, $orders);
+        $orders = Order::withRollup(Order::forClient((int) Auth::clientId()));
 
         View::render('orders/index', ['title' => 'Orders', 'orders' => $orders]);
     }

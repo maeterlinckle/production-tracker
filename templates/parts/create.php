@@ -1,4 +1,5 @@
 <?php /** @var array $errors */ /** @var array $old */ ?>
+<?= partial("partials/back-link", ["href" => "/parts", "label" => "Back to parts"]) ?>
 <h1 class="mt-0">New part</h1>
 
 <form method="post" action="<?= url('/parts') ?>" enctype="multipart/form-data">

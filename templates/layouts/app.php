@@ -12,7 +12,10 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta name="color-scheme" content="light dark">
-    <meta name="theme-color" content="#ffffff">
+    <!-- Two, so the browser chrome follows the theme instead of staying white. -->
+    <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+    <meta name="theme-color" content="#0b1220" media="(prefers-color-scheme: dark)">
+    <link rel="icon" href="<?= e(asset_url('favicon.svg')) ?>" type="image/svg+xml">
     <title><?= isset($title) ? e($title) . ' · ' : '' ?><?= e($appProduct ?? config('app.product')) ?></title>
     <link rel="stylesheet" href="<?= asset_url('css/app.css') ?>">
     <?= partial('partials/theme-init') ?>

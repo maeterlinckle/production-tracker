@@ -1,4 +1,6 @@
 <?php /** @var array $template */ /** @var array $preview */ ?>
+<?= partial("partials/back-link", ["href" => "/staff/settings/email/templates", "label" => "Back to email templates"]) ?>
+
 <div class="page-head">
     <div>
         <h1><?= e($template['name']) ?></h1>

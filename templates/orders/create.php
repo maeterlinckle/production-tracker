@@ -1,4 +1,5 @@
 <?php /** @var array|null $preselectPart */ ?>
+<?= partial("partials/back-link", ["href" => "/orders", "label" => "Back to orders"]) ?>
 <h1 class="mt-0">Place order</h1>
 
 <?= partial('partials/order-builder', [

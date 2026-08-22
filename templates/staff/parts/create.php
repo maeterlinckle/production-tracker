@@ -1,6 +1,7 @@
 <?php
 /** @var array $clients */ /** @var array $errors */ /** @var array $old */
 ?>
+<?= partial("partials/back-link", ["href" => "/staff/parts", "label" => "Back to parts"]) ?>
 <h1 class="mt-0">New part</h1>
 <p class="text-muted">Raising a part on a client's behalf. It becomes an ordinary part on their account — they can see it, edit it and order against it exactly as if they had entered it themselves.</p>
 

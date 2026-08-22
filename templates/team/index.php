@@ -16,9 +16,16 @@ use App\Core\Auth;
     </div>
 
     <div class="table-wrap">
-        <table class="table">
+        <table class="table table-people">
+        <colgroup>
+            <col class="col-person-name">
+            <col class="col-person-roles">
+            <col class="col-person-status">
+            <col class="col-person-seen">
+            <col class="col-person-action">
+        </colgroup>
             <thead>
-                <tr><th>Name</th><th>Access</th><th>Status</th><th></th></tr>
+                <tr><th scope="col">Name</th><th scope="col">Roles</th><th scope="col">Status</th><th scope="col">Last signed in</th><th scope="col"><span class="sr-only">Actions</span></th></tr>
             </thead>
             <tbody>
             <?php foreach ($users as $user): ?>
@@ -52,6 +59,10 @@ use App\Core\Auth;
                             <span class="badge <?= $user['is_active'] ? 'badge-ok' : 'badge-muted' ?>"><?= $user['is_active'] ? 'Active' : 'Inactive' ?></span>
                         <?php endif; ?>
                     </td>
+                    <?php /* The same column Junction's own user list carries. A
+                             client administrator deciding whether a colleague still
+                             needs an account is asking exactly this. */ ?>
+                    <td><?= $user['last_login_at'] === null ? '<span class="muted">Never</span>' : e(format_datetime($user['last_login_at'])) ?></td>
                     <td class="actions">
                         <?php if (!$user['has_password']): ?>
                             <form method="post" action="<?= url('/team/' . $user['id'] . '/reinvite') ?>" class="inline-form">

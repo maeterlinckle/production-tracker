@@ -34,7 +34,7 @@ final class StaffOrderController
 {
     public function index(): void
     {
-        View::render('staff/orders/index', ['title' => 'Orders', 'orders' => Order::all()]);
+        View::render('staff/orders/index', ['title' => 'Orders', 'orders' => Order::withRollup(Order::all())]);
     }
 
     // -- Raising an order on a client's behalf --------------------------------

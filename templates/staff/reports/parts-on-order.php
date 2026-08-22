@@ -5,6 +5,8 @@ use App\Services\PartsOnOrder;
 
 $csvQuery = 'format=csv' . ($clientId !== null ? '&client_id=' . $clientId : '');
 ?>
+<?= partial("partials/back-link", ["href" => "/staff/reports", "label" => "Back to reports"]) ?>
+
 <div class="page-head">
     <div>
         <h1>Parts on order</h1>

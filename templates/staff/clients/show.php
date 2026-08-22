@@ -1,4 +1,6 @@
 <?php /** @var array $client */ /** @var array $users */ /** @var array $parts */ /** @var array $orders */ ?>
+<?= partial("partials/back-link", ["href" => "/staff/clients", "label" => "Back to clients"]) ?>
+
 <div class="card-header">
     <h1 class="mt-0 mb-0"><?= e($client['name']) ?></h1>
 </div>

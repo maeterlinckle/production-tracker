@@ -1,4 +1,5 @@
 <?php /** @var array $errors */ /** @var array $old */ ?>
+<?= partial("partials/back-link", ["href" => "/staff/clients", "label" => "Back to clients"]) ?>
 <h1 class="mt-0">New client</h1>
 
 <form method="post" action="<?= url('/staff/clients') ?>">

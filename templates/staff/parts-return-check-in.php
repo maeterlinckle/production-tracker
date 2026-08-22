@@ -24,6 +24,11 @@ $bookedIn = $declared - $outstanding;
 $delivered = OrderLine::qtyAt($orderLine, 'delivered');
 $invoiced = OrderLine::qtyAt($orderLine, 'invoiced');
 ?>
+<?= partial('partials/back-link', [
+    'href' => '/staff/orders/' . $order['id'] . '#delivery-notes',
+    'label' => 'Back to order ' . $order['order_number'],
+]) ?>
+
 <div class="card-header">
     <div>
         <h1 class="mt-0 mb-0"><?= e($note['reference']) ?></h1>
@@ -114,8 +119,14 @@ $invoiced = OrderLine::qtyAt($orderLine, 'invoiced');
 <div class="card">
     <h2 class="mt-0">Receipt history</h2>
     <div class="table-wrap">
-        <table>
-            <thead><tr><th>Date</th><th class="align-right">Qty</th><th>By</th><th>Notes</th></tr></thead>
+        <table class="table-receipts">
+            <colgroup>
+                <col class="col-receipt-date">
+                <col class="col-receipt-qty">
+                <col class="col-receipt-by">
+                <col class="col-receipt-notes">
+            </colgroup>
+            <thead><tr><th scope="col">Date</th><th scope="col" class="align-right">Qty</th><th scope="col">By</th><th scope="col">Notes</th></tr></thead>
             <tbody>
             <?php foreach ($receipts as $receipt): ?>
                 <tr>
@@ -130,5 +141,3 @@ $invoiced = OrderLine::qtyAt($orderLine, 'invoiced');
     </div>
 </div>
 <?php endif; ?>
-
-<p><a href="<?= url('/staff/orders/' . $order['id'] . '#delivery-notes') ?>">&larr; Back to order <?= e($order['order_number']) ?></a></p>

@@ -28,6 +28,31 @@ final class Order
     }
 
     /**
+     * Attach each order's line count and rolled-up status.
+     *
+     * Both order lists want these and only one of them used to have them, so
+     * Junction's list of every order in the shop was the one place you could
+     * not see what state an order was in. The derivation lives here rather than
+     * in either controller, so the two lists cannot come to different answers
+     * about the same order.
+     *
+     * @param array<int,array<string,mixed>> $orders
+     * @return array<int,array<string,mixed>>
+     */
+    public static function withRollup(array $orders): array
+    {
+        $byOrder = OrderLine::forOrders(array_map(static fn (array $o): int => (int) $o['id'], $orders));
+
+        return array_map(static function (array $order) use ($byOrder): array {
+            $lines = $byOrder[(int) $order['id']] ?? [];
+            $order['line_count'] = count($lines);
+            $order['rollup_status'] = self::rollupStatus($lines);
+
+            return $order;
+        }, $orders);
+    }
+
+    /**
      * Creates an order with its lines in one transaction. $lines is a list of
      * ['part_id', 'qty_ordered', 'unit_price', 'qty_free_issue_required', 'needs_free_issue'].
      *

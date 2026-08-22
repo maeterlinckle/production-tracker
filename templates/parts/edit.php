@@ -26,6 +26,9 @@ $canSeePricing = Auth::can('view_pricing');
 $action = $isStaff ? '/staff/parts/' . $part['id'] : '/parts/' . $part['id'];
 $cancel = $action;
 ?>
+<?php /* Back to the part itself — the only page this form is ever opened from. */ ?>
+<?= partial('partials/back-link', ['href' => $cancel, 'label' => 'Back to ' . $part['cpn']]) ?>
+
 <div class="card-header">
     <div>
         <h1 class="mt-0 mb-0">Edit <?= e($part['cpn']) ?></h1>

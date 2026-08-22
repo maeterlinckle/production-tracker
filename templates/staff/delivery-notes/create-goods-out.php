@@ -8,6 +8,17 @@
  * @var array      $lines       all of them, for the empty check
  */
 ?>
+<?php /*
+    Nine times out of ten this page is opened from an order, so that is where
+    back goes. Reached from the client's own page instead, there is no order to
+    return to and the client is the right destination. The mid-page "Back to the
+    order" button in the focus card stays: it is the end of a block of reading,
+    and this one is navigation before it.
+*/ ?>
+<?= partial('partials/back-link', $focusOrder !== null
+    ? ['href' => '/staff/orders/' . $focusOrder['id'], 'label' => 'Back to order ' . $focusOrder['order_number']]
+    : ['href' => '/staff/clients/' . $client['id'], 'label' => 'Back to ' . $client['name']]) ?>
+
 <h1 class="mt-0">New delivery note — <?= e($client['name']) ?></h1>
 <p class="text-muted">
     Pick the lines and quantities being shipped in this batch. Partial quantities are fine — the remainder

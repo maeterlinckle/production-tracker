@@ -4,8 +4,8 @@
 /** @var string $passwordSource */ /** @var array $problems */ /** @var bool $cryptoOk */
 /** @var array $encryptions */ /** @var array $recentLog */
 ?>
+<?= partial('partials/back-link', ['href' => '/staff/settings', 'label' => 'Back to settings']) ?>
 <h1 class="mt-0">Email settings</h1>
-<p><a href="<?= url('/staff/settings') ?>">&larr; Settings</a></p>
 
 <?php if ($problems !== []): ?>
     <div class="card" style="border-color: var(--danger)">

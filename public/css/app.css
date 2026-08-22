@@ -1946,7 +1946,12 @@ legend.label { padding: 0; }
 .action-row select,
 .action-row textarea { margin: 0; }
 .action-row .input-qty { flex: 0 0 auto; width: 5.5rem; }
-.action-row .input-stage { flex: 0 1 auto; width: auto; min-width: 9rem; }
+/* Fixed, not sized to its own content. The destination list differs per row
+   -- "to in production" on one, "to ready for production" on the next -- so
+   a select that fits its widest option is a different width on every row,
+   and the reason field and the button behind it start at a different place
+   each time. Wide enough for the longest destination the list can hold. */
+.action-row .input-stage { flex: 0 0 14rem; width: 14rem; }
 .action-row .input-reason { flex: 1 1 8rem; min-width: 0; }
 /* Grows to fill a row, but only so far. A PO number is a dozen characters and
    a field eight hundred pixels wide for it reads as a mistake. */
@@ -1973,7 +1978,10 @@ legend.label { padding: 0; }
     .stage-table .stage-table-actions { border-left: 0; }
     .stage-table .action-row { flex-wrap: wrap; }
     .action-row .input-reason { flex: 1 1 12rem; }
-    .action-row .input-stage { flex: 1 1 12rem; }
+    /* Free to shrink again once the row is allowed to wrap: the fixed width
+       above exists to line rows up beside each other, and there is no row
+       beside it down here. */
+    .action-row .input-stage { flex: 1 1 12rem; width: auto; }
 }
 
 .mb-1 { margin-bottom: var(--space-1); }
@@ -2143,4 +2151,55 @@ legend.label { padding: 0; }
 
 @media (max-width: 900px) {
     .failed-table { table-layout: auto; }
+}
+
+/* --- Getting back out ------------------------------------------------------
+   A quiet return above the heading, on pages that hang off another page. Text
+   rather than a button: it sits next to the header's real actions, and going
+   back is the one thing on a page nobody needs persuading to do. */
+.back-link { margin: 0 0 var(--space-3); font-size: 0.9rem; }
+.back-link a { color: var(--text-muted); text-decoration: none; }
+.back-link a:hover, .back-link a:focus-visible { color: var(--text); text-decoration: underline; }
+
+/* --- Tables that show the same thing in more than one place ----------------
+   A client's list of their orders and Junction's list of every order are the
+   same table with one extra column, and they had drifted into different
+   columns in a different order at different widths. Same for parts, for the
+   two lists of people, and for the receipt history on the two check-in
+   screens. Declaring the widths here rather than letting each page negotiate
+   its own means the shared columns land in the same place on both, and the
+   staff variant is simply the client one plus the column naming whose it is.
+
+   Same mechanism as .dn-table and .stage-table: fixed layout with a colgroup,
+   one unsized column to absorb the remainder, and auto layout again on a
+   narrow window where fixed widths would force a scrollbar. */
+.table-orders, .table-parts, .table-people, .table-receipts { width: 100%; table-layout: fixed; }
+
+.table-orders .col-order-ref    { width: 12rem; }
+.table-orders .col-order-client { width: 16rem; }
+.table-orders .col-order-date   { width: 9rem; }
+.table-orders .col-order-lines  { width: 6rem; }
+.table-orders .col-order-status { width: 13rem; }
+/* col-order-action takes the remainder. */
+
+.table-parts .col-part-cpn    { width: 12rem; }
+.table-parts .col-part-client { width: 16rem; }
+.table-parts .col-part-status { width: 10rem; }
+.table-parts .col-part-price  { width: 9rem; }
+.table-parts .col-part-action { width: 6rem; }
+/* col-part-name takes the remainder — it is the one that benefits from it. */
+
+.table-people .col-person-name   { width: 18rem; }
+.table-people .col-person-status { width: 12rem; }
+.table-people .col-person-seen   { width: 12rem; }
+.table-people .col-person-action { width: 14rem; }
+/* col-person-roles takes the remainder: it holds a form, not a word. */
+
+.table-receipts .col-receipt-date { width: 12rem; }
+.table-receipts .col-receipt-qty  { width: 5rem; }
+.table-receipts .col-receipt-by   { width: 10rem; }
+/* col-receipt-notes takes the remainder. */
+
+@media (max-width: 900px) {
+    .table-orders, .table-parts, .table-people, .table-receipts { table-layout: auto; }
 }

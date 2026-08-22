@@ -5,7 +5,29 @@ use App\Services\FreeIssueNoteService;
 
 $isFreeIssue = $note['type'] === 'free_issue_in';
 $isPartsReturn = $note['type'] === 'parts_return';
+
+// Where "back" goes. A note is nearly always opened from the order it belongs
+// to, and the order is the one destination the sidebar cannot offer — the
+// delivery-notes list is already one click away from anywhere. So the link
+// points at the order when the note covers exactly one, which is every
+// free-issue, return and parts-return note and most despatches. A goods-out
+// note can cover several orders at once, and there is no single order to go
+// back to, so that one falls back to the list.
+$noteOrders = [];
+foreach ($lines as $noteLine) {
+    $noteOrders[(int) $noteLine['order_id']] = $noteLine['order_number'];
+}
+
+if (count($noteOrders) === 1) {
+    $backHref = '/staff/orders/' . array_key_first($noteOrders) . '#delivery-notes';
+    $backLabel = 'Back to order ' . reset($noteOrders);
+} else {
+    $backHref = '/staff/delivery-notes';
+    $backLabel = 'Back to delivery notes';
+}
 ?>
+<?= partial('partials/back-link', ['href' => $backHref, 'label' => $backLabel]) ?>
+
 <div class="card-header">
     <div>
         <h1 class="mt-0 mb-0"><?= e($note['reference']) ?></h1>

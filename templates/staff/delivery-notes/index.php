@@ -24,6 +24,9 @@
                         <td>
                             <?php if ($note['type'] === 'goods_out'): ?>
                                 <span class="badge <?= $note['invoiced'] ? 'badge-ok' : 'badge-warn' ?>"><?= $note['invoiced'] ? 'Invoiced' : 'Not invoiced' ?></span>
+                                <?php if (($note['invoice_source'] ?? '') === 'manual'): ?>
+                                    <div class="cell-sub">Raised outside Clear Books</div>
+                                <?php endif; ?>
                             <?php else: ?>
                                 <span class="text-muted">—</span>
                             <?php endif; ?>

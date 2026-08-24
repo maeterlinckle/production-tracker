@@ -9,6 +9,30 @@ use PDO;
 
 final class Invoice
 {
+    /**
+     * How the invoice came to exist.
+     *
+     * Both kinds settle the delivery note equally — it stops waiting to be
+     * invoiced either way. The distinction is kept because only one of them can
+     * be looked up in Clear Books by id, and somebody chasing a discrepancy
+     * needs to know which they are looking at before they go hunting for a
+     * record that was never created through the API.
+     */
+    public const SOURCE_CLEARBOOKS = 'clearbooks';
+    public const SOURCE_MANUAL = 'manual';
+
+    /** What the tracker believes a delivery note is worth, from the order's own prices. */
+    public static function valueOfDeliveryNote(int $deliveryNoteId): float
+    {
+        return (float) Database::scalar(
+            'SELECT COALESCE(SUM(dnl.qty * ol.unit_price), 0)
+               FROM delivery_note_lines dnl
+               JOIN order_lines ol ON ol.id = dnl.order_line_id
+              WHERE dnl.delivery_note_id = :id',
+            ['id' => $deliveryNoteId]
+        );
+    }
+
     public static function find(int $id): ?array
     {
         return Database::one('SELECT * FROM invoices WHERE id = :id', ['id' => $id]);
@@ -16,7 +40,13 @@ final class Invoice
 
     public static function forDeliveryNote(int $deliveryNoteId): ?array
     {
-        return Database::one('SELECT * FROM invoices WHERE delivery_note_id = :id', ['id' => $deliveryNoteId]);
+        return Database::one(
+            'SELECT i.*, u.name AS raised_by_name
+               FROM invoices i
+               LEFT JOIN users u ON u.id = i.raised_by
+              WHERE i.delivery_note_id = :id',
+            ['id' => $deliveryNoteId]
+        );
     }
 
     /**
@@ -26,11 +56,12 @@ final class Invoice
      */
     public static function raise(
         int $deliveryNoteId,
-        string $clearbooksInvoiceId,
+        ?string $clearbooksInvoiceId,
         string $clearbooksInvoiceNumber,
         float $amount,
         int $raisedBy,
-        ?string $notes = null
+        ?string $notes = null,
+        string $source = self::SOURCE_CLEARBOOKS
     ): int {
         return Database::transaction(static function (PDO $pdo) use (
             $deliveryNoteId,
@@ -38,17 +69,20 @@ final class Invoice
             $clearbooksInvoiceNumber,
             $amount,
             $raisedBy,
-            $notes
+            $notes,
+            $source
         ): int {
             $insert = $pdo->prepare(
                 'INSERT INTO invoices (
-                    delivery_note_id, clearbooks_invoice_id, clearbooks_invoice_number, amount, raised_by, notes
+                    delivery_note_id, source, clearbooks_invoice_id, clearbooks_invoice_number,
+                    amount, raised_by, notes
                 ) VALUES (
-                    :dn_id, :cb_id, :cb_number, :amount, :raised_by, :notes
+                    :dn_id, :source, :cb_id, :cb_number, :amount, :raised_by, :notes
                 )'
             );
             $insert->execute([
                 'dn_id' => $deliveryNoteId,
+                'source' => $source,
                 'cb_id' => $clearbooksInvoiceId,
                 'cb_number' => $clearbooksInvoiceNumber,
                 'amount' => $amount,

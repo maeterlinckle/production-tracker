@@ -338,7 +338,7 @@ HTML,
 
         'invoice_raised' => [
             'name'        => 'Invoice raised',
-            'description' => 'Sent when a Clear Books sales invoice is raised against a delivery note. Contains a money amount, so it only ever goes to recipients allowed to see pricing — everyone else receives nothing rather than a version with the figure removed.',
+            'description' => 'Sent when an invoice is raised against a delivery note, whether through the Clear Books API or recorded here after being raised outside it. The client is being billed either way, and which route it took is Junction’s own business rather than theirs. Contains a money amount, so it only ever goes to recipients allowed to see pricing — everyone else receives nothing rather than a version with the figure removed.',
             'group'       => 'Despatch and invoicing',
             'subject'     => 'Invoice {{invoice_number}} raised — {{app_name}}',
             'body'        => <<<'HTML'
@@ -347,10 +347,10 @@ HTML,
 <p>Invoice <strong>{{invoice_number}}</strong> for {{amount}} has been raised against
 delivery note {{reference}}.</p>
 
-<p>It will appear in Clear Books in the usual way.</p>
+<p>Please quote the invoice number above on any query about it.</p>
 HTML,
             'fields' => [
-                'invoice_number' => 'The Clear Books invoice number',
+                'invoice_number' => 'The invoice number',
                 'amount'         => 'The invoice total',
                 'reference'      => 'The delivery note it was raised against',
                 'raised_at'      => 'When it was raised',

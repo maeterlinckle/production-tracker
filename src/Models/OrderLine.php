@@ -788,12 +788,51 @@ final class OrderLine
      * it has to come again. That is the difference between a rejection and a
      * shortage, expressed as arithmetic.
      */
+    /**
+     * The free-issue position on a line, as one set of figures.
+     *
+     * Every screen and every document that talks about free-issue material has
+     * to answer the same three questions — how much does this line need, how
+     * much usable material is actually here, and how much is still to come —
+     * and they must not be able to give different answers. They used to: the
+     * route card did the subtraction itself, in its own template, which is one
+     * copy of a rule too many.
+     *
+     * `accepted` is material that arrived and was not sent back. Rejected
+     * material counts as received and is then subtracted again, which is what
+     * makes a rejection and its replacement net out to nothing rather than
+     * double-counting: reject two and accepted drops by two; the two
+     * replacements arrive and it goes back up by two.
+     *
+     * `outstanding` and `surplus` are two halves of the same number and only
+     * one can be non-zero, so the three figures always reconcile:
+     * accepted + outstanding = required + surplus.
+     *
+     * All of it in material units, which is what free issue is counted in.
+     *
+     * @param array<string,mixed> $line
+     * @return array{required:int,received:int,rejected:int,accepted:int,outstanding:int,surplus:int}
+     */
+    public static function freeIssueFigures(array $line): array
+    {
+        $required = (int) ($line['qty_free_issue_required'] ?? 0);
+        $received = (int) ($line['qty_free_issue_received'] ?? 0);
+        $rejected = (int) ($line['qty_free_issue_rejected'] ?? 0);
+        $accepted = $received - $rejected;
+
+        return [
+            'required' => $required,
+            'received' => $received,
+            'rejected' => $rejected,
+            'accepted' => $accepted,
+            'outstanding' => max(0, $required - $accepted),
+            'surplus' => max(0, $accepted - $required),
+        ];
+    }
+
     public static function freeIssueOutstanding(array $line): int
     {
-        $required = (int) $line['qty_free_issue_required'];
-        $usable = (int) $line['qty_free_issue_received'] - (int) $line['qty_free_issue_rejected'];
-
-        return max(0, $required - $usable);
+        return self::freeIssueFigures($line)['outstanding'];
     }
 
     /**

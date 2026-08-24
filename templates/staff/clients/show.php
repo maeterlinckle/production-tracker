@@ -17,6 +17,7 @@
                 <div class="field"><label for="address_line2">Address line 2</label><input type="text" id="address_line2" name="address_line2" value="<?= e($client['address_line2'] ?? '') ?>"></div>
             </div>
             <div class="form-row">
+                <div class="field"><label for="address_county">County</label><input type="text" id="address_county" name="address_county" value="<?= e($client['address_county'] ?? '') ?>"></div>
                 <div class="field"><label for="address_city">City</label><input type="text" id="address_city" name="address_city" value="<?= e($client['address_city'] ?? '') ?>"></div>
                 <div class="field"><label for="address_postcode">Postcode</label><input type="text" id="address_postcode" name="address_postcode" value="<?= e($client['address_postcode'] ?? '') ?>"></div>
                 <div class="field"><label for="address_country">Country</label><input type="text" id="address_country" name="address_country" value="<?= e($client['address_country'] ?? '') ?>"></div>
@@ -27,11 +28,49 @@
                 <div class="field"><label for="main_contact_phone">Contact phone</label><input type="text" id="main_contact_phone" name="main_contact_phone" value="<?= e($client['main_contact_phone'] ?? '') ?>"></div>
             </div>
             <div class="field"><label for="billing_email">Billing email</label><input type="email" id="billing_email" name="billing_email" value="<?= e($client['billing_email'] ?? '') ?>"></div>
+            <div class="form-row">
+                <div class="field"><label for="vat_number">VAT number</label><input type="text" id="vat_number" name="vat_number" value="<?= e($client['vat_number'] ?? '') ?>"></div>
+                <div class="field"><label for="company_number">Company number</label><input type="text" id="company_number" name="company_number" value="<?= e($client['company_number'] ?? '') ?>"></div>
+            </div>
             <div class="field"><label for="notes">Notes</label><textarea id="notes" name="notes"><?= e($client['notes'] ?? '') ?></textarea></div>
             <div class="field">
                 <label><input type="checkbox" name="is_active" value="1" <?= $client['is_active'] ? 'checked' : '' ?> style="width:auto;min-height:auto"> Active</label>
             </div>
             <button type="submit" class="btn btn-primary">Save changes</button>
+        </form>
+
+        <?php /*
+            Its own form, outside the one above, because it is not an edit: it
+            fetches and writes in one go. Nesting it would have meant one submit
+            button quietly carrying the other form's half-typed values.
+
+            On demand and never in the background — a client's address changing
+            in Clear Books is not something this application should act on
+            silently. The flash says which fields moved, because "updated" with
+            nothing after it is a claim nobody can check.
+        */ ?>
+        <form method="post" action="<?= url('/staff/clients/' . $client['id'] . '/from-clearbooks') ?>"
+              style="margin-top: var(--space-5)">
+            <?= csrf_field() ?>
+            <h3 class="line-section-title">Clear Books</h3>
+            <?php if (empty($client['clearbooks_entity_id'])): ?>
+                <p class="text-muted mb-0">
+                    Set the Clear Books customer ID above and save, and their details can be pulled from
+                    there rather than typed twice.
+                </p>
+            <?php else: ?>
+                <p class="text-muted">
+                    <?php if ($client['clearbooks_synced_at'] !== null): ?>
+                        Last pulled <?= format_datetime($client['clearbooks_synced_at']) ?><?php
+                        ?><?= $client['synced_by_name'] !== null ? ' by ' . e($client['synced_by_name']) : '' ?>.
+                    <?php else: ?>
+                        Never pulled from Clear Books — everything here was typed in.
+                    <?php endif; ?>
+                    Their record over there is the one accounts works from, so it is worth taking as the
+                    truth for the address and the billing contact.
+                </p>
+                <button type="submit" class="btn">Update from Clear Books</button>
+            <?php endif; ?>
         </form>
     </div>
 

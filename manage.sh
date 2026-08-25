@@ -86,6 +86,8 @@ Application
   migrate [--status]          apply pending database migrations
   db-grant                    re-apply the database grant (fixes a migration
                               that stops with "command denied")
+  reset-database              empty the database and rebuild the schema, ready
+                              for a first administrator (asks twice; ignores --yes)
 
 Email and integrations
   install-composer            install Composer, if the machine has none
@@ -458,6 +460,144 @@ FLUSH PRIVILEGES;
 SQL
 
     ok "Grant re-applied — try the migrations again:  $0 migrate"
+}
+
+#
+# Empty the database and put the schema back, ready for a first administrator.
+#
+# The most destructive thing this script can do: every client, part, order,
+# delivery note, invoice and user account goes, and none of it comes back
+# without a backup. So it asks twice, and the second answer is a word that
+# cannot be typed by accident or produced by leaning on the return key.
+#
+# It deliberately ignores --yes. That flag exists so the backup can run from
+# cron without a prompt; a command that destroys the business's records is not
+# something anybody should be able to enable by adding a flag to a line in a
+# script. For the same reason it refuses to run unless a person is at the
+# terminal — a reset that can be triggered by a stray pipe is a reset waiting
+# to happen.
+#
+# Uploaded files are left alone. The database holds their paths and nothing
+# else, so after this they are simply unreferenced; deleting somebody's drawings
+# is a separate decision from clearing the records, and this command was asked
+# to clear the records.
+#
+cmd_reset_database() {
+    require_root reset-database
+    [ -n "$DB_CLIENT" ] || die "No mariadb/mysql client is installed, so the database cannot be cleared."
+    [ -t 0 ] || die "reset-database has to be answered at a terminal. It will not run from a script or a pipe."
+
+    local db; db="$(env_get DB_DATABASE)"
+    [ -n "$db" ] || die "No DB_DATABASE in $ENV_FILE."
+
+    local cnf; cnf="$(db_client_cnf)"
+    # shellcheck disable=SC2064
+    trap "rm -f '$cnf'" RETURN
+
+    local tables
+    tables="$("$DB_CLIENT" --defaults-extra-file="$cnf" "$db" -N -B -e \
+        "SELECT COUNT(*) FROM information_schema.tables
+          WHERE table_schema = DATABASE() AND table_type = 'BASE TABLE';" 2>/dev/null)" \
+        || die "Could not connect to '$db'. Check the credentials in $ENV_FILE."
+
+    step "Reset the database '$db'"
+
+    if [ "${tables:-0}" -eq 0 ]; then
+        say "  It has no tables — there is nothing to clear."
+        say ""
+        say "  To build the schema:      $0 migrate"
+        say "  Then the first account:   $0 create-admin"
+        return 0
+    fi
+
+    # What is actually about to go. A confirmation prompt that does not say what
+    # is at stake is a prompt people learn to click through.
+    say ""
+    printf '  %sThis destroys everything in the database.%s\n' "$C_BOLD" "$C_RESET"
+    say ""
+    say "  $tables tables will be dropped and rebuilt empty. On record right now:"
+
+    local counts
+    counts="$("$DB_CLIENT" --defaults-extra-file="$cnf" "$db" -N -B -e "
+        SELECT CONCAT('    ', LPAD(c, 6, ' '), '  ', label) FROM (
+            SELECT 1 AS o, COUNT(*) AS c, 'user accounts'   AS label FROM users
+            UNION ALL SELECT 2, COUNT(*), 'clients'         FROM clients
+            UNION ALL SELECT 3, COUNT(*), 'parts'           FROM parts
+            UNION ALL SELECT 4, COUNT(*), 'orders'          FROM orders
+            UNION ALL SELECT 5, COUNT(*), 'delivery notes'  FROM delivery_notes
+            UNION ALL SELECT 6, COUNT(*), 'invoices'        FROM invoices
+        ) t ORDER BY o;" 2>/dev/null)" || counts=""
+
+    if [ -n "$counts" ]; then
+        say ""
+        printf '%s\n' "$counts"
+    fi
+
+    say ""
+    say "  Uploaded drawings, purchase orders and generated PDFs stay on disk in"
+    say "  $APP_DIR/storage/uploads — nothing in the database will point at them."
+    say ""
+    printf '  %sTake a backup first if there is any doubt:%s  %s backup\n' \
+        "$C_YELLOW" "$C_RESET" "$0"
+    say ""
+
+    # Two answers, on purpose. The first is the ordinary question; the second is
+    # a word nobody types by accident. --yes does not satisfy either.
+    local answer
+    read -r -p "  Clear the database and start again? [y/N]: " answer || answer=""
+    case "${answer,,}" in
+        y|yes) ;;
+        *)
+            say ""
+            ok "Nothing was changed."
+            return 0
+            ;;
+    esac
+
+    # Exact and upper-case. `read` drops whitespace either side, so a pasted
+    # "RESET " still counts — somebody who pasted the word meant it — but
+    # "reset", "yes" and an empty line do not, which is the point: the second
+    # answer has to be typed on purpose.
+    local phrase
+    read -r -p "  Type RESET to confirm: " phrase || phrase=""
+    if [ "$phrase" != "RESET" ]; then
+        say ""
+        ok "Nothing was changed."
+        return 0
+    fi
+
+    step "Clearing '$db'"
+
+    # One DROP per table rather than a single comma-separated statement:
+    # GROUP_CONCAT truncates at 1024 bytes by default, and this schema is already
+    # close enough that adding a table or two would have silently left some
+    # behind — a half-dropped database that reported success.
+    {
+        printf 'SET FOREIGN_KEY_CHECKS = 0;\n'
+        "$DB_CLIENT" --defaults-extra-file="$cnf" "$db" -N -B -e \
+            "SELECT CONCAT('DROP TABLE IF EXISTS \`', table_name, '\`;')
+               FROM information_schema.tables
+              WHERE table_schema = DATABASE() AND table_type = 'BASE TABLE';"
+        printf 'SET FOREIGN_KEY_CHECKS = 1;\n'
+    } | "$DB_CLIENT" --defaults-extra-file="$cnf" "$db" || die "Dropping the tables failed."
+
+    local left
+    left="$("$DB_CLIENT" --defaults-extra-file="$cnf" "$db" -N -B -e \
+        "SELECT COUNT(*) FROM information_schema.tables
+          WHERE table_schema = DATABASE() AND table_type = 'BASE TABLE';")"
+    [ "${left:-1}" -eq 0 ] || die "$left table(s) are still there. The database has not been cleared cleanly."
+
+    ok "Dropped $tables table(s)"
+
+    cmd_migrate
+
+    step "Ready"
+    say ""
+    say "  '$db' is empty and the schema is current. There are no accounts, so the"
+    say "  next step is the one that creates the first administrator:"
+    say ""
+    say "    $0 create-admin"
+    say ""
 }
 
 # ---------------------------------------------------------------------------
@@ -882,6 +1022,7 @@ case "$COMMAND" in
     config)             cmd_config "${1:-}" "${2:-}" ;;
     migrate)            cmd_migrate "$@" ;;
     db-grant)           cmd_db_grant ;;
+    reset-database)     cmd_reset_database ;;
 
     install-composer)   cmd_install_composer ;;
     composer-install)   cmd_composer_install ;;

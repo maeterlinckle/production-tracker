@@ -587,7 +587,24 @@ sudo tracker config APP_URL                  # read one .env value
 sudo tracker config APP_URL https://new.url  # change it, keeping a backup
 sudo tracker migrate [--status]
 sudo tracker db-grant                        # fix "command denied" during a migration
+sudo tracker reset-database                  # empty it and rebuild the schema
 ```
+
+`reset-database` is the one destructive command here. It drops every table,
+re-runs the migrations and leaves the database empty — no clients, no orders,
+no accounts — so the next step is `create-admin`, exactly as on a fresh
+install. There is no undo.
+
+It asks twice: a yes/no, and then the word `RESET` typed in full. Anything
+else at either prompt exits without touching the database. `--yes` does not
+satisfy either of them, and it refuses to run at all unless a person is at
+the terminal — a reset that could be triggered by a stray pipe or a line in a
+script is a reset waiting to happen.
+
+Uploaded files are left alone. The database only ever held their paths, so
+afterwards `storage/uploads` is still there and nothing points at it; clear it
+by hand if the intention was to hand the machine on rather than start the same
+site again. Take a `backup` first either way.
 
 ### Email and integrations
 

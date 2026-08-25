@@ -98,6 +98,9 @@ $statusHeading = match ($kind) {
                                 <span class="badge <?= $dn['invoiced'] ? 'badge-ok' : 'badge-warn' ?>">
                                     <?= $dn['invoiced'] ? e($invoice['clearbooks_invoice_number'] ?? 'Invoiced') : 'Not invoiced' ?>
                                 </span>
+                                <?php if (($invoice['source'] ?? '') === 'manual'): ?>
+                                    <div class="cell-sub">Raised outside Clear Books</div>
+                                <?php endif; ?>
                             <?php else: ?>
                                 <span class="badge badge-ok">Sent</span>
                             <?php endif; ?>

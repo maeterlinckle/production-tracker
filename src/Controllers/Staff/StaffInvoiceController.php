@@ -6,6 +6,7 @@ namespace App\Controllers\Staff;
 
 use App\Core\Auth;
 use App\Core\Flash;
+use App\Core\Request;
 use App\Core\Response;
 use App\Core\View;
 use App\Models\Client;
@@ -27,7 +28,7 @@ final class StaffInvoiceController
         }
 
         if ($note['type'] !== 'goods_out') {
-            Flash::error('Only completed-goods delivery notes can be invoiced.');
+            Flash::error('Only Completed Parts Sent notes can be invoiced.');
             Response::redirect('/staff/delivery-notes/' . $deliveryNoteId);
         }
 
@@ -60,11 +61,86 @@ final class StaffInvoiceController
             Response::redirect('/staff/delivery-notes/' . $deliveryNoteId);
         }
 
-        $invoiceId = Invoice::raise((int) $deliveryNoteId, $result['id'], $result['number'], $result['amount'], (int) Auth::id());
+        $invoiceId = Invoice::raise(
+            (int) $deliveryNoteId,
+            $result['id'],
+            $result['number'],
+            $result['amount'],
+            (int) Auth::id(),
+            null,
+            Invoice::SOURCE_CLEARBOOKS
+        );
         Notifications::invoiceRaised(Invoice::find($invoiceId), $note, (int) $note['client_id']);
 
         Flash::success('Invoice ' . $result['number'] . ' raised in Clear Books.');
         Response::redirect('/staff/delivery-notes/' . $deliveryNoteId);
+    }
+
+    /**
+     * Record an invoice that was raised somewhere else.
+     *
+     * Clear Books being unreachable, unconfigured or simply not connected yet is
+     * not a reason for a delivery note to sit forever in the "not yet invoiced"
+     * list. The work has gone out and somebody has billed for it; this is how
+     * they say so.
+     *
+     * The invoice number is required because it is the entire point — without
+     * it this would be a flag saying "invoiced, somehow, somewhere", which is
+     * worse than the note staying on the list. The amount is offered pre-filled
+     * from the order's own prices and can be corrected, because whoever raised
+     * the real invoice knows what it said and the tracker only knows what it
+     * thinks the goods are worth.
+     */
+    public function raiseManual(string $deliveryNoteId): void
+    {
+        Auth::authorize('push_invoices');
+        $note = DeliveryNote::find((int) $deliveryNoteId);
+        $back = '/staff/delivery-notes/' . $deliveryNoteId;
+
+        if ($note === null) {
+            View::renderError(404, 'Delivery note not found', 'That delivery note does not exist.');
+
+            return;
+        }
+
+        if ($note['type'] !== 'goods_out') {
+            Flash::error('Only completed-parts delivery notes can be invoiced.');
+            Response::redirect($back);
+        }
+
+        if ((bool) $note['invoiced']) {
+            Flash::error('This delivery note has already been invoiced.');
+            Response::redirect($back);
+        }
+
+        $number = trim((string) Request::post('invoice_number', ''));
+        if ($number === '') {
+            Flash::error('Enter the invoice number that was raised. Without it there is nothing to match this against.');
+            Response::redirect($back);
+        }
+
+        $amount = trim((string) Request::post('amount', ''));
+        $amount = $amount === ''
+            ? Invoice::valueOfDeliveryNote((int) $deliveryNoteId)
+            : (float) $amount;
+
+        $invoiceId = Invoice::raise(
+            (int) $deliveryNoteId,
+            null,
+            $number,
+            $amount,
+            (int) Auth::id(),
+            trim((string) Request::post('notes', '')) ?: null,
+            Invoice::SOURCE_MANUAL
+        );
+
+        Notifications::invoiceRaised(Invoice::find($invoiceId), $note, (int) $note['client_id']);
+
+        Flash::success(
+            'Recorded invoice ' . $number . ' against ' . $note['reference']
+            . '. It is marked as raised outside Clear Books, so it is still obvious later which is which.'
+        );
+        Response::redirect($back);
     }
 
     /**

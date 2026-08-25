@@ -29,7 +29,11 @@ final class StaffDeliveryNoteController
     private function allNotes(): array
     {
         return \App\Core\Database::all(
-            'SELECT dn.*, c.name AS client_name FROM delivery_notes dn JOIN clients c ON c.id = dn.client_id ORDER BY dn.issued_at DESC'
+            'SELECT dn.*, c.name AS client_name, i.source AS invoice_source, i.clearbooks_invoice_number
+               FROM delivery_notes dn
+               JOIN clients c ON c.id = dn.client_id
+               LEFT JOIN invoices i ON i.delivery_note_id = dn.id
+              ORDER BY dn.issued_at DESC'
         );
     }
 

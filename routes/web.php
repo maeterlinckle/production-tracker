@@ -114,8 +114,12 @@ $router->group(['staff'], function (Router $router): void {
     $router->get('/staff/clients', [StaffClientController::class, 'index']);
     $router->get('/staff/clients/new', [StaffClientController::class, 'create']);
     $router->post('/staff/clients', [StaffClientController::class, 'store'], ['csrf']);
+    // Pulling a client's details from their Clear Books customer record. On
+    // demand only -- see App\Services\ClearBooksCustomerSync.
+    $router->post('/staff/clients/from-clearbooks', [StaffClientController::class, 'prefillFromClearBooks'], ['csrf']);
     $router->get('/staff/clients/{id:\d+}', [StaffClientController::class, 'show']);
     $router->post('/staff/clients/{id:\d+}', [StaffClientController::class, 'update'], ['csrf']);
+    $router->post('/staff/clients/{id:\d+}/from-clearbooks', [StaffClientController::class, 'pullFromClearBooks'], ['csrf']);
     $router->post('/staff/clients/{id:\d+}/users', [StaffClientController::class, 'addUser'], ['csrf']);
     $router->post('/staff/clients/{id:\d+}/users/{userId:\d+}/reinvite', [StaffClientController::class, 'reinviteUser'], ['csrf']);
 
@@ -186,6 +190,9 @@ $router->group(['staff'], function (Router $router): void {
     $router->get('/staff/delivery-notes/{id:\d+}/pdf', [StaffDeliveryNoteController::class, 'downloadPdf']);
 
     $router->post('/staff/delivery-notes/{id:\d+}/invoice', [StaffInvoiceController::class, 'raise'], ['csrf']);
+    // Invoicing without the API: the work has gone out and somebody has billed
+    // for it, whatever state the Clear Books connection is in.
+    $router->post('/staff/delivery-notes/{id:\d+}/invoice-manually', [StaffInvoiceController::class, 'raiseManual'], ['csrf']);
 
     $router->get('/staff/reports', [ReportController::class, 'index']);
     $router->get('/staff/reports/parts-on-order', [ReportController::class, 'partsOnOrder']);

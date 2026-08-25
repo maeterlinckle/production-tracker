@@ -313,6 +313,7 @@ delivery to be argued about before anything moves.
 | `008_part_housekeeping.sql` | `parts.updated_by` (who last changed a part) and `parts.price_under_review` (the flag that says the price is about to move). |
 | `009_photo_thumbnails.sql` | `thumb_path` on `part_media` and `order_photos`. |
 | `010_rejected_parts_returns.sql` | The `parts_return` note type, `delivery_notes.related_note_id`, and `parts_return_receipts` — booking finished parts back in when a client returns them. |
+| `011_clearbooks_sync_and_manual_invoices.sql` | `clients.address_county`, `vat_number`, `company_number` and the `clearbooks_synced_at`/`_by` stamp, so a pull from Clear Books has somewhere to put everything their record holds; `invoices.source` and a nullable `clearbooks_invoice_id`, for an invoice raised outside the API. |
 
 `005` is the one migration that is genuinely forward-only: it reads
 `production_status_log` and then drops it, so a second run has nothing to read.
@@ -721,6 +722,106 @@ clipped, and every action cell is the same height. Below 900px it goes back to
 flexible, because the fixed width exists to line rows up beside each other and
 there is no row beside it down there.
 
+### Clear Books sync, invoicing without it, and honest route cards (24 August 2026)
+
+| # | Item | Status |
+|---|---|---|
+| 1 | Pull client details from Clear Books | Done — on demand, mapped from the verified Customer schema |
+| 2 | Manual invoice fallback | Done — settles the note, stays distinguishable |
+| 3 | Free-issue figures on the route card | Done — one source, three figures that reconcile |
+| 4 | Route card wording | Done |
+
+**Clear Books customer sync.** `ClearBooksClient::customer()` already existed, so
+what is new is the mapping and the two ways in: a button on an existing client,
+and a fetch on the new-client form that fills the fields in before anything is
+saved. On demand and never in the background — a client's address changing over
+there is not an event this application should act on silently, and the flash says
+which fields moved rather than announcing an unverifiable success.
+
+The field names were read out of the `Customer`/`Contact` and `Address` schemas
+in the published spec, not guessed, which is the standing lesson of the last time
+this application talked to Clear Books. Three columns were added because their
+record carries things this table had nowhere to put — county, VAT number, company
+number — and a sync that silently dropped a third of the record would be worse
+than no sync, because the local copy would look complete.
+
+Judgement calls worth knowing about:
+
+- Clear Books splits `building` from `line1` and this table does not, so the two
+  are joined rather than the building dropped.
+- Their `email` is the accounts contact, so it goes to `billing_email`. It fills
+  the main contact's email as well, but only when that is empty: somebody may
+  have put a production contact there deliberately, and an accounts address is
+  not an improvement on it.
+- `countryCode` is a code and this column holds a name defaulting to United
+  Kingdom. GB is named; anything else is stored as the code, visibly a code
+  rather than quietly wrong.
+- Anything Clear Books leaves blank is left alone locally. A field they have not
+  filled in is not a statement that ours is wrong.
+- A record still holding a pre-verification value like `CB-ACME-001` is told what
+  a customer ID actually is, rather than that a value plainly sitting there is
+  missing.
+
+**Invoicing without Clear Books.** The connection is the one part of this
+application that depends on somebody else's service being reachable, and there
+was no way to carry on when it is not. A delivery note can now be settled with an
+invoice raised anywhere — in Clear Books' own interface, or on a pad.
+
+The invoice number is required, because without it this would be a flag saying
+"invoiced, somehow", which is worse than the note staying on the list. The amount
+comes pre-filled from the order's own prices and can be corrected: whoever raised
+the real invoice knows what it said, and the tracker only knows what it thinks the
+goods are worth.
+
+`clearbooks_invoice_id` became nullable rather than being filled with an empty
+string — a blank id that looks like data is how somebody later writes a lookup
+against it and gets nothing back with no idea why. `source` says which kind it is,
+and shows as "Raised outside Clear Books" on the note, on the notes list and on
+the order page. `raised_by` and `raised_at` already recorded who and when.
+
+The client-facing invoice email used to end "It will appear in Clear Books in the
+usual way", which is a promise the tracker cannot keep for an invoice raised
+somewhere else. It now points at the invoice number instead.
+
+**The route card's free-issue figures.** The card did its own arithmetic in its
+own template — `received - rejected`, inline — which is one copy of a rule too
+many however right the arithmetic happens to be. It now reads
+`OrderLine::freeIssueFigures()`, which is also what `freeIssueOutstanding()` is
+built from, so the card and the order page cannot come to different answers about
+the same line.
+
+Three labelled figures instead of one line of arithmetic, because "9 required, 9
+usable" tells somebody at a machine nothing about whether anything is still
+coming. They reconcile by construction — accepted + still to come = required —
+and where more has arrived than the job needs the extra is named as spare rather
+than left looking like an error. 7,371 combinations of required/received/rejected
+were checked: the identity holds in every one, and a rejection followed by its
+replacement nets out exactly (9 → 7 → 9, outstanding 0 → 2 → 0).
+
+*On the reported example.* Built as described — a divide-by-2 part, 9 required,
+9 checked in, 2 rejected, 2 replacements received — the card showed "9 required,
+9 usable on site", which is arithmetically correct, so the reported "11 usable"
+could not be reproduced through the check-in flow. The two counters are written
+in exactly two paired places and over-delivery beyond the requirement is refused,
+so they cannot drift apart. The one state that does produce 11 is a further
+over-delivery (13 delivered, 2 rejected), where the old card said "9 required, 11
+usable on site" and left the reader to work out why usable exceeded required. The
+new card says 9 needed, 11 arrived and accepted, 2 spare on the shelf, and tells
+the floor not to start the extra without asking.
+
+**Wording.** "Where the quantity is" is now "Progress so far". Alongside it:
+"Material source" became "Where the material comes from", "Build time (est.)"
+became "Estimated build time" with "minutes each", "Internal notes" became "Notes
+on this part" (the whole card is internal), the blank box is "Notes from the
+floor", and a part with no free issue says so in one row rather than showing three
+zeroes.
+
+**Found in passing.** Widening the client table caught a fault in the same
+change: two `INSERT`/`UPDATE` statements gained placeholders whose parameters had
+not been added, which would have broken the existing Save changes button. Both
+statements are now checked by comparing every named placeholder against the
+parameter array.
+
 ---
 
 ## 5. Clear Books — what the verification found
@@ -764,6 +865,12 @@ Still not done: **no invoice has been raised against a live Clear Books
 account from this code.** The request is built from the published spec rather
 than guessed, which is a different thing from proven. Raise one real invoice
 against a low-value delivery note before trusting it.
+
+Since then: the customer *read* has a second caller, the on-demand client sync,
+mapped from the same spec and equally unproven against a live account. And there
+is now a way to invoice without any of it — a delivery note can be settled with
+an invoice number typed in, marked as raised outside Clear Books, so an
+unreachable API stops being a reason for work to sit unbilled.
 
 ---
 

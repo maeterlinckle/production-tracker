@@ -877,6 +877,18 @@ unreachable API stops being a reason for work to sit unbilled.
 ## 6. Known gaps and things to watch
 
 **No automated test suite.** Matches Kitwell's level of rigour, as specified.
+
+**Booleans are converted to 0/1 in `Database::query()`.** PDO binds everything
+handed to `execute()` as a string and emulation is off, so a bound `false`
+reached MariaDB as `''` and was rejected by STRICT_TRANS_TABLES — while a bound
+`true` arrived as `1` and worked. That asymmetry hid the fault: recording a
+*failed* login attempt was the only call site passing a raw bool, so from the
+first install every wrong password produced a 500 instead of "check your
+details", and because the attempt was never recorded the lockout could never
+trigger. Direct `$pdo->prepare()` calls inside transaction closures do not go
+through that conversion; none of them binds a bool today, but a new one would
+need `? 1 : 0` written out.
+
 Verification is a full HTTP sweep across four role levels plus browser testing
 of the workflows. `tests/` exists but is near-empty.
 

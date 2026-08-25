@@ -39,9 +39,43 @@ final class Database
     public static function query(string $sql, array $params = []): PDOStatement
     {
         $statement = self::connection()->prepare($sql);
-        $statement->execute($params);
+        $statement->execute(self::bindable($params));
 
         return $statement;
+    }
+
+    /**
+     * Booleans, as something MariaDB will accept.
+     *
+     * PDOStatement::execute() binds every value it is handed as a string, and
+     * emulation is off, so the driver sends exactly that. `true` becomes '1',
+     * which a TINYINT column takes happily — and `false` becomes the empty
+     * string, which under STRICT_TRANS_TABLES is error 1366, "Incorrect integer
+     * value: ''".
+     *
+     * So a bound `true` worked and a bound `false` threw, which is the worst
+     * shape a bug can have: the failing half is the half nobody tests. Recording
+     * a *failed* login attempt was the one call site that passed a raw bool, and
+     * it had been throwing since the first install — every wrong password
+     * produced a 500 instead of "check your details", and because the attempt
+     * was never recorded, the lockout could never trigger either.
+     *
+     * Fixed here rather than at the call site. Every other place that writes a
+     * boolean column already spells out `? 1 : 0`, which is the tell: if the
+     * data layer needs each caller to remember something, one of them will not.
+     *
+     * @param array<string,mixed> $params
+     * @return array<string,mixed>
+     */
+    private static function bindable(array $params): array
+    {
+        foreach ($params as $key => $value) {
+            if (is_bool($value)) {
+                $params[$key] = $value ? 1 : 0;
+            }
+        }
+
+        return $params;
     }
 
     public static function one(string $sql, array $params = []): ?array

@@ -88,6 +88,8 @@ Application
                               that stops with "command denied")
   reset-database              empty the database and rebuild the schema, ready
                               for a first administrator (asks twice; ignores --yes)
+  reset-uploads               delete every uploaded and generated file
+                              (asks twice; ignores --yes)
 
 Email and integrations
   install-composer            install Composer, if the machine has none
@@ -600,6 +602,132 @@ cmd_reset_database() {
     say ""
 }
 
+#
+# Empty the uploads directory.
+#
+# The other half of reset-database. That one clears the records and leaves the
+# files; this clears the files and leaves the records. Running one without the
+# other is a legitimate thing to want — a database reset before handing the
+# machine to the same client keeps their drawings — but running neither and
+# expecting a fresh start is not, so each says what the other leaves behind.
+#
+# Nothing here is recoverable. Drawings, purchase orders, part media and every
+# generated delivery note and route card are files the database only ever held
+# the paths of; a dump does not contain them.
+#
+# The directory is emptied rather than removed and rebuilt: it keeps whatever
+# ownership, mode and SELinux label it already had, which on a working install
+# is exactly what is wanted. No subdirectories are recreated either. The
+# application makes them on demand — Upload, Image and PdfService all mkdir
+# recursively — and a hard-coded list here would go stale the way install.sh's
+# already has, where part-photos and order-photos survive a schema change that
+# retired both.
+#
+cmd_reset_uploads() {
+    require_root reset-uploads
+    [ -t 0 ] || die "reset-uploads has to be answered at a terminal. It will not run from a script or a pipe."
+
+    local uploads="$APP_DIR/storage/uploads"
+
+    # This function deletes a directory tree, so the path is checked rather than
+    # trusted: absolute, present, and exactly where it should be under the
+    # installation. An empty or surprising value stops here, not at rm.
+    [ -n "$APP_DIR" ]            || die "APP_DIR is not set."
+    [ -d "$uploads" ]            || die "$uploads does not exist. Nothing to clear."
+    case "$uploads" in
+        /*/storage/uploads) ;;
+        *) die "Refusing to clear '$uploads' — that is not an uploads directory." ;;
+    esac
+
+    local files size
+    files="$(find "$uploads" -type f 2>/dev/null | wc -l | tr -d ' ')"
+    size="$(du -sh "$uploads" 2>/dev/null | cut -f1)"
+
+    step "Clear the uploads directory"
+
+    if [ "${files:-0}" -eq 0 ]; then
+        say "  $uploads holds no files — there is nothing to clear."
+        return 0
+    fi
+
+    say ""
+    printf '  %sThis deletes every uploaded and generated file.%s\n' "$C_BOLD" "$C_RESET"
+    say ""
+    say "  $uploads"
+    say "  $files file(s), ${size:-unknown}:"
+    say ""
+
+    # Per top-level directory, so the count is recognisable as the things they
+    # are rather than one number.
+    local dir name count
+    for dir in "$uploads"/*/; do
+        [ -d "$dir" ] || continue
+        name="$(basename "$dir")"
+        count="$(find "$dir" -type f 2>/dev/null | wc -l | tr -d ' ')"
+        printf '    %6s  %s\n' "$count" "$name"
+    done
+
+    say ""
+    say "  None of it is in a database dump — the database only holds the paths."
+    say "  Afterwards those paths will point at files that are not there, so a"
+    say "  drawing or a delivery note opened from the tracker will 404 until the"
+    say "  records go too:  $0 reset-database"
+    say ""
+    printf '  %sTake a backup first if there is any doubt:%s  %s backup\n' \
+        "$C_YELLOW" "$C_RESET" "$0"
+    say ""
+
+    # The same two answers as reset-database, and for the same reason: --yes
+    # must not be able to arm this, and the second one has to be typed on
+    # purpose. `read` drops whitespace either side, so a pasted "RESET " counts;
+    # "reset" and an empty line do not.
+    local answer
+    read -r -p "  Delete every uploaded file? [y/N]: " answer || answer=""
+    case "${answer,,}" in
+        y|yes) ;;
+        *)
+            say ""
+            ok "Nothing was deleted."
+            return 0
+            ;;
+    esac
+
+    local phrase
+    read -r -p "  Type RESET to confirm: " phrase || phrase=""
+    if [ "$phrase" != "RESET" ]; then
+        say ""
+        ok "Nothing was deleted."
+        return 0
+    fi
+
+    step "Clearing $uploads"
+
+    # -mindepth 1 leaves the directory itself alone. Safer than removing and
+    # recreating it, and it cannot walk upwards even if the path were wrong.
+    find "$uploads" -mindepth 1 -delete || die "Could not empty $uploads."
+
+    local left
+    left="$(find "$uploads" -mindepth 1 2>/dev/null | wc -l | tr -d ' ')"
+    [ "${left:-1}" -eq 0 ] || die "$left item(s) are still there. The directory has not been cleared cleanly."
+
+    ok "Deleted $files file(s)"
+
+    # It has to stay writable by the web user or the next upload fails with a
+    # permission error nobody will connect to this command.
+    chown "$WEB_USER":"$WEB_GROUP" "$uploads"
+    chmod 2775 "$uploads"
+    if have restorecon && have getenforce && [ "$(getenforce)" = "Enforcing" ]; then
+        restorecon -R "$uploads" >/dev/null 2>&1 || true
+    fi
+    ok "Ownership and mode re-applied ($WEB_USER:$WEB_GROUP, 2775)"
+
+    step "Ready"
+    say ""
+    say "  The directory is empty. The application creates what it needs as files"
+    say "  are uploaded, so there is nothing to put back by hand."
+    say ""
+}
+
 # ---------------------------------------------------------------------------
 # Email and integrations
 # ---------------------------------------------------------------------------
@@ -1023,6 +1151,7 @@ case "$COMMAND" in
     migrate)            cmd_migrate "$@" ;;
     db-grant)           cmd_db_grant ;;
     reset-database)     cmd_reset_database ;;
+    reset-uploads)      cmd_reset_uploads ;;
 
     install-composer)   cmd_install_composer ;;
     composer-install)   cmd_composer_install ;;

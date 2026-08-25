@@ -602,9 +602,23 @@ the terminal — a reset that could be triggered by a stray pipe or a line in a
 script is a reset waiting to happen.
 
 Uploaded files are left alone. The database only ever held their paths, so
-afterwards `storage/uploads` is still there and nothing points at it; clear it
-by hand if the intention was to hand the machine on rather than start the same
-site again. Take a `backup` first either way.
+afterwards `storage/uploads` is still there and nothing points at it. Clearing
+those is `reset-uploads`, below. Take a `backup` first either way.
+
+`reset-uploads` is the other half: it deletes every uploaded and generated
+file — drawings, purchase orders, part media, and the delivery notes and
+route cards the application wrote — and leaves `storage/uploads` empty and
+writable. None of it is in a database dump, which only holds the paths, so
+the `uploads-*.tar.gz` from `backup` is the only way back.
+
+It asks the same two questions, ignores `--yes` in the same way, and refuses
+without a terminal for the same reason. Afterwards the records point at files
+that are not there, so a drawing opened from the tracker will 404 until
+`reset-database` is run too — the two together are a fresh install, either one
+alone is deliberate.
+
+No subdirectories are recreated. The application makes them as files arrive,
+which is also why the installer no longer pre-creates a list of them.
 
 ### Email and integrations
 

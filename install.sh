@@ -1143,15 +1143,14 @@ else
     ok "Files copied"
 fi
 
-# One directory per kind of upload, matching what the application writes.
+# Just the two roots. The per-kind directories underneath are made by the
+# application as files arrive -- Upload, Image and PdfService all mkdir
+# recursively -- and listing them here only creates something to go stale.
+# It already had: part-photos and order-photos were still being created long
+# after the schema change that retired both, and part-media, which replaced
+# them, was never in the list at all.
 mkdir -p "$INSTALL_DIR/storage/logs" \
-         "$INSTALL_DIR/storage/uploads/drawings" \
-         "$INSTALL_DIR/storage/uploads/pos" \
-         "$INSTALL_DIR/storage/uploads/part-photos" \
-         "$INSTALL_DIR/storage/uploads/order-photos" \
-         "$INSTALL_DIR/storage/uploads/delivery-notes" \
-         "$INSTALL_DIR/storage/uploads/route-cards" \
-         "$INSTALL_DIR/storage/uploads/branding"
+         "$INSTALL_DIR/storage/uploads"
 
 # PHPMailer sends the mail, dompdf renders every delivery note and route card,
 # and endroid/qr-code draws the code the workshop scans to check material in.

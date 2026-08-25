@@ -152,6 +152,14 @@ $router->group(['staff'], function (Router $router): void {
     $router->get('/staff/clients/{clientId:\d+}/parts-search-orderable', [StaffOrderController::class, 'searchOrderableForClient']);
 
     $router->get('/staff/orders/{id:\d+}', [StaffOrderController::class, 'show']);
+
+    // Notes and queries, from Junction's side of the merged order page.
+    // OrderInteractionController was written for both audiences from the start
+    // -- it admits staff and redirects them back to the staff page -- but only
+    // the client half was ever routed, so every staff submission 404d.
+    $router->post('/staff/orders/{id:\d+}/notes', [OrderInteractionController::class, 'addNote'], ['csrf']);
+    $router->post('/staff/orders/{id:\d+}/queries', [OrderInteractionController::class, 'raiseQuery'], ['csrf']);
+    $router->post('/staff/orders/{id:\d+}/queries/{queryId:\d+}/reply', [OrderInteractionController::class, 'replyQuery'], ['csrf']);
     // The quantity workflow (item 6). One move action covers advancing, moving
     // back and failing, because they are the same operation with a different
     // destination.

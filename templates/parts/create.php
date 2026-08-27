@@ -11,11 +11,13 @@
             <div class="field">
                 <label for="cpn">Part number</label>
                 <input type="text" id="cpn" name="cpn" value="<?= old($old, 'cpn') ?>" required>
+                <div class="hint">Your part number. This must be unique for any part in this system.</div>
                 <?php if (isset($errors['cpn'])): ?><div class="error"><?= e($errors['cpn']) ?></div><?php endif; ?>
             </div>
             <div class="field">
-                <label for="name">Name / description</label>
+                <label for="name">Part Name</label>
                 <input type="text" id="name" name="name" value="<?= old($old, 'name') ?>" required>
+                <div class="hint">A short name or description for the part. Do not use a part number here.</div>
                 <?php if (isset($errors['name'])): ?><div class="error"><?= e($errors['name']) ?></div><?php endif; ?>
             </div>
         </div>

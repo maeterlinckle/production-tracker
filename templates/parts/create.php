@@ -9,7 +9,7 @@
         <h2 class="mt-0">Details</h2>
         <div class="form-row">
             <div class="field">
-                <label for="cpn">Client part number (CPN)</label>
+                <label for="cpn">Part number</label>
                 <input type="text" id="cpn" name="cpn" value="<?= old($old, 'cpn') ?>" required>
                 <?php if (isset($errors['cpn'])): ?><div class="error"><?= e($errors['cpn']) ?></div><?php endif; ?>
             </div>

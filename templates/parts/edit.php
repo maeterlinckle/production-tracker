@@ -54,8 +54,9 @@ $cancel = $action;
                     </div>
                 </div>
                 <div class="field">
-                    <label for="name">Name / description</label>
+                    <label for="name">Part Name</label>
                     <input type="text" id="name" name="name" value="<?= e($part['name']) ?>" required>
+                    <div class="hint">A short name or description for the part. Do not use a part number here.</div>
                     <?php if (isset($errors['name'])): ?><div class="error"><?= e($errors['name']) ?></div><?php endif; ?>
                 </div>
             </div>

@@ -23,6 +23,19 @@
 <body>
 <a class="skip-link" href="#main">Skip to content</a>
 
+<?php /*
+    A <dialog> with no `open` attribute is hidden by the user agent, and only
+    a script can open one. With no script there is nothing to open it and the
+    form inside would be unreachable — so it goes back into the flow instead,
+    as an ordinary section of the page. See partials/row-editor.php.
+*/ ?>
+<noscript>
+    <style>
+        dialog.row-editor { display: block; position: static; width: auto; margin: 0 0 var(--space-4); }
+        dialog.row-editor [data-row-editor-close] { display: none; }
+    </style>
+</noscript>
+
 <?= partial('partials/nav') ?>
 
 <main id="main" class="container">

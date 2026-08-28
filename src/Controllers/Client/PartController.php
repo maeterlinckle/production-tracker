@@ -17,6 +17,7 @@ use App\Models\Part;
 use App\Models\PartFile;
 use App\Models\PartLink;
 use App\Models\PartMedia;
+use App\Models\PartPriceBreak;
 use App\Services\PartForm;
 use App\Services\PartView;
 
@@ -248,6 +249,34 @@ final class PartController
         }
 
         Response::redirect('/parts/' . $id);
+    }
+
+    /**
+     * The client's own target price at different quantities.
+     *
+     * Only ever `target`: the quoted price and its breaks are Junction's, and
+     * the kind is fixed here rather than read from the request so there is no
+     * shape of submission that reaches the other one.
+     */
+    public function updatePriceBreaks(string $id): void
+    {
+        Auth::authorize('manage_parts');
+        $part = $this->findOwnedPart((int) $id);
+
+        $rows = [];
+        $quantities = Request::post('break_qty', []);
+        $prices = Request::post('break_price', []);
+
+        if (is_array($quantities)) {
+            foreach (array_values($quantities) as $i => $qty) {
+                $rows[] = ['qty' => (string) $qty, 'price' => (string) (array_values((array) $prices)[$i] ?? '')];
+            }
+        }
+
+        PartPriceBreak::replace($part['id'], 'target', $rows, (int) Auth::id());
+
+        Flash::success('Target price breaks updated. Junction sees these alongside your target price.');
+        Response::redirect('/parts/' . $id . '#pricing');
     }
 
     /** AJAX: quoted/orderable parts matching a search term, for the Place Order combobox. */

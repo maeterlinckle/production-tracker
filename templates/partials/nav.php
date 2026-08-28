@@ -48,6 +48,7 @@ $staffLinks = [
     ['label' => 'Settings', 'href' => '/staff/settings', 'permission' => null, 'children' => [
         ['label' => 'Clients',         'href' => '/staff/clients',                  'permission' => 'manage_clients'],
         ['label' => 'Users',           'href' => '/staff/settings/users',           'permission' => 'manage_settings'],
+        ['label' => 'Quoting',         'href' => '/staff/settings/quoting',         'permission' => 'manage_settings'],
         ['label' => 'Logo',            'href' => '/staff/settings/branding',        'permission' => 'manage_settings'],
         ['label' => 'Email',           'href' => '/staff/settings/email',           'permission' => 'manage_settings'],
         ['label' => 'Email templates', 'href' => '/staff/settings/email/templates', 'permission' => 'manage_settings'],

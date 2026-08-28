@@ -837,3 +837,158 @@
         load(window.location.pathname + window.location.search, false);
     });
 })();
+
+/* ---------------------------------------------------------------------------
+ * The row editor: a popup holding a list of rows that add up.
+ *
+ * Four things on the part page share it — the two build times, the draft quote
+ * lines, and the price breaks — so "add a row" behaves identically in all of
+ * them. See templates/partials/row-editor.php for the markup.
+ *
+ * Everything here is an improvement on a form that already works. Without the
+ * script the dialog is shown in the flow by a <noscript> rule, the spare row
+ * on the end is how a row gets added, and the server does the arithmetic. So
+ * nothing below is allowed to be the only way to do anything.
+ * ------------------------------------------------------------------------- */
+(function () {
+    var editors = document.querySelectorAll('[data-row-editor]');
+    if (editors.length === 0) return;
+
+    // The trigger buttons are useless without this script, and the dialogs are
+    // only hidden by the user agent because it is here. Both facts are settled
+    // on load rather than guessed at in CSS.
+    document.querySelectorAll('[data-row-editor-open]').forEach(function (button) {
+        button.hidden = false;
+    });
+
+    function rowsOf(editor) {
+        return Array.prototype.slice.call(editor.querySelectorAll('[data-row]'));
+    }
+
+    function formatMinutes(total) {
+        if (total <= 0) return '—';
+        if (total < 60) return total + ' min';
+        var hours = Math.floor(total / 60);
+        var rest = total % 60;
+        return rest === 0 ? hours + ' h' : hours + ' h ' + rest + ' min';
+    }
+
+    function formatMoney(total) {
+        // Matches format_money() on the server: the same figure should not
+        // change shape when the page reloads.
+        return '£' + total.toFixed(2);
+    }
+
+    function refresh(editor) {
+        var output = editor.querySelector('[data-row-total]');
+        var rows = rowsOf(editor);
+
+        // A single row has nothing to be removed down to, so its remove button
+        // would be a button that does nothing.
+        rows.forEach(function (row) {
+            var remove = row.querySelector('[data-row-remove]');
+            if (remove) remove.hidden = rows.length < 2;
+        });
+
+        if (!output) return;
+
+        var total = 0;
+        editor.querySelectorAll('[data-row-amount]').forEach(function (input) {
+            var value = parseFloat(input.value);
+            if (!isNaN(value)) total += value;
+        });
+
+        var format = editor.getAttribute('data-row-total-format');
+        output.textContent = format === 'minutes'
+            ? formatMinutes(Math.round(total))
+            : (format === 'money' ? formatMoney(total) : String(total));
+    }
+
+    function isEmpty(row) {
+        return Array.prototype.every.call(row.querySelectorAll('input'), function (input) {
+            return input.value.trim() === '';
+        });
+    }
+
+    function addRow(editor) {
+        var rows = rowsOf(editor);
+        var last = rows[rows.length - 1];
+
+        // The server always renders one spare row on the end, so the first
+        // press of "Add a row" would otherwise leave that spare stranded in
+        // the middle of the list with a new empty row under it. There is
+        // already somewhere to type; go there.
+        if (isEmpty(last)) {
+            var existing = last.querySelector('input');
+            if (existing) existing.focus();
+            return;
+        }
+
+        var copy = last.cloneNode(true);
+
+        copy.querySelectorAll('input').forEach(function (input) { input.value = ''; });
+        // The cloned labels and ids would be duplicates, and a label pointing
+        // at the wrong box is worse than no label. Uniqueness only has to hold
+        // within the page, so the clock is enough.
+        var stamp = Date.now() + '_' + rows.length;
+        copy.querySelectorAll('input').forEach(function (input) {
+            var old = input.id;
+            input.id = old + '_' + stamp;
+            var label = copy.querySelector('label[for="' + old + '"]');
+            if (label) label.setAttribute('for', input.id);
+        });
+
+        editor.querySelector('[data-rows]').appendChild(copy);
+        refresh(editor);
+
+        var first = copy.querySelector('input');
+        if (first) first.focus();
+    }
+
+    document.addEventListener('click', function (event) {
+        var opener = event.target.closest('[data-row-editor-open]');
+        if (opener) {
+            var target = document.getElementById(opener.getAttribute('data-row-editor-open'));
+            if (target) {
+                refresh(target);
+                if (typeof target.showModal === 'function') target.showModal();
+                else target.setAttribute('open', '');
+            }
+            return;
+        }
+
+        var closer = event.target.closest('[data-row-editor-close]');
+        if (closer) {
+            var dialog = closer.closest('[data-row-editor]');
+            // Closing is abandoning: nothing was posted, so the page behind is
+            // still right and reopening re-reads it.
+            if (dialog) {
+                if (typeof dialog.close === 'function') dialog.close();
+                else dialog.removeAttribute('open');
+            }
+            return;
+        }
+
+        var add = event.target.closest('[data-row-add]');
+        if (add) {
+            addRow(add.closest('[data-row-editor]'));
+            return;
+        }
+
+        var remove = event.target.closest('[data-row-remove]');
+        if (remove) {
+            var editor = remove.closest('[data-row-editor]');
+            if (rowsOf(editor).length > 1) {
+                remove.closest('[data-row]').remove();
+                refresh(editor);
+            }
+        }
+    });
+
+    document.addEventListener('input', function (event) {
+        var editor = event.target.closest('[data-row-editor]');
+        if (editor) refresh(editor);
+    });
+
+    editors.forEach(function (editor) { refresh(editor); });
+})();

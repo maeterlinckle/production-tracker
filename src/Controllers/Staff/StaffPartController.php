@@ -19,6 +19,9 @@ use App\Models\Part;
 use App\Models\PartFile;
 use App\Models\PartLink;
 use App\Models\PartMedia;
+use App\Models\PartPriceBreak;
+use App\Models\PartQuote;
+use App\Models\PartTimeEntry;
 use App\Services\Notifications;
 use App\Services\PartForm;
 use App\Services\PartView;
@@ -552,17 +555,165 @@ final class StaffPartController
         Response::redirect('/staff/parts/' . $id);
     }
 
+    /**
+     * Estimated or actual build time, as the list of jobs it is made of.
+     *
+     * The total is never posted — it is the sum of the rows, written by
+     * PartTimeEntry. A form that could also set the total directly would be a
+     * second way to say the same thing, and the two would disagree.
+     */
+    public function updateTimeEntries(string $id, string $kind): void
+    {
+        Auth::authorize('edit_workshop_fields');
+
+        $part = Part::find((int) $id);
+        if ($part === null || !in_array($kind, PartTimeEntry::KINDS, true)) {
+            View::renderError(404, 'Not found', 'That part or that kind of build time does not exist.');
+
+            return;
+        }
+
+        $total = PartTimeEntry::replace(
+            (int) $id,
+            $kind,
+            $this->pairedRows(['task' => 'task', 'minutes' => 'minutes']),
+            (int) Auth::id()
+        );
+
+        // The estimate is what the draft quote prices machine time from, so
+        // changing it moves the draft. Recalculated here rather than left to
+        // go stale until somebody next opens the scratchpad.
+        if ($kind === 'estimated') {
+            PartQuote::refreshForPart((int) $id);
+        }
+
+        Flash::success(
+            PartTimeEntry::KIND_LABELS[$kind] . ' is now '
+            . ($total > 0 ? PartTimeEntry::formatMinutes($total) : 'not recorded') . '.'
+        );
+        Response::redirect('/staff/parts/' . $id . '#build-time');
+    }
+
+    /**
+     * The quoting scratchpad.
+     *
+     * `set_pricing` is staff.quoting and staff.admin — the people the prompt
+     * for this called "the quoting role" — and it is the same capability that
+     * gates setting a price, which is the decision this is working towards.
+     *
+     * An empty rate or mark-up box is not zero, it is "use the house figure",
+     * so the two are read as present-or-absent rather than cast to a number.
+     */
+    public function updateQuoteDraft(string $id): void
+    {
+        Auth::authorize('set_pricing');
+
+        $part = Part::find((int) $id);
+        if ($part === null) {
+            View::renderError(404, 'Part not found', 'That part does not exist.');
+
+            return;
+        }
+
+        $rate = Request::post('machine_rate_per_minute', '');
+        $markup = Request::post('markup_percent', '');
+
+        PartQuote::save(
+            (int) $id,
+            is_numeric($rate) ? (float) $rate : null,
+            is_numeric($markup) ? (float) $markup : null,
+            $this->pairedRows(['label' => 'label', 'amount' => 'amount']),
+            trim((string) Request::post('quote_notes', '')) ?: null,
+            (int) Auth::id()
+        );
+
+        Flash::success('Draft quote saved. It is Junction\'s working, not a price — the client sees nothing of it.');
+        Response::redirect('/staff/parts/' . $id . '#draft-quote');
+    }
+
+    /**
+     * Price breaks, either kind.
+     *
+     * The two are gated differently because they are two different people's
+     * statements: the target price is the client's, which staff may set on
+     * their behalf exactly as they may set the target price itself, and the
+     * quote is Junction's.
+     */
+    public function updatePriceBreaks(string $id, string $kind): void
+    {
+        if (!in_array($kind, PartPriceBreak::KINDS, true)) {
+            View::renderError(404, 'Not found', 'There is no such kind of price break.');
+
+            return;
+        }
+
+        Auth::authorize($kind === 'quoted' ? 'set_pricing' : 'create_client_parts');
+
+        $part = Part::find((int) $id);
+        if ($part === null) {
+            View::renderError(404, 'Part not found', 'That part does not exist.');
+
+            return;
+        }
+
+        PartPriceBreak::replace(
+            (int) $id,
+            $kind,
+            $this->pairedRows(['qty' => 'break_qty', 'price' => 'break_price']),
+            (int) Auth::id()
+        );
+
+        Flash::success(PartPriceBreak::KIND_LABELS[$kind] . ' updated.');
+        Response::redirect('/staff/parts/' . $id . '#pricing');
+    }
+
+    /**
+     * Read the row editor's parallel arrays back into rows.
+     *
+     * The editor posts one array per column — `task[]` beside `minutes[]` —
+     * because that is what a repeated field naturally produces and it survives
+     * a row being added or removed without renumbering anything. Zipping them
+     * back up is the same job every one of these forms needs.
+     *
+     * @param array<string,string> $map result key => posted field name
+     * @return array<int,array<string,string>>
+     */
+    private function pairedRows(array $map): array
+    {
+        $posted = [];
+        $length = 0;
+
+        foreach ($map as $key => $field) {
+            $values = Request::post($field, []);
+            $posted[$key] = is_array($values) ? array_values($values) : [];
+            $length = max($length, count($posted[$key]));
+        }
+
+        $rows = [];
+        for ($i = 0; $i < $length; $i++) {
+            $row = [];
+            foreach ($map as $key => $field) {
+                $row[$key] = (string) ($posted[$key][$i] ?? '');
+            }
+            $rows[] = $row;
+        }
+
+        return $rows;
+    }
+
     public function updateWorkshopFields(string $id): void
     {
         Auth::authorize('edit_workshop_fields');
 
         Part::updateStaffFields((int) $id, [
             'internal_notes' => Request::post('internal_notes') ?: null,
-            'build_time_minutes' => Request::post('build_time_minutes') ?: null,
             'base_material' => Request::post('base_material') ?: null,
             'material_source' => Request::post('material_source') ?: null,
             'material_cost' => Request::post('material_cost') ?: null,
         ], (int) Auth::id());
+
+        // Material cost is one of the figures the draft quote adds up.
+        PartQuote::refreshForPart((int) $id);
 
         // The toggle, the source materials and the ratio are the client's
         // values; Junction can correct them, and that correction is recorded

@@ -2437,3 +2437,100 @@ legend.label { padding: 0; }
 /* Without :has() the tile stays narrow, so the editor has to be able to live
    there: it is cramped rather than unusable, and the form still submits. */
 .caption-edit form { min-width: 0; }
+
+/* --- The row editor -------------------------------------------------------
+   One popup shape for the four lists on a part that add up: the two build
+   times, the draft quote lines and the price breaks. Native <dialog>, so the
+   focus trap, the Escape key and the inertness of the page behind it are the
+   browser's job rather than something to reimplement badly. */
+dialog.row-editor {
+    width: min(44rem, calc(100vw - 2 * var(--space-4)));
+    max-height: calc(100vh - 2 * var(--space-5));
+    padding: var(--space-5);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg-raised);
+    color: var(--text);
+    box-shadow: var(--shadow);
+    overflow: auto;
+}
+dialog.row-editor::backdrop { background: rgb(0 0 0 / 0.5); }
+
+.row-editor-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--space-3);
+    margin-bottom: var(--space-3);
+}
+
+.row-editor-rows { display: grid; gap: var(--space-2); }
+
+/* Label, number, and the control that removes the pair. The remove button is
+   sized to the inputs so the row does not step up and down its own height. */
+.editor-row { display: flex; gap: var(--space-2); align-items: flex-end; }
+.editor-row .field { margin: 0; }
+.editor-row .field-grow { flex: 3 1 12rem; }
+.editor-row .field-narrow { flex: 0 1 8rem; }
+.editor-row input { width: 100%; }
+.editor-row-remove { flex: 0 0 auto; line-height: 1; }
+
+.row-editor-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+    margin-top: var(--space-3);
+}
+/* The running total is the whole point of the list, so it is the largest thing
+   in the popup after the heading. */
+.row-editor-total { font-size: 1.05rem; }
+.row-editor-total strong { font-size: 1.25rem; }
+
+.row-editor-actions {
+    display: flex;
+    gap: var(--space-2);
+    margin-top: var(--space-4);
+    padding-top: var(--space-4);
+    border-top: 1px solid var(--border);
+}
+
+/* The standard inputs on the quoting scratchpad, above its freeform lines. */
+.row-editor-standard {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: var(--space-3);
+    margin-bottom: var(--space-4);
+}
+.row-editor-standard legend { padding: 0 var(--space-2); font-size: 0.82rem; color: var(--text-muted); }
+
+/* The working behind a draft quote. A figure nobody can take apart is the
+   thing this feature exists to replace, so the breakdown is shown, not the
+   total on its own. */
+.quote-breakdown { width: 100%; }
+.quote-breakdown td { padding: var(--space-1) 0; }
+.quote-breakdown td:last-child { text-align: right; white-space: nowrap; }
+.quote-breakdown .is-subtotal td { border-top: 1px solid var(--border); padding-top: var(--space-2); }
+.quote-breakdown .is-total td {
+    border-top: 2px solid var(--border-strong);
+    padding-top: var(--space-2);
+    font-weight: 600;
+    font-size: 1.05rem;
+}
+.quote-breakdown .quote-detail { color: var(--text-muted); font-size: 0.85rem; }
+
+/* An itemised total, listed under the figure it makes up. */
+.itemised-list { list-style: none; margin: var(--space-2) 0 0; padding: 0; display: grid; gap: var(--space-1); }
+.itemised-list li { display: flex; justify-content: space-between; gap: var(--space-3); font-size: 0.9rem; }
+.itemised-list .itemised-task { color: var(--text-muted); overflow-wrap: anywhere; }
+.itemised-list .itemised-value { white-space: nowrap; }
+
+/* Over the estimate is worth seeing; under it is not a problem. */
+.variance-over { color: var(--warn); }
+.variance-under { color: var(--ok); }
+
+/* Quantity/price pairs, wherever a price is shown. */
+.price-break-list { list-style: none; margin: var(--space-2) 0 0; padding: 0; display: grid; gap: var(--space-1); }
+.price-break-list li { display: flex; justify-content: space-between; gap: var(--space-3); font-size: 0.9rem; }
+.price-break-qty { color: var(--text-muted); }

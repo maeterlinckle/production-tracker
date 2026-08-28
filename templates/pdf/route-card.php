@@ -10,6 +10,7 @@
  */
 use App\Models\OrderLine;
 use App\Models\Part;
+use App\Models\PartTimeEntry;
 ?>
 <!doctype html>
 <html>
@@ -73,7 +74,7 @@ use App\Models\Part;
                 </tr>
                 <tr><td class="label">Base material</td><td><?= e($part['base_material'] ?: '—') ?></td></tr>
                 <tr><td class="label">Where the material comes from</td><td><?= e($part['material_source'] ?: '—') ?></td></tr>
-                <tr><td class="label">Estimated build time</td><td><?= $part['build_time_minutes'] ? e((string) $part['build_time_minutes']) . ' minutes each' : 'Not recorded' ?></td></tr>
+                <tr><td class="label">Estimated build time</td><td><?= $part['estimated_build_time_minutes'] ? e(PartTimeEntry::formatMinutes((int) $part['estimated_build_time_minutes'])) . ' each' : 'Not recorded' ?></td></tr>
                 <?php if (!Part::hasFreeIssue($part)): ?>
                     <tr>
                         <td class="label">Free-issue material</td>

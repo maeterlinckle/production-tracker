@@ -1,5 +1,5 @@
 <?php
-/** @var bool $clearBooksConnected */ /** @var bool $hasLogo */ /** @var int $clientCount */
+/** @var bool $clearBooksConnected */ /** @var float $quotingRate */ /** @var string $quotingMarkup */ /** @var bool $hasLogo */ /** @var int $clientCount */
 /** @var int $staffCount */ /** @var int $customisedTemplates */ /** @var bool $remindersEnabled */
 ?>
 <div class="page-head">
@@ -56,6 +56,16 @@
         <h3>Reminders</h3>
         <p>The scheduled digest of parts still outstanding, and who at Junction receives it.</p>
         <span class="report-card-go muted"><?= $remindersEnabled ? 'On' : 'Off' ?> &rarr;</span>
+    </a>
+</div>
+
+<h2 class="section-title">Quoting</h2>
+
+<div class="card-grid">
+    <a href="<?= url('/staff/settings/quoting') ?>" class="card report-card">
+        <h3>Rates</h3>
+        <p>The machine cost per minute and the mark-up a draft part quote starts from. Either can be changed for one part without changing these.</p>
+        <span class="report-card-go muted"><?= e(format_money($quotingRate)) ?>/min &middot; <?= e((string) $quotingMarkup) ?>% &rarr;</span>
     </a>
 </div>
 

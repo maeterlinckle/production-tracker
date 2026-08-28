@@ -438,16 +438,20 @@ final class Part
 
     public static function updateStaffFields(int $id, array $data, int $userId): void
     {
+        // Build time is not here any more. It is the sum of
+        // `part_time_entries` and is rewritten by PartTimeEntry when those
+        // rows change — a form that could also type a total straight in would
+        // be a second, quieter way to set the same figure, and the two would
+        // disagree within a week.
         Database::query(
             'UPDATE parts SET
-                internal_notes = :internal_notes, build_time_minutes = :build_time_minutes,
+                internal_notes = :internal_notes,
                 base_material = :base_material, material_source = :material_source,
                 material_cost = :material_cost, updated_by = :updated_by
              WHERE id = :id',
             [
                 'id' => $id,
                 'internal_notes' => $data['internal_notes'] ?? null,
-                'build_time_minutes' => $data['build_time_minutes'] ?? null,
                 'base_material' => $data['base_material'] ?? null,
                 'material_source' => $data['material_source'] ?? null,
                 'material_cost' => $data['material_cost'] ?? null,

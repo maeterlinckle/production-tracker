@@ -159,16 +159,20 @@ $cancel = $action;
         <div class="card">
             <h2 class="mt-0">Junction-only workshop details</h2>
             <p class="text-muted">Never shown to the client.</p>
+            <?php /*
+                Build time is not here. It is a list of jobs that add up now,
+                not a number to type, and it is edited on the part page where
+                the estimate and the actual can be read against each other.
+            */ ?>
             <div class="form-row">
-                <div class="field"><label for="build_time_minutes">Build time (minutes)</label><input type="number" min="0" id="build_time_minutes" name="build_time_minutes" value="<?= e((string) ($part['build_time_minutes'] ?? '')) ?>"></div>
                 <div class="field"><label for="base_material">Base material</label><input type="text" id="base_material" name="base_material" value="<?= e($part['base_material'] ?? '') ?>"></div>
-            </div>
-            <div class="form-row">
                 <div class="field"><label for="material_source">Material source</label><input type="text" id="material_source" name="material_source" value="<?= e($part['material_source'] ?? '') ?>"></div>
-                <?php if ($canSeePricing): ?>
-                    <div class="field"><label for="material_cost">Material cost</label><input type="number" step="0.01" min="0" id="material_cost" name="material_cost" value="<?= e((string) ($part['material_cost'] ?? '')) ?>"></div>
-                <?php endif; ?>
             </div>
+            <?php if ($canSeePricing): ?>
+                <div class="form-row">
+                    <div class="field"><label for="material_cost">Material cost</label><input type="number" step="0.01" min="0" id="material_cost" name="material_cost" value="<?= e((string) ($part['material_cost'] ?? '')) ?>"></div>
+                </div>
+            <?php endif; ?>
             <div class="field">
                 <label for="internal_notes">Internal notes</label>
                 <textarea id="internal_notes" name="internal_notes"><?= e($part['internal_notes'] ?? '') ?></textarea>

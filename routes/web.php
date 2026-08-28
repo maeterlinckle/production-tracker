@@ -65,6 +65,9 @@ $router->group(['auth'], function (Router $router): void {
     $router->post('/parts/{id:\d+}/files', [PartController::class, 'uploadFile'], ['csrf']);
     $router->post('/parts/{id:\d+}/photos', [PartController::class, 'uploadPhoto'], ['csrf']);
     $router->post('/parts/{id:\d+}/photos/{photoId:\d+}/delete', [PartController::class, 'deletePhoto'], ['csrf']);
+    // The client's own target price at different quantities. Only ever the
+    // target -- the kind is fixed in the controller, not read from the URL.
+    $router->post('/parts/{id:\d+}/price-breaks', [PartController::class, 'updatePriceBreaks'], ['csrf']);
     $router->get('/parts/{id:\d+}/link-search', [PartController::class, 'searchLinkable']);
     $router->get('/parts/{id:\d+}/linked-summary', [PartController::class, 'linkedSummary']);
     $router->get('/parts-search-orderable', [PartController::class, 'searchOrderable']);
@@ -147,6 +150,13 @@ $router->group(['staff'], function (Router $router): void {
     $router->post('/staff/parts/{id:\d+}/media/{mediaId:\d+}/main', [StaffPartController::class, 'setMainMedia'], ['csrf']);
     $router->post('/staff/parts/{id:\d+}/media/{mediaId:\d+}/delete', [StaffPartController::class, 'deleteMedia'], ['csrf']);
     $router->post('/staff/parts/{id:\d+}/price', [StaffPartController::class, 'setPrice'], ['csrf']);
+
+    // The four lists on a part that add up: two build times, the quoting
+    // scratchpad, and price breaks of either kind. All of them post from the
+    // same row editor -- see templates/partials/row-editor.php.
+    $router->post('/staff/parts/{id:\d+}/time/{kind:estimated|actual}', [StaffPartController::class, 'updateTimeEntries'], ['csrf']);
+    $router->post('/staff/parts/{id:\d+}/quote-draft', [StaffPartController::class, 'updateQuoteDraft'], ['csrf']);
+    $router->post('/staff/parts/{id:\d+}/price-breaks/{kind:target|quoted}', [StaffPartController::class, 'updatePriceBreaks'], ['csrf']);
     $router->post('/staff/parts/{id:\d+}/workshop-fields', [StaffPartController::class, 'updateWorkshopFields'], ['csrf']);
 
     $router->get('/staff/orders', [StaffOrderController::class, 'index']);
@@ -218,6 +228,10 @@ $router->group(['staff'], function (Router $router): void {
     $router->get('/staff/settings/branding', [SettingsController::class, 'branding']);
     $router->post('/staff/settings/logo', [SettingsController::class, 'updateLogo'], ['csrf']);
     $router->post('/staff/settings/logo/{variant:light|dark}/remove', [SettingsController::class, 'removeLogo'], ['csrf']);
+
+    // The house figures every draft quote starts from.
+    $router->get('/staff/settings/quoting', [SettingsController::class, 'quoting']);
+    $router->post('/staff/settings/quoting', [SettingsController::class, 'updateQuoting'], ['csrf']);
 
     $router->get('/staff/settings/users', [StaffUserController::class, 'index']);
     $router->post('/staff/settings/users', [StaffUserController::class, 'store'], ['csrf']);

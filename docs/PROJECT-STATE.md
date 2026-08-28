@@ -85,7 +85,7 @@ shared include. Patterns may be copied; code may not.
 
 ## 3. Schema
 
-37 tables, migrations `001`–`012` applied. Primary keys in bold.
+41 tables, migrations `001`–`013` applied. Primary keys in bold.
 
 | Table | Columns |
 |---|---|
@@ -112,7 +112,11 @@ shared include. Patterns may be copied; code may not.
 | `order_po_documents` | **id**, order_id, po_number, file_path, original_filename, mime_type, file_size, is_original, note, uploaded_by, uploaded_at |
 | `order_queries` | **id**, order_id, raised_by, subject, body, status, created_at, updated_at |
 | `order_query_replies` | **id**, order_query_id, user_id, body, created_at |
-| `parts` | **id**, client_id, cpn, name, description, usual_order_qty, target_price, notes, has_free_issue, free_issue_relationship, free_issue_factor, free_issue_updated_by, free_issue_updated_at, status, is_archived, internal_notes, build_time_minutes, quoted_price, quoted_price_set_by, quoted_price_set_at, price_under_review, base_material, material_source, material_cost, created_by, updated_by, created_at, updated_at |
+| `parts` | **id**, client_id, cpn, name, description, usual_order_qty, target_price, notes, has_free_issue, free_issue_relationship, free_issue_factor, free_issue_updated_by, free_issue_updated_at, status, is_archived, internal_notes, estimated_build_time_minutes, actual_build_time_minutes, quoted_price, quoted_price_set_by, quoted_price_set_at, price_under_review, base_material, material_source, material_cost, created_by, updated_by, created_at, updated_at |
+| `part_price_breaks` | **id**, part_id, kind, qty, price, set_by, set_at |
+| `part_quote_drafts` | **part_id**, machine_rate_per_minute, markup_percent, draft_total, notes, updated_by, updated_at |
+| `part_quote_lines` | **id**, part_id, label, amount, position |
+| `part_time_entries` | **id**, part_id, kind, task, minutes, position, recorded_by, recorded_at |
 | `parts_return_receipts` | **id**, delivery_note_id, order_line_id, qty_received, notes, received_by, received_at |
 | `part_alternate_numbers` | **id**, part_id, number, label |
 | `part_files` | **id**, part_id, file_path, original_filename, mime_type, file_size, version_no, is_current, uploaded_by, uploaded_at |
@@ -254,7 +258,7 @@ bool for templates.
 
 ## 6. Routes
 
-140 routes in two middleware groups (61 GET, 79 POST). `auth` is the client area (staff may also
+146 routes in two middleware groups (62 GET, 84 POST). `auth` is the client area (staff may also
 reach it, scoped to their own client); `staff` is Junction's. `csrf` is on every
 state-changing POST.
 
@@ -331,6 +335,8 @@ error message is.
 | `order-notes-queries.php` | Notes and queries, both audiences. Posts to `/staff/orders/...` or `/orders/...` by viewer. |
 | `part-media.php` | Part photo/document/tooling grid, plus the order attachments tagged with this part. |
 | `parts-results.php` | The parts listing region: count, table, pages. Both audiences, and what the AJAX search asks for on its own. |
+| `quote-standard-inputs.php` | The rate and mark-up boxes inside the draft-quote editor. Empty means "follow Settings". |
+| `row-editor.php` | The popup holding a list of rows that add up. Four uses on the part page — see §7.1. |
 | `qty-bar.php` | A done-of-total progress bar. `label`, `done`, `total`. |
 | `stage-moves.php` | The production-status table and its move controls. |
 | `stepper.php` | The proportional stage bar. Built from spans, so it is valid inside a `<summary>`. |
@@ -354,7 +360,9 @@ step: `data-theme-toggle`, `data-nav`, `data-dismiss`, `data-flash-autohide`,
 `data-toggle-password`, `data-copy`, `data-checkin-*`, `data-reject-*`,
 `data-cpn-check` / `data-cpn-status` / `data-cpn-client`, `data-line-card`,
 `data-parts-search` / `data-parts-query` / `data-parts-filter` /
-`data-parts-results` / `data-parts-submit`.
+`data-parts-results` / `data-parts-submit`, `data-row-editor` /
+`data-row-editor-open` / `data-row-editor-close` / `data-rows` / `data-row` /
+`data-row-add` / `data-row-remove` / `data-row-amount` / `data-row-total`.
 
 **Progressive enhancement is the rule for all of them.** The parts search is a
 real GET form with a real submit button (hidden by the script, not by CSS) and
@@ -365,6 +373,40 @@ no script at all. Everything works with JavaScript off, more slowly.
 `details[open] > summary .caret` rotation, so a triangle means one thing
 everywhere: the navigation drop-downs, the order line cards, the caption
 editors.
+
+### 7.1 The row editor
+
+`partials/row-editor.php` plus `[data-row-editor]` in app.js. One popup shape
+for every list on a part that adds up, so "add a row" behaves identically in
+all of them:
+
+| Editor | Rows | Total |
+|---|---|---|
+| Estimated Build Time | task + minutes | minutes |
+| Actual Build Time | task + minutes | minutes |
+| Draft quote lines | label + amount | money |
+| Price breaks (either kind) | quantity + price | *(none — pairs, not a sum)* |
+
+The caller passes `columns` (name, label, type, and optionally placeholder,
+step, min, `width` and `total`), the existing `rows`, and where to post. The
+column marked `total` is what the live figure adds up, formatted by
+`data-row-total-format`.
+
+**Every one of them works with the script off.** A `<dialog>` with no `open`
+attribute is hidden by the user agent and only a script can open one, so the
+layout carries a `<noscript>` rule that puts them back into the page flow, and
+the trigger buttons render `hidden` and are un-hidden by app.js. The server
+always renders one spare blank row, which is how a row is added without the
+script; with it, "Add a row" focuses that spare rather than stranding it in the
+middle of the list.
+
+**Every list is replace-in-full.** The editor shows the whole list, so what
+comes back *is* the list and a row somebody cleared has to actually go. Blank
+rows are dropped rather than rejected — the spare is not an error.
+
+Posting is parallel arrays (`task[]` beside `minutes[]`), zipped back up by
+`StaffPartController::pairedRows()`. That survives a row being added or removed
+without renumbering anything.
 
 ### Searching a listing
 
@@ -466,7 +508,7 @@ group disappears when nothing under it does.
 | Orders | Place an order (`raise_orders`), All orders (`view_orders`), Delivery notes (`view_orders`) |
 | Parts | New part (`create_client_parts`), All parts (—) |
 | Reports | *(top-level, `view_orders`)* |
-| Settings | Clients (`manage_clients`), Users, Logo, Email, Email templates, Reminders, Clear Books (all `manage_settings`) |
+| Settings | Clients (`manage_clients`), Users, Logo, Email, Email templates, Quoting, Reminders, Clear Books (all `manage_settings`) |
 
 **Client:**
 
@@ -550,7 +592,71 @@ and `reset-uploads` (each asks twice, requires `RESET` typed in full, ignores
 
 ---
 
-## 13. Known state
+## 13. What a part costs, and how long it takes
+
+Four lists on the part page, all edited through the same row editor (§7.1).
+
+**Build time is itemised, in two kinds.** `part_time_entries` holds
+`estimated` and `actual` rows — a task and its minutes — and
+`parts.estimated_build_time_minutes` / `parts.actual_build_time_minutes` are
+the sums, rewritten by `PartTimeEntry::replace()` after every change. Neither
+total is ever typed: `Part::updateStaffFields()` no longer touches them, and
+the workshop form has no box for one. An empty list stores NULL rather than 0,
+because "nobody has estimated this" and "this takes no time" are different
+statements. `PartTimeEntry::variance()` is the comparison the pair exists for.
+
+Gated on `edit_workshop_fields` — quoting, production and admin — because both
+kinds are workshop facts.
+
+**The quoting scratchpad** is `part_quote_drafts` (one row per part) plus
+`part_quote_lines`. It is Junction's working towards a price and **sets
+nothing**; the quoted price is still its own deliberate, client-visible act.
+Gated on `set_pricing`, which is exactly staff.quoting and staff.admin.
+
+`PartQuote::calculate()` returns the whole breakdown, not a number:
+
+```
+machine time  = parts.estimated_build_time_minutes × rate
+              + parts.material_cost
+              + sum of part_quote_lines.amount   (may be negative)
+              = subtotal
+              + subtotal × markup%
+              = Draft Part Quote
+```
+
+Machine time uses the **estimated** build time, never the actual: a quote is
+made before the work, and pricing a repeat order off how long it happened to
+take would charge the client for a bad day.
+
+The rate and mark-up are **NULL when the part follows the house figures**, which
+is not the same as storing a number equal to them. Read with a null check, never
+`??`. Change the figures in Settings → Quoting and every follower moves;
+`PartQuote::recalculateFollowers()` rewrites their cached totals and the
+controller says how many. A part with its own rate does not move, which is the
+whole point of having stored one.
+
+House figures live in `settings` as `quoting.machine_rate_per_minute` and
+`quoting.markup_percent`, at `/staff/settings/quoting` under `manage_settings`.
+
+**Price breaks** are `part_price_breaks`: freely settable quantity/price pairs,
+two kinds. A break's `qty` is where its price *starts* applying, unique per part
+and kind. The part's own `target_price` / `quoted_price` still governs below the
+first break.
+
+| Kind | Whose | Set by |
+|---|---|---|
+| `target` | the client's hoped-for price | client `manage_parts`; staff `create_client_parts` |
+| `quoted` | Junction's answer | `set_pricing` |
+
+**Nothing prices an order through them yet.** Order lines are still priced at
+`parts.quoted_price`, and the part page says so in as many words. Applying a
+break changes what gets invoiced, which is not a thing to start doing as a side
+effect of adding a table. `PartPriceBreak::priceAt()` exists so that when it is
+done it is one call in one place.
+
+---
+
+## 14. Known state
 
 - **No automated test suite.** Verification is a full HTTP sweep across four
   role levels plus browser measurement of layout.

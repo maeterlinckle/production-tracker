@@ -10,6 +10,9 @@ use App\Models\Part;
 use App\Models\PartFile;
 use App\Models\PartLink;
 use App\Models\PartMedia;
+use App\Models\PartPriceBreak;
+use App\Models\PartQuote;
+use App\Models\PartTimeEntry;
 
 /**
  * Everything the part page needs, assembled once.
@@ -35,6 +38,8 @@ final class PartView
     {
         $partId = (int) $part['id'];
         $media = PartMedia::forPart($partId);
+        $draft = PartQuote::draft($partId);
+        $quoteLines = PartQuote::lines($partId);
 
         return [
             'title' => $part['cpn'],
@@ -51,6 +56,23 @@ final class PartView
             // the template shows them to Junction only, because the order
             // page's own photos section is Junction's.
             'orderMedia' => OrderPhoto::forPart($partId),
+
+            // The itemised build times, both kinds. Junction's, and the
+            // template says so.
+            'timeEntries' => PartTimeEntry::bothForPart($partId),
+
+            // Quantity/price pairs. `target` is the client's and is shown to
+            // them; `quoted` is Junction's answer. Both are assembled here and
+            // gated in the template, like everything else on this page.
+            'priceBreaks' => PartPriceBreak::bothForPart($partId),
+
+            // The quoting scratchpad. Worked out live rather than read from
+            // the cached total, because the figures it adds up — the estimate,
+            // the material cost — move without it.
+            'quoteDraft' => $draft,
+            'quoteLines' => $quoteLines,
+            'quoteResult' => PartQuote::calculate($part, $draft, $quoteLines),
+            'quoteDefaults' => PartQuote::defaults(),
         ];
     }
 }

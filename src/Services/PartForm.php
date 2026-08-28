@@ -120,7 +120,6 @@ final class PartForm
     {
         $data = [
             'internal_notes' => Request::post('internal_notes') ?: null,
-            'build_time_minutes' => Request::post('build_time_minutes') ?: null,
             'base_material' => Request::post('base_material') ?: null,
             'material_source' => Request::post('material_source') ?: null,
         ];

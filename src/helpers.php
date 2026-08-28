@@ -195,7 +195,13 @@ if (!function_exists('format_money')) {
             return '—';
         }
 
-        return Config::get('app.currency_symbol', '£') . number_format((float) $amount, 2);
+        $symbol = Config::get('app.currency_symbol', '£');
+        $value = (float) $amount;
+
+        // The sign goes outside the symbol. Nothing was ever negative here
+        // until a quote line could be a deduction, and "£-10.00" is not how
+        // anybody writes money.
+        return ($value < 0 ? '-' : '') . $symbol . number_format(abs($value), 2);
     }
 }
 

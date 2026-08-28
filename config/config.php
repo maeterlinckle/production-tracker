@@ -99,6 +99,15 @@ return [
             'extensions' => ['pdf', 'png', 'jpg', 'jpeg', 'webp', 'doc', 'docx', 'xls', 'xlsx', 'txt'],
             'max_bytes' => 25 * 1024 * 1024,
         ],
+        // Attached to an order rather than to a part: how this particular batch
+        // went. Mostly photographs, but an inspection report or a courier's
+        // proof of delivery arrives as a PDF and belongs with them rather than
+        // in an inbox. Same list and limit as part documents, which is the same
+        // sort of thing filed against a different owner.
+        'order_document' => [
+            'extensions' => ['pdf', 'png', 'jpg', 'jpeg', 'webp', 'doc', 'docx', 'xls', 'xlsx', 'txt'],
+            'max_bytes' => 25 * 1024 * 1024,
+        ],
         // CNC programs, tool lists and CAM files. A deliberately wide list:
         // every control writes its own extension, and the alternative to
         // accepting them is somebody renaming files to get them uploaded.

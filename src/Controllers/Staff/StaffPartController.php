@@ -25,17 +25,59 @@ use App\Services\PartView;
 
 final class StaffPartController
 {
+    /**
+     * Junction's parts list: searched, filtered by client, one page at a time.
+     *
+     * A search reaches archived parts and the plain list does not. There is no
+     * archived tab on this side, so an archived part would otherwise be
+     * unfindable from here — and "what was the number of that part we used to
+     * make for them?" is exactly the question the box gets used for. The rows
+     * say so with a badge.
+     */
     public function index(): void
     {
         $onlyUnquoted = Request::query('filter') === 'unquoted';
-        $parts = $onlyUnquoted ? Part::unquoted() : Part::all();
+        $term = trim((string) Request::query('q', ''));
+        $clientId = (int) Request::query('client', 0) ?: null;
 
-        View::render('staff/parts/index', [
-            'title' => 'Parts',
-            'parts' => $parts,
-            'onlyUnquoted' => $onlyUnquoted,
-            'mainPhotos' => PartMedia::mainPhotosFor(array_column($parts, 'id')),
+        $result = Part::search([
+            'term' => $term,
+            'client_id' => $clientId,
+            'archived' => $term === '' ? false : null,
+            'only_unquoted' => $onlyUnquoted,
+            // Junction's own fields are Junction's to search.
+            'include_internal' => true,
+            'page' => (int) Request::query('page', 1),
         ]);
+
+        $data = [
+            'title' => 'Parts',
+            'result' => $result,
+            'mainPhotos' => PartMedia::mainPhotosFor(array_column($result['rows'], 'id')),
+            'onlyUnquoted' => $onlyUnquoted,
+            'clients' => Client::all(),
+            'clientId' => $clientId,
+            'term' => $term,
+            'isStaff' => true,
+            'showPricing' => Auth::can('view_pricing'),
+            'basePath' => '/staff/parts',
+            'query' => [
+                'q' => $term,
+                'client' => $clientId,
+                'filter' => $onlyUnquoted ? 'unquoted' : null,
+            ],
+        ];
+
+        // Typing in the box asks for the results region and nothing else. Same
+        // partial the full page renders, so the two cannot drift.
+        if (Request::isAjax()) {
+            Response::noCache();
+            echo View::capture('partials/parts-results', $data, null);
+
+            return;
+        }
+
+        View::render('staff/parts/index', $data);
     }
 
     /**
@@ -438,6 +480,30 @@ final class StaffPartController
         }
 
         Response::redirect('/staff/parts/' . $id);
+    }
+
+    /**
+     * Rewrite the description on a file already attached to this part.
+     *
+     * Ownership is checked rather than assumed: the media id comes off the
+     * form, and a file belonging to somebody else's part must not be editable
+     * through this part's URL.
+     */
+    public function updateMediaCaption(string $id, string $mediaId): void
+    {
+        Auth::authorize('edit_workshop_fields');
+
+        $item = PartMedia::find((int) $mediaId);
+        if ($item === null || (int) $item['part_id'] !== (int) $id) {
+            View::renderError(404, 'File not found', 'That file is not attached to this part.');
+
+            return;
+        }
+
+        PartMedia::updateCaption((int) $mediaId, (string) Request::post('caption', ''));
+        Flash::success('Description updated.');
+
+        Response::redirect('/staff/parts/' . $id . '#setup');
     }
 
     public function setMainMedia(string $id, string $mediaId): void

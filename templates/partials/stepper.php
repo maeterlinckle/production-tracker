@@ -11,6 +11,10 @@
  * its quantity, and printing the same numbers twice on top of each other was
  * most of what made the line card hard to read.
  *
+ * Built from spans rather than divs so it is phrasing content, which lets it sit
+ * inside the `<summary>` of a collapsed order line without making the markup
+ * invalid. `.stage-bar` is `display: flex` either way, so it looks identical.
+ *
  * @var array $line an order line with its distribution attached
  */
 use App\Models\OrderLine;
@@ -19,11 +23,11 @@ $occupied = OrderLine::occupiedStages($line);
 $total = array_sum($occupied);
 ?>
 <?php if ($total > 0): ?>
-    <div class="stage-bar" title="<?= e(OrderLine::statusLabel($line)) ?>">
+    <span class="stage-bar" title="<?= e(OrderLine::statusLabel($line)) ?>">
         <?php foreach ($occupied as $stage => $qty): ?>
-            <div class="stage-bar-segment"
-                 data-stage="<?= e($stage) ?>"
-                 style="width: <?= round(($qty / $total) * 100, 2) ?>%"></div>
+            <span class="stage-bar-segment"
+                  data-stage="<?= e($stage) ?>"
+                  style="width: <?= round(($qty / $total) * 100, 2) ?>%"></span>
         <?php endforeach; ?>
-    </div>
+    </span>
 <?php endif; ?>

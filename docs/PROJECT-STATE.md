@@ -64,6 +64,8 @@ rewrites every cached total from the distribution after each write.
 **Views** are plain PHP. `e()` escapes, `url()` builds paths, `partial()`
 includes a fragment, `csrf_field()` emits the token. `View::render($template,
 $data, $layout)`; `View::capture()` returns a string.
+`View::capture($template, $data, null)` renders with no layout at all, which is
+how an AJAX request is answered with the same partial the full page uses.
 
 **Permissions are enforced twice on purpose:** the template hides what somebody
 cannot change, and the service or controller refuses it. A hidden field is not a
@@ -83,7 +85,7 @@ shared include. Patterns may be copied; code may not.
 
 ## 3. Schema
 
-36 tables, migrations `001`–`011` applied. Primary keys in bold.
+37 tables, migrations `001`–`012` applied. Primary keys in bold.
 
 | Table | Columns |
 |---|---|
@@ -106,6 +108,7 @@ shared include. Patterns may be copied; code may not.
 | `order_line_stage_moves` | **id**, order_line_id, from_stage, to_stage, qty, reason, moved_by, moved_at |
 | `order_notes` | **id**, order_id, user_id, body, created_at |
 | `order_photos` | **id**, order_id, order_line_id, file_path, thumb_path, original_filename, mime_type, file_size, caption, uploaded_by, uploaded_at |
+| `order_photo_parts` | **order_photo_id**, **part_id** |
 | `order_po_documents` | **id**, order_id, po_number, file_path, original_filename, mime_type, file_size, is_original, note, uploaded_by, uploaded_at |
 | `order_queries` | **id**, order_id, raised_by, subject, body, status, created_at, updated_at |
 | `order_query_replies` | **id**, order_query_id, user_id, body, created_at |
@@ -251,7 +254,7 @@ bool for templates.
 
 ## 6. Routes
 
-138 routes in two middleware groups. `auth` is the client area (staff may also
+140 routes in two middleware groups (61 GET, 79 POST). `auth` is the client area (staff may also
 reach it, scoped to their own client); `staff` is Junction's. `csrf` is on every
 state-changing POST.
 
@@ -296,6 +299,18 @@ it against the router's own compiled `regex` values (not a second matcher of you
 own). A staff form whose route was never registered rendered for weeks before
 anybody pressed the button.
 
+When writing the audit, note that many hrefs end `?>#fragment"` rather than
+`?>"`. A pattern anchored on `?>"` runs past them into the next expression and
+reports URLs that were never in the template.
+
+**`#line-{id}` is a contract.** Each order line is a collapsed `<details>` with
+that id, the QR code on every printed route card points at it, and app.js opens
+whatever a fragment names. The staff actions that act on one line redirect back
+to it — `move`, `replacement-material`, `close`, `reopen`, and both change-request
+decisions — so the card is open on the line just worked on. Only their success
+paths carry the fragment: a failure redirects to the top of the page, where its
+error message is.
+
 ---
 
 ## 7. Reusable components
@@ -314,10 +329,11 @@ anybody pressed the button.
 | `nav.php` | Primary navigation, permission-filtered (see §9). |
 | `order-builder.php` | The line builder on the order forms. |
 | `order-notes-queries.php` | Notes and queries, both audiences. Posts to `/staff/orders/...` or `/orders/...` by viewer. |
-| `part-media.php` | Part photo/document/tooling grid. |
+| `part-media.php` | Part photo/document/tooling grid, plus the order attachments tagged with this part. |
+| `parts-results.php` | The parts listing region: count, table, pages. Both audiences, and what the AJAX search asks for on its own. |
 | `qty-bar.php` | A done-of-total progress bar. `label`, `done`, `total`. |
 | `stage-moves.php` | The production-status table and its move controls. |
-| `stepper.php` | The proportional stage bar. |
+| `stepper.php` | The proportional stage bar. Built from spans, so it is valid inside a `<summary>`. |
 | `theme-init.php` | Sets `data-theme` before first paint. |
 
 **Services** (`src/Services/`): `Branding`, `ClearBooksClient`,
@@ -336,7 +352,51 @@ back to `auto` under 900px.
 **JS behaviours** are `data-` attribute driven in `public/js/app.js`, no build
 step: `data-theme-toggle`, `data-nav`, `data-dismiss`, `data-flash-autohide`,
 `data-toggle-password`, `data-copy`, `data-checkin-*`, `data-reject-*`,
-`data-cpn-check` / `data-cpn-status` / `data-cpn-client`.
+`data-cpn-check` / `data-cpn-status` / `data-cpn-client`, `data-line-card`,
+`data-parts-search` / `data-parts-query` / `data-parts-filter` /
+`data-parts-results` / `data-parts-submit`.
+
+**Progressive enhancement is the rule for all of them.** The parts search is a
+real GET form with a real submit button (hidden by the script, not by CSS) and
+the page links are real links; the order line cards are `<details>`, which need
+no script at all. Everything works with JavaScript off, more slowly.
+
+**Disclosures all use the same `.caret`** and the same
+`details[open] > summary .caret` rotation, so a triangle means one thing
+everywhere: the navigation drop-downs, the order line cards, the caption
+editors.
+
+### Searching a listing
+
+`Part::search()` is the one implementation, for both the client's list and
+Junction's — the same question at a different scope. It takes `term`,
+`client_id`, `archived`, `only_unquoted`, `include_internal`, `page`,
+`per_page`, and returns `rows`, `total`, `page`, `pages`, `per_page`.
+`Part::PER_PAGE` is 25.
+
+Three things about it are load-bearing:
+
+- **`include_internal` is a permission, not a convenience.** With it, the search
+  also reads `internal_notes`, `base_material` and `material_source`. Those are
+  never shown to a client, and a search that matched on them would hand back
+  their contents a guess at a time. Only the staff controller passes it.
+- **`archived` distinguishes `null` from `false`.** `null` means both, `false`
+  means active only — so it is read with `array_key_exists`, not `??`, which
+  would collapse an explicit null back to the default. Junction's search spans
+  archived parts (there is no archived tab on that side, and the rows carry a
+  badge); the client's stays inside the Active/Archived tab they chose.
+- **`%` and `_` in the term are escaped** with `addcslashes`. Somebody typing a
+  part number containing one means the character, not a wildcard.
+
+Relevance is ordered, not scored: exact part number, then part number starting
+with the term, then name starting with it, then anything containing it.
+Alternate numbers are matched through an `EXISTS` subquery — the number a client
+knows a part by is often not the one it is filed under, which is why the table
+exists at all.
+
+The controller renders `partials/parts-results` alone when `Request::isAjax()`,
+and the whole page otherwise. Same partial both ways, so the typed-into list and
+the loaded list cannot drift.
 
 ---
 
@@ -362,6 +422,35 @@ that record a movement (goods out, both returns) keep their PDF.
 
 **One outstanding free-issue request per line**, reissued rather than
 duplicated. Anything needing more material points at the standing note.
+
+### Attachments: two kinds, deliberately
+
+| | `part_media` | `order_photos` |
+|---|---|---|
+| Belongs to | the part | one order |
+| Says | what this part is, every time it runs | how this batch went |
+| Who sees it | both audiences, read-only for the client | Junction only |
+| Kinds | `photo`, `document`, `tooling` | anything in `uploads.order_document` |
+| Managed by | `edit_workshop_fields` | `production_control` |
+
+`order_photos` is any file attached to an order, not only pictures; the table
+name is historic and `mime_type` decides how it renders. It carries two
+different facts about which part it concerns:
+
+- **`order_line_id`** — which line it was filed against. Optional, unchanged.
+- **`order_photo_parts`** — which part or parts it *shows*. Many-to-many,
+  because one photograph of two components fitted together is about both.
+
+The tag is what puts an order's attachment on a part page, under *From orders*,
+marked as being about one batch rather than about the part. Posted part ids are
+filtered against the order's own lines before being written
+(`StaffOrderController::postedPartIds()`) — an unchecked id would surface a
+photo on a part belonging to a different client.
+
+**Captions are editable after upload**, on both tables. They are written
+mid-upload, before anybody has seen the file in context, so first attempts are
+usually wrong. An empty box clears the caption rather than storing a blank one,
+and the tile falls back to the filename.
 
 ---
 
@@ -429,6 +518,7 @@ exactly what the sending code supplies.
 | `po` | 15 MB | pdf, png, jpg, jpeg, doc, docx |
 | `photo` | 10 MB | png, jpg, jpeg, webp |
 | `part_document` | 25 MB | pdf, png, jpg, jpeg, webp, doc, docx, xls, xlsx, txt |
+| `order_document` | 25 MB | pdf, png, jpg, jpeg, webp, doc, docx, xls, xlsx, txt |
 | `part_tooling` | 50 MB | CNC/CAM and archive formats |
 | `logo` | 2 MB | png, jpg, jpeg, webp |
 
@@ -471,3 +561,6 @@ and `reset-uploads` (each asks twice, requires `RESET` typed in full, ignores
   failed at the connection by design.
 - `exif_read_data` is unavailable on the Windows development machine, so EXIF
   auto-rotation degrades silently there.
+- **CSS `:has()` is relied on in one place**: opening a caption editor gives its
+  tile the full row, because the editor does not fit a 130px thumbnail. Without
+  `:has()` the editor is cramped rather than broken, and the form still submits.

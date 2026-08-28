@@ -1875,6 +1875,37 @@ legend.label { padding: 0; }
    margin and ran together. */
 .line-summary { display: flex; align-items: baseline; gap: var(--space-2); flex-wrap: wrap; }
 
+/* A line card is a <details>. Closed it carries the part number, the part name
+   and the bar; open it is the card it always was.
+
+   The padding moves off .card and onto the two halves so the summary can take
+   a hover tint across the full width of the card rather than a stripe inset
+   from its edges. The bar spans both columns on its own row, so it is the same
+   full-width bar whether the card is open or shut and nothing shifts as it
+   opens. Same .caret as the navigation, same rotation rule. */
+.line-card { padding: 0; }
+.line-card > summary {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-4);
+    border-radius: inherit;
+    cursor: pointer;
+    list-style: none;
+}
+.line-card > summary::-webkit-details-marker { display: none; }
+.line-card > summary:hover { background: var(--bg-sunken); }
+.line-card > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.line-card[open] > summary {
+    border-bottom: 1px solid var(--border);
+    border-radius: var(--radius) var(--radius) 0 0;
+}
+.line-card-title { margin: 0; font-size: 1rem; overflow-wrap: anywhere; }
+/* The bar is flow content in its own row, under both columns. */
+.line-card > summary > .stage-bar { grid-column: 1 / -1; }
+.line-card-body { padding: var(--space-4); }
+
 .line-section {
     margin-top: var(--space-5);
     padding-top: var(--space-4);
@@ -2276,3 +2307,133 @@ legend.label { padding: 0; }
 @media (max-width: 900px) {
     .table-parts .col-part-thumb { width: 3.25rem; }
 }
+
+/* --- Searching and paging a listing ---------------------------------------
+   The parts lists. The box is a real GET form and the page links are real
+   links; the script swaps the results region in rather than reloading, which
+   is why nothing here depends on JavaScript being present. */
+.parts-search {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: var(--space-3);
+    margin-bottom: var(--space-4);
+}
+.parts-search .field { margin: 0; flex: 0 1 14rem; }
+.parts-search .field-grow { flex: 4 1 20rem; }
+.parts-search input[type="search"], .parts-search select { width: 100%; }
+
+/* How many, of how many, matching what. Sits above the table so the answer to
+   "is that all of them?" is on screen rather than inferred from the scrollbar. */
+.result-count {
+    margin: 0 0 var(--space-3);
+    color: var(--text-muted);
+    font-size: 0.9rem;
+}
+
+.pagination {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    margin-top: var(--space-4);
+}
+.pagination-gap { color: var(--text-muted); padding: 0 var(--space-1); }
+
+/* Previous on page one, Next on the last: kept in place rather than removed,
+   so the row of controls does not shift under the pointer as it is used. */
+.is-disabled {
+    opacity: 0.45;
+    pointer-events: none;
+    cursor: default;
+}
+
+/* Something is on its way. The list stays readable while it arrives — a
+   half-second of blank is more disruptive than a half-second of stale. */
+[data-parts-results][aria-busy="true"] { opacity: 0.6; transition: opacity 120ms ease; }
+
+/* --- Describing an attachment after the fact ------------------------------
+   A caption is written mid-upload, before anybody has seen the thing in
+   context, so it is nearly always wrong first time. The editor is folded away
+   rather than sitting open: a grid of twenty photographs each with a text box
+   in it is a form, not a set of pictures. */
+.caption-edit > summary {
+    list-style: none;
+    cursor: pointer;
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+.caption-edit > summary::-webkit-details-marker { display: none; }
+.caption-edit > summary:hover { color: var(--text); }
+.caption-edit[open] > summary { margin-bottom: var(--space-2); }
+.caption-edit .field { margin-bottom: var(--space-2); }
+.caption-edit input[type="text"] { width: 100%; }
+
+/* Which parts an order attachment says it shows. A short list — the parts on
+   one order — so it is checkboxes rather than a multi-select: everything on
+   offer is visible without opening anything. */
+.part-tag-set {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: var(--space-3);
+    margin: 0 0 var(--space-3);
+}
+.part-tag-set legend {
+    padding: 0 var(--space-2);
+    font-size: 0.82rem;
+    color: var(--text-muted);
+}
+.part-tag-set .checkbox-label { margin-bottom: var(--space-1); }
+
+/* The tags themselves, on the tile. Links, because the reason to read one is
+   to go to that part. */
+.photo-tags { display: flex; flex-wrap: wrap; gap: var(--space-1); justify-content: center; }
+.photo-tags .badge { text-decoration: none; }
+
+/* An attachment with no picture to show — a PDF, a spreadsheet. It takes the
+   same space as a photograph so the grid stays a grid. */
+.photo-file {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    width: 120px; height: 120px;
+    padding: var(--space-2);
+    border: 1px dashed var(--border-strong);
+    border-radius: var(--radius-sm);
+    background: var(--bg-sunken);
+    font-size: 0.75rem;
+    overflow-wrap: anywhere;
+}
+.photo-file-name { display: block; max-height: 100%; overflow: hidden; }
+
+/* An order's attachment shown on a part page. Dashed rather than solid, and
+   with its order named underneath: it describes one batch, not the part, and
+   the difference matters to whoever is about to run the job. */
+.media-tile-order img { border-style: dashed; }
+.media-origin { font-size: 0.75rem; color: var(--text-muted); display: block; }
+
+/* An editor does not fit in a thumbnail.
+   A tile is about 130px wide, which is right for browsing pictures and useless
+   for a text box and a list of parts — measured at 130px wide by 875px tall
+   before this, which is a form nobody can fill in. Opening one gives that tile
+   the full width of the row and lays it out left to right; closing it puts the
+   grid back. The rest of the tiles are untouched either way. */
+.photo-tile:has(> .caption-edit[open]),
+.photo-tile:has(> .caption-edit[open]) .photo-caption {
+    max-width: none;
+    justify-items: start;
+    text-align: left;
+}
+.photo-tile:has(> .caption-edit[open]) { flex: 1 1 100%; }
+.photo-tile > .caption-edit { width: 100%; }
+.photo-tile .caption-edit form { max-width: 32rem; }
+
+.media-tile:has(.caption-edit[open]) { grid-column: 1 / -1; }
+.media-tile .caption-edit form { max-width: 32rem; }
+
+/* Without :has() the tile stays narrow, so the editor has to be able to live
+   there: it is cramped rather than unusable, and the form still submits. */
+.caption-edit form { min-width: 0; }

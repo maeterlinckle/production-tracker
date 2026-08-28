@@ -145,6 +145,145 @@ final class Part
         );
     }
 
+    /** How many parts a listing page shows before it paginates. */
+    public const PER_PAGE = 25;
+
+    /**
+     * The parts listing: filtered, searched, ordered by relevance, one page at
+     * a time.
+     *
+     * Both listings go through here — Junction's and the client's — because
+     * they are the same question asked with a different scope, and two
+     * implementations of "find me the part" is how the two lists start
+     * disagreeing about what a match is.
+     *
+     * `include_internal` is not a convenience. Junction's own fields — the
+     * internal notes, the material and where it comes from — are not shown to
+     * a client anywhere, and a search that matched on them would hand back
+     * their contents a guess at a time: type a word, see which parts come out.
+     * So the client's search sees only what the client's part page shows.
+     *
+     * Relevance is ordered rather than scored: an exact part number first,
+     * then a part number that starts with what was typed, then a name that
+     * does, then anything else that contains it. That is enough to put the
+     * part somebody is thinking of at the top when they type its number, which
+     * is what the box is for.
+     *
+     * @param array{
+     *     term?:string, client_id?:int|null, archived?:bool|null,
+     *     only_unquoted?:bool, include_internal?:bool, page?:int, per_page?:int
+     * } $options
+     * @return array{rows:array<int,array<string,mixed>>,total:int,page:int,pages:int,per_page:int}
+     */
+    public static function search(array $options = []): array
+    {
+        $term = trim((string) ($options['term'] ?? ''));
+        $clientId = $options['client_id'] ?? null;
+        // `??` would read an explicit null as "not given", and null is a
+        // meaningful value here: it means both archived and active.
+        $archived = array_key_exists('archived', $options) ? $options['archived'] : false;
+        $perPage = max(1, (int) ($options['per_page'] ?? self::PER_PAGE));
+        $includeInternal = (bool) ($options['include_internal'] ?? false);
+
+        // % and _ are LIKE's own, and somebody typing a part number that
+        // contains one means the character, not a wildcard.
+        $like = '%' . addcslashes($term, '%_\\') . '%';
+        $startsWith = addcslashes($term, '%_\\') . '%';
+
+        $where = [];
+        $params = [];
+
+        if ($clientId !== null) {
+            $where[] = 'p.client_id = :client_id';
+            $params['client_id'] = (int) $clientId;
+        }
+
+        // null means "both", which is what a search across everything wants.
+        if ($archived !== null) {
+            $where[] = 'p.is_archived = :archived';
+            $params['archived'] = $archived ? 1 : 0;
+        }
+
+        if (!empty($options['only_unquoted'])) {
+            $where[] = "p.status = 'draft'";
+        }
+
+        if ($term !== '') {
+            $fields = ['p.cpn', 'p.name', 'p.description', 'p.notes'];
+            if ($includeInternal) {
+                $fields[] = 'p.internal_notes';
+                $fields[] = 'p.base_material';
+                $fields[] = 'p.material_source';
+            }
+
+            // A placeholder per occurrence: with emulated prepares off, PDO
+            // will not let one name be bound twice in a statement.
+            $clauses = [];
+            foreach ($fields as $i => $field) {
+                $clauses[] = $field . ' LIKE :term' . $i;
+                $params['term' . $i] = $like;
+            }
+
+            // The number a client knows the part by is often not the number it
+            // is filed under, which is the whole reason alternate numbers
+            // exist. A search that ignored them would miss the case it was
+            // most needed for.
+            $clauses[] = 'EXISTS (SELECT 1 FROM part_alternate_numbers a
+                                   WHERE a.part_id = p.id
+                                     AND (a.number LIKE :term_alt1 OR a.label LIKE :term_alt2))';
+            $params['term_alt1'] = $like;
+            $params['term_alt2'] = $like;
+
+            $where[] = '(' . implode(' OR ', $clauses) . ')';
+        }
+
+        $whereSql = $where === [] ? '' : ' WHERE ' . implode(' AND ', $where);
+
+        $total = (int) Database::scalar(
+            'SELECT COUNT(*) FROM parts p JOIN clients c ON c.id = p.client_id' . $whereSql,
+            $params
+        );
+
+        $pages = max(1, (int) ceil($total / $perPage));
+        $page = min(max(1, (int) ($options['page'] ?? 1)), $pages);
+        $offset = ($page - 1) * $perPage;
+
+        $order = 'c.name, p.cpn';
+        if ($term !== '') {
+            $params['exact'] = $term;
+            $params['prefix1'] = $startsWith;
+            $params['prefix2'] = $startsWith;
+            $params['contains'] = $like;
+            $order = 'CASE
+                        WHEN p.cpn = :exact       THEN 0
+                        WHEN p.cpn LIKE :prefix1  THEN 1
+                        WHEN p.name LIKE :prefix2 THEN 2
+                        WHEN p.cpn LIKE :contains THEN 3
+                        ELSE 4
+                      END, c.name, p.cpn';
+        }
+
+        // LIMIT and OFFSET are cast integers rather than placeholders: PDO
+        // binds parameters as strings, and MariaDB will not take LIMIT '25'.
+        $rows = Database::all(
+            'SELECT p.*, c.name AS client_name
+               FROM parts p
+               JOIN clients c ON c.id = p.client_id'
+            . $whereSql
+            . ' ORDER BY ' . $order
+            . ' LIMIT ' . $perPage . ' OFFSET ' . $offset,
+            $params
+        );
+
+        return [
+            'rows' => $rows,
+            'total' => $total,
+            'page' => $page,
+            'pages' => $pages,
+            'per_page' => $perPage,
+        ];
+    }
+
     /** Quoted, orderable parts matching a search term -- for the AJAX combobox on Place Order. */
     public static function searchOrderable(int $clientId, string $term, int $limit = 15): array
     {

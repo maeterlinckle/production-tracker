@@ -1,6 +1,20 @@
-<?php /** @var array $parts */ /** @var bool $showArchived */
+<?php
+/**
+ * The client's own parts list.
+ *
+ * Same results partial as Junction's, minus the client column and the client
+ * filter — there is only one client here.
+ *
+ * @var array  $result
+ * @var array  $mainPhotos
+ * @var bool   $showArchived
+ * @var string $term
+ * @var bool   $isStaff
+ * @var bool   $showPricing
+ * @var string $basePath
+ * @var array  $query
+ */
 use App\Core\Auth;
-$showPricing = Auth::can('view_pricing');
 ?>
 <div class="card-header">
     <h1 class="mt-0 mb-0">Parts</h1>
@@ -14,54 +28,30 @@ $showPricing = Auth::can('view_pricing');
     <a href="<?= url('/parts?filter=archived') ?>" class="btn <?= $showArchived ? 'btn-primary' : '' ?> btn-sm">Archived</a>
 </div>
 
-<div class="card">
-    <?php if ($parts === []): ?>
-        <p class="empty-state"><?= $showArchived ? 'No archived parts.' : 'No parts yet. <a href="' . url('/parts/new') . '">Create one</a> to request a quote.' ?></p>
+<form class="parts-search" method="get" action="<?= url('/parts') ?>" data-parts-search>
+    <?php if ($showArchived): ?><input type="hidden" name="filter" value="archived"><?php endif; ?>
+    <div class="field field-grow">
+        <label class="sr-only" for="parts_q">Search parts</label>
+        <input type="search" id="parts_q" name="q" value="<?= e($term) ?>" autocomplete="off"
+               placeholder="Part number, name, alternate number, notes&hellip;"
+               data-parts-query>
+    </div>
+    <button type="submit" class="btn btn-sm" data-parts-submit>Search</button>
+</form>
+
+<div class="card" data-parts-results>
+    <?php if ($result['total'] === 0 && $term === '' && !$showArchived): ?>
+        <p class="empty-state mb-0">
+            No parts yet. <a href="<?= url('/parts/new') ?>">Create one</a> to request a quote.
+        </p>
     <?php else: ?>
-        <div class="table-wrap">
-            <?php /* Same columns, order and widths as Junction's parts list — see .table-parts. */ ?>
-            <table class="table-parts">
-                <colgroup>
-                    <col class="col-part-thumb">
-                    <col class="col-part-cpn">
-                    <col class="col-part-name">
-                    <col class="col-part-status">
-                    <?php if ($showPricing): ?><col class="col-part-price"><?php endif; ?>
-                    <col class="col-part-action">
-                </colgroup>
-                <thead>
-                    <tr>
-                        <th scope="col"><span class="sr-only">Photo</span></th>
-                        <th scope="col">CPN</th>
-                        <th scope="col">Name</th>
-                        <th scope="col">Status</th>
-                        <?php if ($showPricing): ?><th scope="col" class="align-right">Quoted price</th><?php endif; ?>
-                        <th scope="col"><span class="sr-only">Actions</span></th>
-                    </tr>
-                </thead>
-                <tbody>
-                <?php foreach ($parts as $part): ?>
-                    <tr>
-                        <td class="part-thumb-cell">
-                            <?php $photo = $mainPhotos[(int) $part['id']] ?? null; ?>
-                            <?php if ($photo !== null): ?>
-                                <?php /* The thumbnail route falls back to the full image when a
-                                         photo predates the thumbnailing, so this is always safe. */ ?>
-                                <img class="part-thumb" src="<?= url('/files/part-media/' . (int) $photo['id'] . '/thumb') ?>"
-                                     alt="" loading="lazy" width="44" height="44">
-                            <?php endif; ?>
-                        </td>
-                        <td><?= e($part['cpn']) ?></td>
-                        <td class="wrap"><?= e($part['name']) ?></td>
-                        <td><?= status_badge($part['status']) ?></td>
-                        <?php if ($showPricing): ?>
-                            <td class="align-right"><?= $part['status'] === 'quoted' ? format_money($part['quoted_price']) : '—' ?></td>
-                        <?php endif; ?>
-                        <td><a href="<?= url('/parts/' . $part['id']) ?>">View</a></td>
-                    </tr>
-                <?php endforeach; ?>
-                </tbody>
-            </table>
-        </div>
+        <?= partial('partials/parts-results', [
+            'result' => $result,
+            'mainPhotos' => $mainPhotos,
+            'isStaff' => $isStaff,
+            'showPricing' => $showPricing,
+            'basePath' => $basePath,
+            'query' => $query,
+        ]) ?>
     <?php endif; ?>
 </div>

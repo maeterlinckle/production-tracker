@@ -61,6 +61,8 @@ final class OrderView
             $invoicesByDn[$note['id']] = Invoice::forDeliveryNote((int) $note['id']);
         }
 
+        $photos = OrderPhoto::forOrder($orderId);
+
         $queries = array_map(static function (array $query): array {
             $query['replies'] = OrderQuery::replies((int) $query['id']);
 
@@ -82,7 +84,10 @@ final class OrderView
             // are the same ones Junction is looking at.
             'returnableLines' => DeliveryNote::returnableLinesForOrder($orderId),
             'poDocuments' => OrderPoDocument::forOrder($orderId),
-            'photos' => OrderPhoto::forOrder($orderId),
+            'photos' => $photos,
+            // Which parts each attachment says it shows, one query for the
+            // page rather than one per tile.
+            'photoParts' => OrderPhoto::partsFor(array_column($photos, 'id')),
             'notes' => OrderNote::forOrder($orderId),
             'queries' => $queries,
             'rollupStatus' => Order::rollupStatus($lines),

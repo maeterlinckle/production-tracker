@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Models\OrderLine;
+use App\Models\OrderPhoto;
 use App\Models\Part;
 use App\Models\PartFile;
 use App\Models\PartLink;
@@ -45,6 +46,11 @@ final class PartView
             'freeIssueMaterials' => Part::freeIssueMaterials($partId),
             'linkedParts' => PartLink::forPart($partId),
             'orderLines' => OrderLine::forPart($partId),
+            // Attachments filed against an order and tagged as showing this
+            // part. In the payload for both audiences as everything else is;
+            // the template shows them to Junction only, because the order
+            // page's own photos section is Junction's.
+            'orderMedia' => OrderPhoto::forPart($partId),
         ];
     }
 }

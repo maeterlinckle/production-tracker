@@ -164,6 +164,27 @@ final class PartMedia
         });
     }
 
+    /**
+     * Change what a file is described as.
+     *
+     * A caption is written when the file is uploaded, which is the worst
+     * moment to write one: the person doing it is mid-upload and has not yet
+     * seen the thing in context. Being able to change it afterwards is what
+     * turns "IMG_4471.jpg" into something the next person can use.
+     *
+     * An empty box clears the caption rather than storing a blank one, so the
+     * tile falls back to the filename instead of showing an empty line.
+     */
+    public static function updateCaption(int $id, ?string $caption): void
+    {
+        $caption = $caption === null ? null : (trim($caption) ?: null);
+
+        Database::query(
+            'UPDATE part_media SET caption = :caption WHERE id = :id',
+            ['caption' => $caption, 'id' => $id]
+        );
+    }
+
     /** Promote an existing photo to be the part's main one. */
     public static function setMain(int $id): void
     {

@@ -141,6 +141,9 @@ $router->group(['staff'], function (Router $router): void {
     // machine settings, tooling files.
     $router->post('/staff/parts/{id:\d+}/drawings', [StaffPartController::class, 'uploadDrawing'], ['csrf']);
     $router->post('/staff/parts/{id:\d+}/media', [StaffPartController::class, 'uploadMedia'], ['csrf']);
+    // A caption is written mid-upload, before anybody has seen the file in
+    // context. This is how it gets fixed afterwards.
+    $router->post('/staff/parts/{id:\d+}/media/{mediaId:\d+}/caption', [StaffPartController::class, 'updateMediaCaption'], ['csrf']);
     $router->post('/staff/parts/{id:\d+}/media/{mediaId:\d+}/main', [StaffPartController::class, 'setMainMedia'], ['csrf']);
     $router->post('/staff/parts/{id:\d+}/media/{mediaId:\d+}/delete', [StaffPartController::class, 'deleteMedia'], ['csrf']);
     $router->post('/staff/parts/{id:\d+}/price', [StaffPartController::class, 'setPrice'], ['csrf']);
@@ -182,6 +185,9 @@ $router->group(['staff'], function (Router $router): void {
     $router->post('/staff/orders/{id:\d+}/po-documents', [StaffOrderController::class, 'uploadPoDocument'], ['csrf']);
     $router->post('/staff/orders/{id:\d+}/po-number', [StaffOrderController::class, 'updatePoNumber'], ['csrf']);
     $router->post('/staff/orders/{id:\d+}/photos', [StaffOrderController::class, 'uploadPhoto'], ['csrf']);
+    // The description, and which parts the file says it shows. One form, so
+    // one action -- see StaffOrderController::updatePhoto.
+    $router->post('/staff/orders/{id:\d+}/photos/{photoId:\d+}', [StaffOrderController::class, 'updatePhoto'], ['csrf']);
     $router->post('/staff/orders/{id:\d+}/photos/{photoId:\d+}/delete', [StaffOrderController::class, 'deletePhoto'], ['csrf']);
 
     $router->get('/staff/lines/{id:\d+}/check-in', [StaffCheckInController::class, 'show']);

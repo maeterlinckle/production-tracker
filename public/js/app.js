@@ -683,3 +683,157 @@
     // was rejected, and that is exactly when the number is likely to be taken.
     if (input.value.trim() !== '') check();
 })();
+
+/* ---------------------------------------------------------------------------
+ * Order lines are disclosures, so anything pointing at one has to open it.
+ *
+ * The QR code printed on a route card links to `/staff/orders/12#line-34`.
+ * Somebody scans it at the machine and lands on the order — and would land on a
+ * closed card, having asked for that specific line. So the fragment opens the
+ * card it names and scrolls to it, on load and on every later hash change.
+ *
+ * Printing gets the same treatment for the same reason: a closed <details>
+ * prints as its summary, and a printed order page that is nothing but eight
+ * headings is not the page anybody meant to print. Cards opened for the
+ * printer are closed again afterwards, so the screen is as it was left.
+ * ------------------------------------------------------------------------- */
+(function () {
+    function openFromHash() {
+        if (!window.location.hash) return;
+
+        var target;
+        try {
+            target = document.querySelector(window.location.hash);
+        } catch (e) {
+            // A hash that is not a usable selector — nothing to open.
+            return;
+        }
+
+        var card = target && target.closest ? target.closest('details') : null;
+        while (card) {
+            card.open = true;
+            card = card.parentElement ? card.parentElement.closest('details') : null;
+        }
+
+        if (target && target.scrollIntoView) target.scrollIntoView();
+    }
+
+    openFromHash();
+    window.addEventListener('hashchange', openFromHash);
+
+    var openedForPrint = [];
+
+    window.addEventListener('beforeprint', function () {
+        openedForPrint = [];
+        document.querySelectorAll('[data-line-card]:not([open])').forEach(function (card) {
+            openedForPrint.push(card);
+            card.open = true;
+        });
+    });
+
+    window.addEventListener('afterprint', function () {
+        openedForPrint.forEach(function (card) { card.open = false; });
+        openedForPrint = [];
+    });
+})();
+
+/* ---------------------------------------------------------------------------
+ * Searching and paging the parts list.
+ *
+ * The form is an ordinary GET form and the page links are ordinary links, so
+ * the list works with the script switched off — it just reloads the page. With
+ * the script, both ask for the results region on its own and swap it in.
+ *
+ * The server renders that region from the same partial either way, so there is
+ * no second copy of the table living in JavaScript.
+ * ------------------------------------------------------------------------- */
+(function () {
+    var form = document.querySelector('[data-parts-search]');
+    var results = document.querySelector('[data-parts-results]');
+    if (!form || !results) return;
+
+    var input = form.querySelector('[data-parts-query]');
+    var filters = form.querySelectorAll('[data-parts-filter]');
+    var submit = form.querySelector('[data-parts-submit]');
+    var timer = null;
+    // As with the part-number check: only the newest answer may write to the
+    // page, or a slow early keystroke lands on top of a later one.
+    var sequence = 0;
+
+    // The button is for people without JavaScript. With it, the list is already
+    // keeping up with the typing and a button to press is a button that looks
+    // like it needs pressing.
+    if (submit) submit.hidden = true;
+
+    function currentUrl() {
+        var params = new URLSearchParams();
+        new FormData(form).forEach(function (value, key) {
+            if (String(value).trim() !== '') params.append(key, value);
+        });
+        var query = params.toString();
+
+        return form.getAttribute('action') + (query ? '?' + query : '');
+    }
+
+    function load(url, push) {
+        var mine = ++sequence;
+        results.setAttribute('aria-busy', 'true');
+
+        fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+            .then(function (response) { return response.ok ? response.text() : null; })
+            .then(function (html) {
+                if (mine !== sequence) return;
+                results.removeAttribute('aria-busy');
+                if (html === null) return;
+
+                results.innerHTML = html;
+                // Typing replaces the entry rather than adding one, so Back
+                // leaves the list rather than walking the keystrokes. Paging is
+                // a step somebody may well want to come back from.
+                if (push) window.history.pushState({ parts: true }, '', url);
+                else window.history.replaceState({ parts: true }, '', url);
+            })
+            .catch(function () {
+                // Leave whatever is on screen: a stale list of parts is more
+                // use than an empty one, and the form still submits.
+                if (mine === sequence) results.removeAttribute('aria-busy');
+            });
+    }
+
+    form.addEventListener('submit', function (event) {
+        event.preventDefault();
+        window.clearTimeout(timer);
+        load(currentUrl(), false);
+    });
+
+    if (input) {
+        input.addEventListener('input', function () {
+            window.clearTimeout(timer);
+            timer = window.setTimeout(function () { load(currentUrl(), false); }, 300);
+        });
+    }
+
+    Array.prototype.forEach.call(filters, function (filter) {
+        filter.addEventListener('change', function () {
+            window.clearTimeout(timer);
+            load(currentUrl(), false);
+        });
+    });
+
+    // The page links are inside the region that gets replaced, so this is
+    // delegated from the container rather than bound to the links themselves.
+    results.addEventListener('click', function (event) {
+        var link = event.target.closest('.pagination a');
+        if (!link || link.getAttribute('aria-disabled') === 'true') return;
+        if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return;
+
+        event.preventDefault();
+        load(link.getAttribute('href'), true);
+        results.scrollIntoView({ block: 'start' });
+    });
+
+    window.addEventListener('popstate', function (event) {
+        if (!event.state || !event.state.parts) return;
+        load(window.location.pathname + window.location.search, false);
+    });
+})();

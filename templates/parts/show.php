@@ -14,6 +14,7 @@
  * @var array      $freeIssueMaterials
  * @var array      $linkedParts
  * @var array      $orderLines
+ * @var array      $orderMedia
  */
 use App\Core\Auth;
 use App\Models\OrderLine;
@@ -145,6 +146,9 @@ $here = $isStaff ? $staffBase : $clientBase;
                 'mainPhoto' => $mainPhoto,
                 'attachments' => $attachments,
                 'canManage' => $canEditWorkshop,
+                // The order page's photos are Junction's, so their appearance
+                // here is too.
+                'orderMedia' => $isStaff ? $orderMedia : [],
             ]) ?>
         </div>
 

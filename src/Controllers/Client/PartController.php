@@ -22,23 +22,49 @@ use App\Services\PartView;
 
 final class PartController
 {
+    /**
+     * The client's parts list: searched and paginated, within the tab they are
+     * on.
+     *
+     * Active and Archived are the filter here, so a search stays inside the
+     * one that is selected rather than quietly reaching across it. Junction's
+     * own fields are not searched at all — see Part::search().
+     */
     public function index(): void
     {
         $showArchived = Request::query('filter') === 'archived';
-        $parts = Part::forClient((int) Auth::clientId(), true);
+        $term = trim((string) Request::query('q', ''));
 
-        if (!$showArchived) {
-            $parts = array_values(array_filter($parts, static fn ($p) => !(bool) $p['is_archived']));
-        } else {
-            $parts = array_values(array_filter($parts, static fn ($p) => (bool) $p['is_archived']));
+        $result = Part::search([
+            'term' => $term,
+            'client_id' => (int) Auth::clientId(),
+            'archived' => $showArchived,
+            'page' => (int) Request::query('page', 1),
+        ]);
+
+        $data = [
+            'title' => 'Parts',
+            'result' => $result,
+            'mainPhotos' => PartMedia::mainPhotosFor(array_column($result['rows'], 'id')),
+            'showArchived' => $showArchived,
+            'term' => $term,
+            'isStaff' => false,
+            'showPricing' => Auth::can('view_pricing'),
+            'basePath' => '/parts',
+            'query' => [
+                'q' => $term,
+                'filter' => $showArchived ? 'archived' : null,
+            ],
+        ];
+
+        if (Request::isAjax()) {
+            Response::noCache();
+            echo View::capture('partials/parts-results', $data, null);
+
+            return;
         }
 
-        View::render('parts/index', [
-            'title' => 'Parts',
-            'parts' => $parts,
-            'showArchived' => $showArchived,
-            'mainPhotos' => PartMedia::mainPhotosFor(array_column($parts, 'id')),
-        ]);
+        View::render('parts/index', $data);
     }
 
     public function create(): void

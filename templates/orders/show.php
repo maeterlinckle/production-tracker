@@ -18,6 +18,7 @@
  * @var array  $returnableLines
  * @var array  $poDocuments
  * @var array  $photos
+ * @var array  $photoParts
  * @var array  $notes
  * @var array  $queries
  * @var string $rollupStatus
@@ -27,6 +28,7 @@ use App\Models\DeliveryNote;
 use App\Models\Order;
 use App\Models\OrderLine;
 use App\Models\OrderLineChangeRequest;
+use App\Models\OrderPhoto;
 use App\Models\Part;
 
 $isStaff = Auth::isStaff();
@@ -115,10 +117,29 @@ $noteHref = static fn (array $dn): string => $isStaff
     }
     $conversion = Part::conversionSentence($part, (int) $line['qty_ordered']);
     ?>
-    <div class="card" id="line-<?= $lineId ?>">
+    <?php /*
+        Each line is a disclosure, closed to start with.
+
+        An order of eight lines was eight full cards deep — the production
+        table, the free-issue figures, the change requests and two history
+        panels each — and finding the one line somebody was asking about meant
+        scrolling past everything about the other seven. Closed, a line is its
+        number, its name and where its quantity has got to, which is what the
+        page is scanned for; open, it is exactly what it always was.
+
+        The bar lives in the summary rather than being repeated below, so it
+        does not move when the card opens.
+    */ ?>
+    <details class="card line-card" id="line-<?= $lineId ?>" data-line-card>
+        <summary class="line-card-summary">
+            <h3 class="line-card-title"><?= e($line['cpn']) ?> — <?= e($line['part_name']) ?></h3>
+            <span class="caret" aria-hidden="true"></span>
+            <?= partial('partials/stepper', ['line' => $line]) ?>
+        </summary>
+
+        <div class="line-card-body">
         <div class="card-header">
             <div>
-                <h3 class="mt-0 mb-0"><?= e($line['cpn']) ?> — <?= e($line['part_name']) ?></h3>
                 <p class="text-muted mb-0">
                     Qty ordered: <?= (int) $line['qty_ordered'] ?>
                     <?php if ($showPricing): ?> &middot; Unit price: <?= format_money($line['unit_price']) ?><?php endif; ?>
@@ -140,7 +161,6 @@ $noteHref = static fn (array $dn): string => $isStaff
 
         <p class="line-summary mb-2"><?= status_badge(OrderLine::headlineStage($line)) ?>
             <span class="text-muted"><?= e(OrderLine::statusLabel($line)) ?></span></p>
-        <?= partial('partials/stepper', ['line' => $line]) ?>
 
         <?php if ($lineClosed): ?>
             <p class="text-muted mb-0">
@@ -441,7 +461,8 @@ $noteHref = static fn (array $dn): string => $isStaff
                 </div>
             </details>
         <?php endif; ?>
-    </div>
+        </div>
+    </details>
 <?php endforeach; ?>
 
 <div class="card">
@@ -705,27 +726,95 @@ $noteHref = static fn (array $dn): string => $isStaff
 <?php endif; ?>
 
 <?php if ($isStaff): ?>
-<div class="card">
-    <h2 class="mt-0">Photos</h2>
+<?php
+/**
+ * Which parts an attachment may be tagged with: the ones on this order.
+ *
+ * Rendered from `$lines`, so a part that appears on two lines of the same
+ * order is offered once — the tag is about the part, not the line.
+ */
+$taggableParts = [];
+foreach ($lines as $taggableLine) {
+    $taggableParts[(int) $taggableLine['part_id']] = $taggableLine['cpn'] . ' — ' . $taggableLine['part_name'];
+}
+
+$partCheckboxes = static function (string $idPrefix, array $checked) use ($taggableParts): void {
+    ?>
+    <fieldset class="part-tag-set">
+        <legend>Which part does this show?</legend>
+        <?php foreach ($taggableParts as $taggablePartId => $label): ?>
+            <label class="checkbox-label">
+                <input type="checkbox" name="part_ids[]" value="<?= (int) $taggablePartId ?>"
+                       id="<?= e($idPrefix) ?>_part_<?= (int) $taggablePartId ?>"
+                       <?= in_array((int) $taggablePartId, $checked, true) ? 'checked' : '' ?>>
+                <span><?= e($label) ?></span>
+            </label>
+        <?php endforeach; ?>
+        <p class="hint mb-0">
+            Tick any it shows and it will be findable from those parts as well as from here. Leave them
+            all clear if it is about the order rather than a particular part.
+        </p>
+    </fieldset>
+    <?php
+};
+?>
+<div class="card" id="photos">
+    <h2 class="mt-0">Photos and documents</h2>
     <p class="text-muted">
-        Staff-only, and specific to how <em>this</em> order went — a mark on one batch, a packing shot.
-        Anything that describes the part itself belongs on the part, where it is in front of whoever runs
-        it next:
+        Staff-only, and specific to how <em>this</em> order went — a mark on one batch, a packing shot,
+        an inspection report. Anything that describes the part itself belongs on the part, where it is
+        in front of whoever runs it next:
         <?php foreach ($lines as $photoLine): ?>
             <a href="<?= url('/staff/parts/' . $photoLine['part_id']) ?>#setup"><?= e($photoLine['cpn']) ?></a><?= $photoLine === end($lines) ? '' : ', ' ?>
         <?php endforeach; ?>.
+        Tagging one with a part puts it on that part's page too, marked as being about one batch.
     </p>
     <?php if ($photos === []): ?>
-        <p class="text-muted">No photos uploaded yet.</p>
+        <p class="text-muted">Nothing uploaded yet.</p>
     <?php else: ?>
         <div class="photo-grid">
-            <?php foreach ($photos as $photo): ?>
+            <?php foreach ($photos as $photo):
+                $taggedIds = array_map(
+                    static fn (array $tagged): int => (int) $tagged['id'],
+                    $photoParts[(int) $photo['id']] ?? []
+                );
+                ?>
                 <div class="photo-tile">
-                    <a href="<?= url('/files/order-photos/' . $photo['id']) ?>" target="_blank" rel="noopener">
-                        <img src="<?= url('/files/order-photos/' . $photo['id'] . '/thumb') ?>" alt="">
-                    </a>
+                    <?php if (OrderPhoto::isImage($photo)): ?>
+                        <a href="<?= url('/files/order-photos/' . $photo['id']) ?>" target="_blank" rel="noopener">
+                            <img src="<?= url('/files/order-photos/' . $photo['id'] . '/thumb') ?>" alt="">
+                        </a>
+                    <?php else: ?>
+                        <?php /* No picture to show, so the tile is the file itself. */ ?>
+                        <a class="photo-file" href="<?= url('/files/order-photos/' . $photo['id']) ?>" target="_blank" rel="noopener">
+                            <span class="photo-file-name"><?= e($photo['original_filename']) ?></span>
+                        </a>
+                    <?php endif; ?>
+
                     <?php if ($photo['caption']): ?><div class="photo-caption"><?= e($photo['caption']) ?></div><?php endif; ?>
+
+                    <?php if ($taggedIds !== []): ?>
+                        <div class="photo-tags">
+                            <?php foreach ($photoParts[(int) $photo['id']] as $taggedPart): ?>
+                                <a class="badge badge-muted" href="<?= url('/staff/parts/' . (int) $taggedPart['id']) ?>#setup"><?= e($taggedPart['cpn']) ?></a>
+                            <?php endforeach; ?>
+                        </div>
+                    <?php endif; ?>
+
                     <?php if ($canProduce): ?>
+                        <details class="caption-edit">
+                            <summary>Edit</summary>
+                            <form method="post" action="<?= url($staffBase . '/photos/' . $photo['id']) ?>">
+                                <?= csrf_field() ?>
+                                <div class="field">
+                                    <label for="photo_caption_<?= (int) $photo['id'] ?>">Description</label>
+                                    <input type="text" id="photo_caption_<?= (int) $photo['id'] ?>" name="caption"
+                                           value="<?= e($photo['caption'] ?? '') ?>" placeholder="What this shows">
+                                </div>
+                                <?php $partCheckboxes('photo_' . (int) $photo['id'], $taggedIds); ?>
+                                <button type="submit" class="btn btn-sm">Save</button>
+                            </form>
+                        </details>
                         <form method="post" action="<?= url($staffBase . '/photos/' . $photo['id'] . '/delete') ?>">
                             <?= csrf_field() ?>
                             <button type="submit" class="btn btn-sm">Remove</button>
@@ -751,9 +840,11 @@ $noteHref = static fn (array $dn): string => $isStaff
                 </div>
                 <div class="field"><label for="caption">Caption (optional)</label><input type="text" id="caption" name="caption"></div>
             </div>
+            <?php $partCheckboxes('upload', []); ?>
             <div class="field">
-                <label for="photos">Upload photo(s)</label>
-                <input type="file" id="photos" name="photos[]" accept="image/*" multiple>
+                <label for="photos">Upload photo(s) or document(s)</label>
+                <input type="file" id="photos" name="photos[]" multiple>
+                <div class="hint">Pictures, PDFs and office documents. Everything uploaded at once gets the same tags.</div>
             </div>
             <button type="submit" class="btn">Upload</button>
         </form>

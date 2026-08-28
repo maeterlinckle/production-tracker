@@ -191,7 +191,7 @@ final class StaffOrderController
         }
 
         Flash::success($this->moveMessage($from, $to, $qty));
-        Response::redirect('/staff/orders/' . $line['order_id']);
+        Response::redirect('/staff/orders/' . $line['order_id'] . '#line-' . $id);
     }
 
     private function moveMessage(string $from, string $to, int $qty): string
@@ -256,7 +256,7 @@ final class StaffOrderController
             . ($spare > 0 ? ', which will leave ' . $spare . ' spare — material comes in whole pieces' : '')
             . '. The figure follows the shortfall, so it moves again if anything else fails.'
         );
-        Response::redirect('/staff/orders/' . $line['order_id']);
+        Response::redirect('/staff/orders/' . $line['order_id'] . '#line-' . $id);
     }
 
     /** Close a line down: outstanding quantity is cancelled off, not deleted. */
@@ -279,7 +279,7 @@ final class StaffOrderController
         Flash::success($cancelled > 0
             ? $cancelled . ' cancelled off this line. It no longer counts as outstanding anywhere.'
             : 'Line closed down. There was nothing outstanding to cancel.');
-        Response::redirect('/staff/orders/' . $line['order_id']);
+        Response::redirect('/staff/orders/' . $line['order_id'] . '#line-' . $id);
     }
 
     public function reopenLine(string $id): void
@@ -292,7 +292,7 @@ final class StaffOrderController
 
         OrderLine::reopen((int) $id);
         Flash::success('Line reopened. Cancelled quantity stays cancelled until it is moved back by hand.');
-        Response::redirect('/staff/orders/' . $line['order_id']);
+        Response::redirect('/staff/orders/' . $line['order_id'] . '#line-' . $id);
     }
 
     public function closeOrder(string $id): void
@@ -347,7 +347,7 @@ final class StaffOrderController
         $this->announceDecision((int) $requestId, 'applied');
 
         Flash::success('Quantity change applied.');
-        Response::redirect('/staff/orders/' . $id);
+        Response::redirect('/staff/orders/' . $id . '#line-' . (int) $request['order_line_id']);
     }
 
     public function declineChangeRequest(string $id, string $requestId): void
@@ -369,7 +369,7 @@ final class StaffOrderController
         $this->announceDecision((int) $requestId, 'declined');
 
         Flash::success('Quantity change declined.');
-        Response::redirect('/staff/orders/' . $id);
+        Response::redirect('/staff/orders/' . $id . '#line-' . (int) $request['order_line_id']);
     }
 
     private function announceDecision(int $requestId, string $outcome): void
@@ -603,7 +603,7 @@ final class StaffOrderController
         Response::inlineBytes($cards['bytes'], $cards['filename'], 'application/pdf');
     }
 
-    // -- Photos ---------------------------------------------------------------
+    // -- Photos and documents -------------------------------------------------
 
     public function uploadPhoto(string $id): void
     {
@@ -615,10 +615,11 @@ final class StaffOrderController
             return;
         }
 
-        $allowed = Config::get('uploads.photo.extensions');
-        $maxBytes = (int) Config::get('uploads.photo.max_bytes');
+        $allowed = Config::get('uploads.order_document.extensions');
+        $maxBytes = (int) Config::get('uploads.order_document.max_bytes');
         $lineId = (int) Request::post('order_line_id', 0) ?: null;
         $caption = trim((string) Request::post('caption', '')) ?: null;
+        $partIds = $this->postedPartIds((int) $id);
 
         foreach (Upload::files('photos') as $file) {
             $error = Upload::validate($file, $allowed, $maxBytes);
@@ -631,21 +632,79 @@ final class StaffOrderController
             $absolutePath = Upload::absolutePath($relativePath);
             $mime = $absolutePath !== null ? Upload::detectMime($absolutePath) : null;
 
-            OrderPhoto::create([
+            $photoId = OrderPhoto::create([
                 'order_id' => $order['id'],
                 'order_line_id' => $lineId,
                 'file_path' => $relativePath,
                 'original_filename' => Upload::displayName((string) $file['name']),
                 'mime_type' => $mime,
+                // Only pictures get one; Image::process returns null for the rest.
                 'thumb_path' => Image::process($relativePath, $mime),
                 'file_size' => (int) $file['size'],
                 'caption' => $caption,
                 'uploaded_by' => Auth::id(),
             ]);
+
+            // Several files uploaded together are about the same thing, so they
+            // all get the parts that were ticked.
+            OrderPhoto::setParts($photoId, $partIds);
         }
 
-        Flash::success('Photo uploaded.');
-        Response::redirect('/staff/orders/' . $id);
+        Flash::success('Uploaded.');
+        Response::redirect('/staff/orders/' . $id . '#photos');
+    }
+
+    /**
+     * Change the description on an attachment, and which parts it says it
+     * shows.
+     *
+     * One action for both because they are one form: the moment somebody is
+     * describing a photo is the moment they know which part it is of, and
+     * making them save twice is how one of the two ends up not being done.
+     */
+    public function updatePhoto(string $id, string $photoId): void
+    {
+        Auth::authorize('production_control');
+
+        $photo = OrderPhoto::find((int) $photoId);
+        if ($photo === null || (int) $photo['order_id'] !== (int) $id) {
+            View::renderError(404, 'File not found', 'That file is not attached to this order.');
+
+            return;
+        }
+
+        OrderPhoto::updateCaption((int) $photoId, (string) Request::post('caption', ''));
+        OrderPhoto::setParts((int) $photoId, $this->postedPartIds((int) $id));
+
+        Flash::success('Updated.');
+        Response::redirect('/staff/orders/' . $id . '#photos');
+    }
+
+    /**
+     * The part ids ticked on the form, filtered to parts that are actually on
+     * this order.
+     *
+     * The list comes off a form, so it is a request rather than a fact.
+     * Tagging an attachment with a part from somebody else's order would make
+     * it show up on that part's page — for a client who has nothing to do with
+     * this order — so the ids are checked against the order's own lines rather
+     * than trusted.
+     *
+     * @return array<int,int>
+     */
+    private function postedPartIds(int $orderId): array
+    {
+        $posted = Request::post('part_ids', []);
+        if (!is_array($posted)) {
+            return [];
+        }
+
+        $onThisOrder = array_map(
+            static fn (array $line): int => (int) $line['part_id'],
+            OrderLine::forOrder($orderId)
+        );
+
+        return array_values(array_intersect(array_map('intval', $posted), $onThisOrder));
     }
 
     public function deletePhoto(string $id, string $photoId): void
@@ -655,10 +714,10 @@ final class StaffOrderController
         if ($photo !== null && (int) $photo['order_id'] === (int) $id) {
             Upload::delete($photo['file_path']);
             OrderPhoto::delete($photo['id']);
-            Flash::success('Photo removed.');
+            Flash::success('Removed.');
         }
 
-        Response::redirect('/staff/orders/' . $id);
+        Response::redirect('/staff/orders/' . $id . '#photos');
     }
 
     private function findLine(int $id): ?array

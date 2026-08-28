@@ -822,6 +822,89 @@ not been added, which would have broken the existing Save changes button. Both
 statements are now checked by comparing every named placeholder against the
 parameter array.
 
+### The 419 that was never a session, and three tidy items (28 August 2026)
+
+| # | Item | Status |
+|---|---|---|
+| 0 | Pull the repo first | Done — four label tweaks came in ahead of the work |
+| 1 | Intermittent 419 on upload | Done — it was `post_max_size`, not the session |
+| 2 | `/staff/settings/users` overflow | Done — rows 277px → 109px |
+| 3 | Live CPN uniqueness check | Done — tick, warning with a link, submit disabled |
+| 4 | Thumbnails on the parts listings | Done |
+
+**The 419 was never about sessions.** When a POST is larger than
+`post_max_size`, PHP does not reject it — it discards the body and carries on,
+so `$_POST` and `$_FILES` both arrive empty. The request then looks exactly like
+one with no CSRF token on it, and the CSRF check is the first thing to notice,
+so it reports a session that has expired. The session was fine and the token was
+sent; the file was too big to be read.
+
+That accounts for every symptom in the report. It is purely about size, so it
+looks intermittent. It hits the largest file somebody uploads, which is the
+drawing, right after creating the part. It goes away on a retry with something
+smaller. And several files at once do it too — each comfortably under
+`upload_max_filesize` while the total is over `post_max_size`, which is the
+version most likely to look random.
+
+Reproduced before changing anything: an 8.6 MB upload against an 8 MB limit gave
+the reported error, and five 1.8 MB files gave it as well.
+
+Three things came out of it.
+
+*The message.* `Request::bodyWasDiscarded()` recognises the condition —
+Content-Length over the limit with both superglobals empty — and the entry point
+answers 413 with what actually happened and what the limit is, before any
+middleware gets the chance to misdiagnose it. "Under 8 MB" is actionable in a way
+that "your session has expired" is not, and it says the session is still good so
+nobody goes off signing in again.
+
+*The limits.* The installer set `upload_max_filesize` and `post_max_size` from
+the drawing limit alone — 25 MB and 27 MB — while the application offered 50 MB
+for tooling files. nginx's `client_max_body_size` was keyed off the same number.
+So the app promised something PHP and nginx would both throw away. All three now
+come from one figure the installer asks the application for, with a fallback if
+the config cannot be read.
+
+*The drift.* `doctor` compares PHP's two limits against the largest upload the
+config allows and fails the check when the app promises more than PHP will take.
+It would have caught the shipped install.
+
+Two smaller things were fixed on the way: `View::renderError()` and
+`Response::securityHeaders()` now check `headers_sent()` first. PHP prints its
+own startup warning ahead of any application code when a POST is oversized, and
+on a debug install those warnings are exceptions — so the upload ended as a fatal
+about headers rather than the message explaining the size.
+
+**The users table** was 277px a row: five role checkboxes in a column narrow
+enough to fit one per line, so six stacked lines to show a short list of ticks.
+That list is the widest thing in the table, so it also decided how narrow the
+window could get before the whole thing scrolled. Tightened in `.table-people`
+rather than in the markup, because Junction's user list and a client's team page
+are meant to stay the same table: 109px rows on both, roles on two lines instead
+of five, and nothing scrolling sideways down to 900px.
+
+**The CPN check** asks while the number is being typed, because finding out after
+filling the form in — and losing the attached drawing — is the version that
+wastes an afternoon. A free number gets a tick; a taken one names the part
+holding it, links to it, and disables the submit until the number changes.
+
+Uniqueness is per client, so there are two endpoints rather than one taking a
+client id: the client's own answers only about their parts and accepts no client
+id at all, which is a stronger guarantee than checking one. The staff endpoint
+takes the client selected on the form and re-asks when it changes.
+
+Advisory only — the server still refuses a duplicate, checked. In-flight answers
+are sequenced so a slow "taken" cannot land after a later "free", and clearing
+the field abandons anything outstanding rather than letting it disable a form
+over an empty box.
+
+**Thumbnails** on both parts listings, from the part's main photo, in one query
+for the whole page. The thumbnail route already falls back to the full image
+where a photo predates thumbnailing, so no row has to check. Every row takes the
+taller height whether or not it has a picture: sizing rows to their contents gave
+a list of 50px rows with the occasional 69px one, and the eye reads that
+unevenness before it reads any of the text.
+
 ---
 
 ## 5. Clear Books — what the verification found

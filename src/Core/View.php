@@ -67,7 +67,13 @@ final class View
 
     public static function renderError(int $status, string $title, string $message): void
     {
-        http_response_code($status);
+        // Only if there is still a header to set. PHP can print a startup
+        // warning of its own before any of this runs — an oversized POST does
+        // exactly that — and calling this afterwards turns a readable error page
+        // into a fatal about headers already being sent.
+        if (!headers_sent()) {
+            http_response_code($status);
+        }
 
         $layout = Auth::check() ? 'layouts/app' : 'layouts/auth';
 

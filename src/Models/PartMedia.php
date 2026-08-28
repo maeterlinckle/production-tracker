@@ -59,6 +59,40 @@ final class PartMedia
      * The part's representative image, for the part page and any listing that
      * wants a thumbnail.
      */
+    /**
+     * The main photo for each of several parts, keyed by part id.
+     *
+     * One query for a whole listing. The alternative is a lookup per row, and
+     * the parts list is the longest table in the application.
+     *
+     * Only parts that have one appear in the result, so a caller can treat a
+     * missing key as "no photo" without a second check.
+     *
+     * @param array<int,int> $partIds
+     * @return array<int,array<string,mixed>>
+     */
+    public static function mainPhotosFor(array $partIds): array
+    {
+        $partIds = array_values(array_unique(array_map('intval', $partIds)));
+        if ($partIds === []) {
+            return [];
+        }
+
+        // Cast to int immediately above, so interpolating is the same string a
+        // placeholder list would have produced, and this stays one query.
+        $rows = Database::all(
+            'SELECT id, part_id, caption, thumb_path FROM part_media
+              WHERE is_main = 1 AND part_id IN (' . implode(',', $partIds) . ')'
+        );
+
+        $byPart = [];
+        foreach ($rows as $row) {
+            $byPart[(int) $row['part_id']] = $row;
+        }
+
+        return $byPart;
+    }
+
     public static function mainPhoto(int $partId): ?array
     {
         return Database::one(

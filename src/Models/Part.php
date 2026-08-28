@@ -203,6 +203,29 @@ final class Part
         );
     }
 
+    /**
+     * The part already using this CPN for this client, if there is one.
+     *
+     * Uniqueness is per client — `uq_parts_client_cpn` — so two clients may
+     * each have their own ACME-100 and neither is wrong. Returns the part
+     * rather than a yes/no because the live check on the new-part form offers
+     * a link to it: "already in use" is a dead end, "already in use, here it
+     * is" usually ends the question.
+     *
+     * Archived parts count. The unique key does not exempt them, so a CPN one
+     * is holding really is unavailable, and saying so here beats letting the
+     * insert fail after the form has been filled in.
+     *
+     * @return array<string,mixed>|null
+     */
+    public static function findByCpn(int $clientId, string $cpn): ?array
+    {
+        return Database::one(
+            'SELECT id, cpn, name, is_archived FROM parts WHERE client_id = :client_id AND cpn = :cpn',
+            ['client_id' => $clientId, 'cpn' => trim($cpn)]
+        );
+    }
+
     public static function cpnExists(int $clientId, string $cpn, ?int $excludeId = null): bool
     {
         $sql = 'SELECT id FROM parts WHERE client_id = :client_id AND cpn = :cpn';

@@ -29,8 +29,12 @@
         <div class="form-row">
             <div class="field">
                 <label for="cpn">Client part number (CPN)</label>
-                <input type="text" id="cpn" name="cpn" value="<?= old($old, 'cpn') ?>" required>
+                <input type="text" id="cpn" name="cpn" value="<?= old($old, 'cpn') ?>" required
+                       autocomplete="off" data-cpn-check="<?= url('/staff/parts/cpn-check') ?>"
+                       data-cpn-client="#client_id">
                 <div class="hint">Their number for the part, as it appears on their drawing or purchase order.</div>
+                <?php /* A CPN is unique per client, so this re-asks when the client above changes. */ ?>
+                <div class="cpn-status" data-cpn-status role="status" aria-live="polite"></div>
                 <?php if (isset($errors['cpn'])): ?><div class="error"><?= e($errors['cpn']) ?></div><?php endif; ?>
             </div>
             <div class="field">

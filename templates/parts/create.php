@@ -10,8 +10,11 @@
         <div class="form-row">
             <div class="field">
                 <label for="cpn">Part number</label>
-                <input type="text" id="cpn" name="cpn" value="<?= old($old, 'cpn') ?>" required>
+                <input type="text" id="cpn" name="cpn" value="<?= old($old, 'cpn') ?>" required
+                       autocomplete="off" data-cpn-check="<?= url('/parts/cpn-check') ?>">
                 <div class="hint">Your part number. This must be unique for any part in this system.</div>
+                <?php /* Filled in by the live check as the number is typed — see app.js. */ ?>
+                <div class="cpn-status" data-cpn-status role="status" aria-live="polite"></div>
                 <?php if (isset($errors['cpn'])): ?><div class="error"><?= e($errors['cpn']) ?></div><?php endif; ?>
             </div>
             <div class="field">

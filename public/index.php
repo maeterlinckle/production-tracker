@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\Core\Request;
+use App\Core\Response;
 
 /*
  * Under PHP's built-in server this file is the router script, and a router
@@ -22,6 +23,17 @@ if (PHP_SAPI === 'cli-server') {
 }
 
 require dirname(__DIR__) . '/src/bootstrap.php';
+
+/*
+ * An upload too big for post_max_size arrives with an empty body, which every
+ * check downstream reads as a missing CSRF token and reports as an expired
+ * session. Caught here, before routing, because it is true of any POST and
+ * because the answer has to come before the middleware that would misdiagnose
+ * it — see App\Core\Request::bodyWasDiscarded().
+ */
+if (Request::bodyWasDiscarded()) {
+    Response::payloadTooLarge();
+}
 
 $router = require dirname(__DIR__) . '/routes/web.php';
 $router->dispatch(Request::method(), Request::path());

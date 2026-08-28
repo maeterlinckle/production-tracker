@@ -161,6 +161,60 @@ final class Request
         return self::$routeParams[$key] ?? $default;
     }
 
+    /**
+     * Did PHP throw this request's body away for being too big?
+     *
+     * When a POST exceeds `post_max_size`, PHP does not reject it — it discards
+     * the body and carries on, so `$_POST` and `$_FILES` both arrive empty. The
+     * request then looks exactly like one with no CSRF token on it, and the
+     * first thing to notice is the CSRF check, which reports a session that has
+     * expired. It has not: the session is fine and the token was sent. The file
+     * was simply too large to be read.
+     *
+     * That is why the fault looked intermittent and looked like session state:
+     * it is purely about size, it hits the biggest file somebody uploads (the
+     * drawing, right after creating a part), and it goes away on a retry with
+     * something smaller. Several files at once do it too, each one comfortably
+     * under `upload_max_filesize` while the total is over `post_max_size`.
+     *
+     * Content-Length is what PHP itself compares, so it is what is compared
+     * here. Both superglobals must also be empty, so an ordinary large-but-
+     * allowed upload is never mistaken for a discarded one.
+     */
+    public static function bodyWasDiscarded(): bool
+    {
+        if (!in_array(self::method(), ['POST', 'PUT', 'PATCH'], true)) {
+            return false;
+        }
+
+        $limit = self::iniBytes('post_max_size');
+        if ($limit <= 0) {
+            return false; // 0 or unset means no limit.
+        }
+
+        $length = (int) ($_SERVER['CONTENT_LENGTH'] ?? 0);
+
+        return $length > $limit && $_POST === [] && $_FILES === [];
+    }
+
+    /** An ini shorthand size ("8M", "512K", "1G") in bytes. */
+    public static function iniBytes(string $directive): int
+    {
+        $value = trim((string) ini_get($directive));
+        if ($value === '') {
+            return 0;
+        }
+
+        $number = (int) $value;
+
+        return match (strtolower(substr($value, -1))) {
+            'g' => $number * 1024 * 1024 * 1024,
+            'm' => $number * 1024 * 1024,
+            'k' => $number * 1024,
+            default => $number,
+        };
+    }
+
     public static function routeInt(string $key): int
     {
         return (int) (self::$routeParams[$key] ?? 0);

@@ -22,6 +22,7 @@ $showPricing = Auth::can('view_pricing');
             <?php /* Same columns, order and widths as Junction's parts list — see .table-parts. */ ?>
             <table class="table-parts">
                 <colgroup>
+                    <col class="col-part-thumb">
                     <col class="col-part-cpn">
                     <col class="col-part-name">
                     <col class="col-part-status">
@@ -30,6 +31,7 @@ $showPricing = Auth::can('view_pricing');
                 </colgroup>
                 <thead>
                     <tr>
+                        <th scope="col"><span class="sr-only">Photo</span></th>
                         <th scope="col">CPN</th>
                         <th scope="col">Name</th>
                         <th scope="col">Status</th>
@@ -40,6 +42,15 @@ $showPricing = Auth::can('view_pricing');
                 <tbody>
                 <?php foreach ($parts as $part): ?>
                     <tr>
+                        <td class="part-thumb-cell">
+                            <?php $photo = $mainPhotos[(int) $part['id']] ?? null; ?>
+                            <?php if ($photo !== null): ?>
+                                <?php /* The thumbnail route falls back to the full image when a
+                                         photo predates the thumbnailing, so this is always safe. */ ?>
+                                <img class="part-thumb" src="<?= url('/files/part-media/' . (int) $photo['id'] . '/thumb') ?>"
+                                     alt="" loading="lazy" width="44" height="44">
+                            <?php endif; ?>
+                        </td>
                         <td><?= e($part['cpn']) ?></td>
                         <td class="wrap"><?= e($part['name']) ?></td>
                         <td><?= status_badge($part['status']) ?></td>

@@ -55,6 +55,8 @@ $router->group(['auth'], function (Router $router): void {
     $router->get('/parts', [PartController::class, 'index']);
     $router->get('/parts/new', [PartController::class, 'create']);
     $router->post('/parts', [PartController::class, 'store'], ['csrf']);
+    // Asked while the CPN is being typed on the new-part form.
+    $router->get('/parts/cpn-check', [PartController::class, 'checkCpn']);
     $router->get('/parts/{id:\d+}', [PartController::class, 'show']);
     $router->get('/parts/{id:\d+}/edit', [PartController::class, 'edit']);
     $router->post('/parts/{id:\d+}', [PartController::class, 'update'], ['csrf']);
@@ -127,6 +129,7 @@ $router->group(['staff'], function (Router $router): void {
     // Registered before the {id} route so "new" is not read as an id.
     $router->get('/staff/parts/new', [StaffPartController::class, 'create']);
     $router->post('/staff/parts', [StaffPartController::class, 'store'], ['csrf']);
+    $router->get('/staff/parts/cpn-check', [StaffPartController::class, 'checkCpn']);
     $router->get('/staff/parts/{id:\d+}', [StaffPartController::class, 'show']);
     $router->get('/staff/parts/{id:\d+}/linked-summary', [StaffPartController::class, 'linkedSummary']);
     $router->get('/staff/parts/{id:\d+}/edit', [StaffPartController::class, 'edit']);

@@ -23,6 +23,7 @@ require dirname(__DIR__) . '/src/bootstrap.php';
 use App\Core\Capabilities;
 use App\Core\Config;
 use App\Core\Database;
+use App\Core\Request;
 use App\Mail\EmailTemplate;
 use App\Mail\Mailer;
 use App\Models\EmailLog;
@@ -138,6 +139,48 @@ function cmdDoctor(array $argv): int
         $path = (string) Config::get($key);
         $checks[] = [$key, is_dir($path) && is_writable($path) ? 'ok' : 'fail', $path];
     }
+
+    /*
+     * Can PHP actually accept what the application says it allows?
+     *
+     * These are two separate settings that have to agree and nothing kept them
+     * in step: the app offered a 50 MB tooling file while post_max_size was
+     * 27 MB, and the upload died in PHP before any application code ran. The
+     * body is discarded when that happens, so the CSRF check saw no token and
+     * reported an expired session — which is why the symptom looked nothing
+     * like a size limit.
+     *
+     * post_max_size carries the whole form, so it needs room for the largest
+     * single file plus the other fields, and ideally for more than one file at
+     * a time on the screens that accept several.
+     */
+    $largest = 0;
+    $largestKind = '';
+    foreach ((array) Config::get('uploads', []) as $kind => $rules) {
+        $bytes = (int) ($rules['max_bytes'] ?? 0);
+        if ($bytes > $largest) {
+            $largest = $bytes;
+            $largestKind = (string) $kind;
+        }
+    }
+
+    $mb = static fn (int $bytes): string => rtrim(rtrim(number_format($bytes / 1048576, 1), '0'), '.') . 'M';
+    $perFile = Request::iniBytes('upload_max_filesize');
+    $wholeBody = Request::iniBytes('post_max_size');
+
+    $checks[] = [
+        'upload_max_filesize',
+        $perFile >= $largest ? 'ok' : 'fail',
+        $mb($perFile) . ' — the app allows ' . $mb($largest) . " ({$largestKind})"
+            . ($perFile >= $largest ? '' : '; raise it or PHP refuses the file before the app sees it'),
+    ];
+
+    $checks[] = [
+        'post_max_size',
+        $wholeBody > $largest ? 'ok' : 'fail',
+        $mb($wholeBody) . ' — must exceed ' . $mb($largest) . ' to carry the file plus the rest of the form'
+            . ($wholeBody > $largest ? '' : '; below this an upload fails as "session expired"'),
+    ];
 
     $checks[] = ['Composer packages', class_exists(\PHPMailer\PHPMailer\PHPMailer::class) ? 'ok' : 'warn',
         class_exists(\PHPMailer\PHPMailer\PHPMailer::class) ? '' : 'run composer install — email and PDFs need it'];

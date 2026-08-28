@@ -30,7 +30,12 @@ final class StaffPartController
         $onlyUnquoted = Request::query('filter') === 'unquoted';
         $parts = $onlyUnquoted ? Part::unquoted() : Part::all();
 
-        View::render('staff/parts/index', ['title' => 'Parts', 'parts' => $parts, 'onlyUnquoted' => $onlyUnquoted]);
+        View::render('staff/parts/index', [
+            'title' => 'Parts',
+            'parts' => $parts,
+            'onlyUnquoted' => $onlyUnquoted,
+            'mainPhotos' => PartMedia::mainPhotosFor(array_column($parts, 'id')),
+        ]);
     }
 
     /**
@@ -283,6 +288,41 @@ final class StaffPartController
      * the record of what was agreed, and parts made to the old revision were
      * made to something — overwriting it would lose the only evidence of what.
      */
+    /**
+     * The same question as the client's own check, for whichever client is
+     * selected on the staff form.
+     *
+     * Its own endpoint rather than a shared one taking a client id: the client's
+     * version must only ever answer about their own parts, and the way to
+     * guarantee that is for it not to accept a client id at all. This one does,
+     * and is behind the capability for creating parts on a client's behalf.
+     */
+    public function checkCpn(): void
+    {
+        Auth::authorize('create_client_parts');
+
+        $cpn = trim((string) Request::query('cpn', ''));
+        $clientId = (int) Request::query('client_id', 0);
+
+        if ($cpn === '' || $clientId <= 0) {
+            Response::json(['available' => null]);
+        }
+
+        $existing = Part::findByCpn($clientId, $cpn);
+
+        Response::json($existing === null
+            ? ['available' => true]
+            : [
+                'available' => false,
+                'part' => [
+                    'cpn' => $existing['cpn'],
+                    'name' => $existing['name'],
+                    'archived' => (bool) $existing['is_archived'],
+                    'url' => url('/staff/parts/' . $existing['id']),
+                ],
+            ]);
+    }
+
     public function uploadDrawing(string $id): void
     {
         Auth::authorize('edit_workshop_fields');

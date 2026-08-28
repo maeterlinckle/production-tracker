@@ -558,3 +558,128 @@
         if (summary) summary.focus();
     });
 })();
+
+/* ---------------------------------------------------------------------------
+ * Is this part number already taken?
+ *
+ * Asked while somebody types it into the new-part form, because finding out
+ * after filling the whole thing in — and losing the drawing they attached — is
+ * the version of this that wastes an afternoon. A CPN is unique per client, so
+ * the staff form has to say which client it is asking about, and re-ask when
+ * that changes.
+ *
+ * Advisory. The server refuses a duplicate whatever this says; the submit
+ * button being disabled is a courtesy to the person typing, not a control.
+ * ------------------------------------------------------------------------- */
+(function () {
+    var input = document.querySelector('[data-cpn-check]');
+    if (!input) return;
+
+    var endpoint = input.getAttribute('data-cpn-check');
+    var status = document.querySelector('[data-cpn-status]');
+    var form = input.form;
+    var clientSelect = input.getAttribute('data-cpn-client')
+        ? document.querySelector(input.getAttribute('data-cpn-client'))
+        : null;
+
+    if (!status || !form) return;
+
+    var submits = form.querySelectorAll('button[type="submit"], input[type="submit"]');
+    var timer = null;
+    // Every request carries a sequence number and only the newest is allowed to
+    // write to the page. Without it a slow "taken" can land after a later
+    // "free" and leave the form disabled over a name that is fine.
+    var sequence = 0;
+
+    function setSubmitDisabled(disabled) {
+        Array.prototype.forEach.call(submits, function (button) {
+            button.disabled = disabled;
+        });
+    }
+
+    function clear() {
+        // Bumping the sequence abandons anything already in flight. Without
+        // it, emptying the field while a slow "taken" is on its way lets that
+        // answer land afterwards and disable the form over a box with nothing
+        // in it.
+        sequence++;
+        status.textContent = '';
+        status.className = 'cpn-status';
+        setSubmitDisabled(false);
+    }
+
+    function showFree() {
+        status.className = 'cpn-status cpn-status-ok';
+        status.textContent = '\u2713 That part number is free.';
+        setSubmitDisabled(false);
+    }
+
+    function showTaken(part) {
+        status.className = 'cpn-status cpn-status-taken';
+        status.textContent = '';
+
+        var text = document.createElement('span');
+        text.textContent = '\u26A0 ' + part.cpn + ' is already used by '
+            + part.name + (part.archived ? ' (archived)' : '') + '. ';
+        status.appendChild(text);
+
+        var link = document.createElement('a');
+        link.href = part.url;
+        link.textContent = 'Open that part';
+        status.appendChild(link);
+
+        var note = document.createElement('span');
+        note.textContent = ' \u2014 or change the number above to carry on.';
+        status.appendChild(note);
+
+        setSubmitDisabled(true);
+    }
+
+    function check() {
+        var cpn = input.value.trim();
+
+        if (cpn === '') {
+            clear();
+            return;
+        }
+
+        var url = endpoint + '?cpn=' + encodeURIComponent(cpn);
+
+        if (clientSelect) {
+            if (!clientSelect.value) {
+                clear();
+                return;
+            }
+            url += '&client_id=' + encodeURIComponent(clientSelect.value);
+        }
+
+        var mine = ++sequence;
+
+        fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+            .then(function (response) { return response.ok ? response.json() : null; })
+            .then(function (data) {
+                if (mine !== sequence || !data) return;
+                if (data.available === true) showFree();
+                else if (data.available === false && data.part) showTaken(data.part);
+                else clear();
+            })
+            .catch(function () {
+                // A check that cannot run must not block the form. The server
+                // still refuses a duplicate.
+                if (mine === sequence) clear();
+            });
+    }
+
+    function schedule() {
+        window.clearTimeout(timer);
+        timer = window.setTimeout(check, 350);
+    }
+
+    input.addEventListener('input', schedule);
+    input.addEventListener('blur', check);
+    if (clientSelect) clientSelect.addEventListener('change', check);
+
+    // A value can already be here: the form comes back populated when a save
+    // was rejected, and that is exactly when the number is likely to be taken.
+    if (input.value.trim() !== '') check();
+})();

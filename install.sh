@@ -1343,13 +1343,40 @@ fi
 # ---------------------------------------------------------------------------
 step "Raising PHP's upload limits to match the application"
 
+# What the application says its largest allowed upload is, asked of the
+# application rather than kept as a second number here. These used to be keyed
+# off the drawing limit alone, which was 25 MB while the app offered 50 MB for
+# tooling files — so PHP threw away the body of an upload the app had just
+# promised to accept, and the CSRF check downstream reported it as an expired
+# session. `tracker doctor` now compares the two on a running install.
+APP_MAX_UPLOAD_MB="$(PT_ROOT="$INSTALL_DIR" "$PHP_BIN" -r '
+    require getenv("PT_ROOT") . "/src/bootstrap.php";
+    $max = 0;
+    foreach ((array) App\Core\Config::get("uploads", []) as $rules) {
+        $max = max($max, (int) ($rules["max_bytes"] ?? 0));
+    }
+    echo (int) ceil($max / 1048576);
+' 2>/dev/null || true)"
+
+# A fallback, so a config that cannot be read does not quietly install a zero.
+case "$APP_MAX_UPLOAD_MB" in
+    ''|*[!0-9]*) APP_MAX_UPLOAD_MB=50 ;;
+esac
+[ "$APP_MAX_UPLOAD_MB" -ge "$UPLOAD_MAX_DRAWING_MB" ] || APP_MAX_UPLOAD_MB="$UPLOAD_MAX_DRAWING_MB"
+
+# post_max_size carries the whole form, not just the file, and several of the
+# upload screens take more than one at a time. The headroom is what stops a
+# second ordinary-sized file tipping a request over the edge.
+POST_MAX_MB=$((APP_MAX_UPLOAD_MB + 32))
+info "Largest upload the application allows: ${APP_MAX_UPLOAD_MB}M (post_max_size ${POST_MAX_MB}M)"
+
 php_ini_body() {
     cat <<INI
 ; Written by the Production Tracker installer. Delete this file to revert.
 ; These must be at least as large as the drawing/photo limits the application
 ; enforces, or PHP rejects the upload before the application ever sees it.
-upload_max_filesize = ${UPLOAD_MAX_DRAWING_MB}M
-post_max_size = $((UPLOAD_MAX_DRAWING_MB + 2))M
+upload_max_filesize = ${APP_MAX_UPLOAD_MB}M
+post_max_size = ${POST_MAX_MB}M
 max_file_uploads = 20
 ; dompdf holds the whole document in memory while it renders.
 memory_limit = 256M
@@ -1593,7 +1620,7 @@ server {
     ssl_certificate ${TLS_CERT};
     ssl_certificate_key ${TLS_KEY};
 
-    client_max_body_size ${UPLOAD_MAX_DRAWING_MB}m;
+    client_max_body_size ${POST_MAX_MB}m;
 
     location / { try_files \$uri \$uri/ /index.php?\$query_string; }
 
@@ -1616,7 +1643,7 @@ server {
     root ${INSTALL_DIR}/public;
     index index.php;
 
-    client_max_body_size ${UPLOAD_MAX_DRAWING_MB}m;
+    client_max_body_size ${POST_MAX_MB}m;
 
     location / { try_files \$uri \$uri/ /index.php?\$query_string; }
 

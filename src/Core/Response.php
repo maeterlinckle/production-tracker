@@ -27,6 +27,43 @@ final class Response
         self::redirect($fallback);
     }
 
+    /**
+     * The upload was bigger than PHP would accept, so the body never arrived.
+     *
+     * 413, and a message that says what actually happened. The old answer was
+     * "your session has expired", which sent people off refreshing and signing
+     * in again to fix something that had nothing to do with either.
+     *
+     * The limit is named because it is the one thing that makes the next
+     * attempt succeed: knowing the file has to be under 8 MB is actionable,
+     * "too large" on its own is not.
+     */
+    public static function payloadTooLarge(): never
+    {
+        $limit = Request::iniBytes('post_max_size');
+        $mb = $limit > 0 ? round($limit / 1048576, 1) : 0;
+        $size = $mb > 0 ? rtrim(rtrim(number_format($mb, 1), '0'), '.') . ' MB' : 'the configured limit';
+
+        $message = 'That upload was too large to accept. Everything sent in one go — the file, or all the '
+            . 'files together — has to come to less than ' . $size . '. Nothing was saved, and you are '
+            . 'still signed in.';
+
+        if (Request::isAjax() || Request::isJson()) {
+            self::json(['error' => $message], 413);
+        }
+
+        // PHP prints its own "POST Content-Length exceeds the limit" warning
+        // before any of this runs when display_errors is on, and headers are
+        // gone by then. Setting the code would be a fatal on top of a warning,
+        // so the message still gets printed and the status is skipped.
+        if (!headers_sent()) {
+            http_response_code(413);
+        }
+
+        View::renderError(413, 'Upload too large', $message);
+        exit;
+    }
+
     public static function json(array $data, int $status = 200): never
     {
         http_response_code($status);
@@ -127,6 +164,16 @@ final class Response
 
     public static function securityHeaders(): void
     {
+        // Nothing to set if output has already begun. PHP prints its own
+        // startup warning ahead of any application code when a POST is too
+        // large and display_errors is on; without this guard each header() call
+        // then warns in turn, and on a debug install those warnings are
+        // exceptions, so a too-big upload ends as a fatal about headers rather
+        // than the message explaining the size.
+        if (headers_sent()) {
+            return;
+        }
+
         header_remove('X-Powered-By');
         header('X-Content-Type-Options: nosniff');
         header('X-Frame-Options: SAMEORIGIN');

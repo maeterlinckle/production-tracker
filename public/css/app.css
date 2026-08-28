@@ -2189,10 +2189,10 @@ legend.label { padding: 0; }
 .table-parts .col-part-action { width: 6rem; }
 /* col-part-name takes the remainder — it is the one that benefits from it. */
 
-.table-people .col-person-name   { width: 18rem; }
-.table-people .col-person-status { width: 12rem; }
-.table-people .col-person-seen   { width: 12rem; }
-.table-people .col-person-action { width: 14rem; }
+.table-people .col-person-name   { width: 15rem; }
+.table-people .col-person-status { width: 9.5rem; }
+.table-people .col-person-seen   { width: 9.5rem; }
+.table-people .col-person-action { width: 11rem; }
 /* col-person-roles takes the remainder: it holds a form, not a word. */
 
 .table-receipts .col-receipt-date { width: 12rem; }
@@ -2202,4 +2202,77 @@ legend.label { padding: 0; }
 
 @media (max-width: 900px) {
     .table-orders, .table-parts, .table-people, .table-receipts { table-layout: auto; }
+}
+
+/* --- The roles cell --------------------------------------------------------
+   Five role checkboxes in a column narrow enough to fit one per line made a
+   277px row: six stacked lines to say what is really a short list of ticks.
+   The list is the widest thing in either table of people, so it is what
+   decides how tall the row is and how narrow the window can get before the
+   whole table has to scroll.
+
+   Tightened here rather than in the markup: it is the same partial-shaped
+   cell on Junction's user list and on a client's own team page, and they are
+   meant to stay the same table. */
+.table-people .form-inline { gap: var(--space-1) var(--space-3); align-items: center; }
+
+.table-people label.checkbox {
+    gap: var(--space-1);
+    font-size: 0.85rem;
+    white-space: nowrap;
+}
+
+/* The tick itself does not need to be finger-sized in a dense table. */
+.table-people label.checkbox input[type="checkbox"] {
+    width: 0.95rem;
+    height: 0.95rem;
+    min-height: 0;
+    margin: 0;
+}
+
+/* Rows carry two lines in most cells, so the default row padding doubles up. */
+.table-people th, .table-people td { padding: var(--space-2) var(--space-3); }
+.table-people .cell-sub { font-size: 0.8rem; }
+.table-people .actions { display: flex; flex-wrap: wrap; gap: var(--space-1); }
+.table-people .actions .btn { white-space: nowrap; }
+
+/* --- The live part-number check --------------------------------------------
+   One line under the CPN field on the new-part forms, saying whether the
+   number is free. Empty and invisible until there is something to say, so the
+   form does not reserve space for a message that is usually absent. */
+.cpn-status { margin-top: var(--space-1); font-size: 0.88rem; line-height: 1.4; }
+.cpn-status:empty { display: none; }
+.cpn-status-ok { color: var(--ok); font-weight: 600; }
+.cpn-status-taken { color: var(--danger); }
+.cpn-status-taken a { color: inherit; font-weight: 600; }
+
+/* --- Part thumbnails in the listings ---------------------------------------
+   A small square at the head of each row, so a part can be recognised without
+   reading its number. Cropped rather than letterboxed: at this size a fitted
+   image is mostly background.
+
+   Every row gets the taller height, photo or no photo. Sizing rows to their
+   contents meant a list where most rows were 50px and the occasional one with
+   a picture was 69px, and the eye reads that unevenness as disorder before it
+   reads any of the text. */
+.table-parts .col-part-thumb { width: 4rem; }
+.table-parts tbody td { height: 3.75rem; }
+
+/* No vertical padding: the row height above already reserves the space, and
+   padding on top of a 44px image is what pushed the one row with a photo
+   taller than the rest. */
+.part-thumb-cell { padding-right: 0; padding-top: 0; padding-bottom: 0; }
+
+.part-thumb {
+    display: block;
+    width: 2.75rem;
+    height: 2.75rem;
+    object-fit: cover;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: var(--bg-raised);
+}
+
+@media (max-width: 900px) {
+    .table-parts .col-part-thumb { width: 3.25rem; }
 }

@@ -33,7 +33,12 @@ final class PartController
             $parts = array_values(array_filter($parts, static fn ($p) => (bool) $p['is_archived']));
         }
 
-        View::render('parts/index', ['title' => 'Parts', 'parts' => $parts, 'showArchived' => $showArchived]);
+        View::render('parts/index', [
+            'title' => 'Parts',
+            'parts' => $parts,
+            'showArchived' => $showArchived,
+            'mainPhotos' => PartMedia::mainPhotosFor(array_column($parts, 'id')),
+        ]);
     }
 
     public function create(): void
@@ -239,6 +244,41 @@ final class PartController
     }
 
     /** AJAX: parts in the same client not yet linked, matching a search term. */
+    /**
+     * Is this CPN free? Asked while somebody is typing it.
+     *
+     * Scoped to their own client, because that is what the unique key is
+     * scoped to. The answer names the part already holding it so the form can
+     * link straight there — nine times out of ten the reason a CPN is taken is
+     * that the part already exists and does not need creating again.
+     *
+     * Advisory only. Part::create still refuses a duplicate; this exists to say
+     * so before the form has been filled in, not instead of saying so after.
+     */
+    public function checkCpn(): void
+    {
+        Auth::authorize('manage_parts');
+
+        $cpn = trim((string) Request::query('cpn', ''));
+        if ($cpn === '') {
+            Response::json(['available' => null]);
+        }
+
+        $existing = Part::findByCpn((int) Auth::clientId(), $cpn);
+
+        Response::json($existing === null
+            ? ['available' => true]
+            : [
+                'available' => false,
+                'part' => [
+                    'cpn' => $existing['cpn'],
+                    'name' => $existing['name'],
+                    'archived' => (bool) $existing['is_archived'],
+                    'url' => url('/parts/' . $existing['id']),
+                ],
+            ]);
+    }
+
     public function searchLinkable(string $id): void
     {
         Auth::authorize('manage_parts');

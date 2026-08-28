@@ -1,0 +1,473 @@
+# Project state — a factual snapshot
+
+What exists in this application right now: tables and columns actually in use,
+every route, the conventions to follow, the quantity state machine, the shared
+components, the permission model, and the navigation.
+
+**This is a snapshot, not a history.** Nothing here says what changed or when.
+For the reasoning behind a decision — why a page is at two URLs, why the route
+card reads figures rather than computing them, what the Clear Books verification
+found — see [`../PROJECT_STATE.md`](../PROJECT_STATE.md) in the repository root,
+which is the narrative record.
+
+Regenerate the mechanical parts of this file from the running application rather
+than editing them by hand where you can: the schema from `information_schema`,
+the routes from the router, the capabilities from `Capabilities::MATRIX`.
+
+---
+
+## 1. Stack and layout
+
+Plain PHP 8.1+ and MariaDB. No framework, no build step, no JavaScript
+toolchain, no CSS preprocessor. Three runtime packages: PHPMailer, dompdf,
+endroid/qr-code.
+
+```
+bin/          console.php (all DB-touching admin), migrate.php, create-admin.php
+config/       config.php — the only place .env is read
+database/     migrations/ — numbered .sql, forward-only, tracked in `migrations`
+public/       index.php (entry point), css/app.css, js/app.js, favicon.svg
+routes/       web.php — every route, in two middleware groups
+src/Core/     Router, Auth, Capabilities, Database, View, Csrf, Session,
+              Request, Response, Upload, Image, Validator, Config, Env, Flash,
+              Crypto, LoginThrottle, Migrator, NotificationTypes
+src/Models/   one per table-ish; static methods, no ORM
+src/Services/ multi-model work and anything talking to the outside world
+templates/    plain PHP views; partials/ for shared fragments
+storage/      logs/ and uploads/ (subdirectories are created on demand)
+```
+
+PSR-4: `App\` → `src/`.
+
+---
+
+## 2. Conventions
+
+**Database.** PDO with `ATTR_EMULATE_PREPARES => false`; named placeholders
+everywhere. `Database::query()` converts PHP booleans to 0/1 before binding —
+`execute()` binds everything as a string and a bound `false` reaches MariaDB as
+`''`, which strict mode rejects. Direct `$pdo->prepare()` inside a
+`Database::transaction()` closure does **not** get that conversion, so write
+`? 1 : 0` there.
+
+`Database::transaction()` is re-entrant: it joins an open transaction rather
+than nesting, because PDO cannot nest. A model method that opens its own is safe
+to call from inside another.
+
+**Migrations** are forward-only, numbered, and re-runnable where MariaDB allows
+it (`IF [NOT] EXISTS`, and constraint existence checked via `information_schema`
+before `ALTER`). `005` is the one exception and says so in its header.
+
+**Derived columns are recalculated, never incremented.** `OrderLine::recalculateTotals()`
+rewrites every cached total from the distribution after each write.
+
+**Views** are plain PHP. `e()` escapes, `url()` builds paths, `partial()`
+includes a fragment, `csrf_field()` emits the token. `View::render($template,
+$data, $layout)`; `View::capture()` returns a string.
+
+**Permissions are enforced twice on purpose:** the template hides what somebody
+cannot change, and the service or controller refuses it. A hidden field is not a
+locked one.
+
+**Pricing is omitted, not disabled.** Anything carrying a price is gated on
+`view_pricing` where the payload is assembled, so it is absent from the response
+rather than hidden with CSS. `Notifications` refuses to send price-bearing email
+to a recipient without it.
+
+**Comments explain why, not what**, in plain British English.
+
+**Kitwell** (the sibling asset register) is never a dependency, submodule or
+shared include. Patterns may be copied; code may not.
+
+---
+
+## 3. Schema
+
+36 tables, migrations `001`–`011` applied. Primary keys in bold.
+
+| Table | Columns |
+|---|---|
+| `clearbooks_tokens` | **id**, access_token, refresh_token, expires_at, updated_at |
+| `clients` | **id**, name, clearbooks_entity_id, address_line1, address_line2, address_city, address_county, address_postcode, address_country, main_contact_name, main_contact_email, main_contact_phone, billing_email, vat_number, company_number, clearbooks_synced_at, clearbooks_synced_by, notes, is_active, created_at, updated_at |
+| `delivery_notes` | **id**, type, client_id, related_note_id, reference, pdf_file_path, issued_by, issued_at, invoiced, invoiced_at, notes, created_at |
+| `delivery_note_lines` | **id**, delivery_note_id, order_line_id, qty |
+| `email_log` | **id**, to_email, subject, template_key, related_type, related_id, status, error, sent_at |
+| `email_templates` | **id**, template_key, subject, body, is_html, is_active, updated_by, updated_at |
+| `free_issue_receipts` | **id**, order_line_id, qty_received, discrepancy_type, discrepancy_notes, resolved_at, resolved_by, received_at, received_by, notes, created_at |
+| `free_issue_rejections` | **id**, order_line_id, qty_rejected, reason, return_note_id, replacement_note_id, rejected_by, rejected_at |
+| `invoices` | **id**, delivery_note_id, source, clearbooks_invoice_id, clearbooks_invoice_number, amount, raised_by, raised_at, notes |
+| `login_attempts` | **id**, email, ip_address, succeeded, attempted_at |
+| `migrations` | **id**, migration, batch, executed_at |
+| `notification_preferences` | **user_id**, **notification_type** |
+| `orders` | **id**, client_id, order_number, po_number, po_file_path, po_original_filename, placed_by, placed_at, notes, created_at, updated_at, closed_at, closed_by, close_reason |
+| `order_lines` | **id**, order_id, part_id, line_no, qty_ordered, unit_price, qty_free_issue_required, qty_free_issue_received, qty_free_issue_rejected, qty_completed, qty_delivered, qty_invoiced, qty_failed, qty_cancelled, notes, created_at, updated_at, closed_at, closed_by, close_reason |
+| `order_line_change_requests` | **id**, order_line_id, initiated_by, qty_at_request, qty_requested, reason, status, requested_by, requested_at, reviewed_by, reviewed_at, review_notes |
+| `order_line_quantities` | **order_line_id**, **stage**, qty, updated_at |
+| `order_line_stage_moves` | **id**, order_line_id, from_stage, to_stage, qty, reason, moved_by, moved_at |
+| `order_notes` | **id**, order_id, user_id, body, created_at |
+| `order_photos` | **id**, order_id, order_line_id, file_path, thumb_path, original_filename, mime_type, file_size, caption, uploaded_by, uploaded_at |
+| `order_po_documents` | **id**, order_id, po_number, file_path, original_filename, mime_type, file_size, is_original, note, uploaded_by, uploaded_at |
+| `order_queries` | **id**, order_id, raised_by, subject, body, status, created_at, updated_at |
+| `order_query_replies` | **id**, order_query_id, user_id, body, created_at |
+| `parts` | **id**, client_id, cpn, name, description, usual_order_qty, target_price, notes, has_free_issue, free_issue_relationship, free_issue_factor, free_issue_updated_by, free_issue_updated_at, status, is_archived, internal_notes, build_time_minutes, quoted_price, quoted_price_set_by, quoted_price_set_at, price_under_review, base_material, material_source, material_cost, created_by, updated_by, created_at, updated_at |
+| `parts_return_receipts` | **id**, delivery_note_id, order_line_id, qty_received, notes, received_by, received_at |
+| `part_alternate_numbers` | **id**, part_id, number, label |
+| `part_files` | **id**, part_id, file_path, original_filename, mime_type, file_size, version_no, is_current, uploaded_by, uploaded_at |
+| `part_free_issue_materials` | **id**, part_id, reference, notes |
+| `part_links` | **id**, part_id, linked_part_id, created_by, created_at |
+| `part_media` | **id**, part_id, kind, is_main, caption, file_path, thumb_path, original_filename, mime_type, file_size, uploaded_by, uploaded_at |
+| `reference_sequences` | **sequence_key**, next_number |
+| `reminder_runs` | **id**, kind, ran_at, recipients, items, sent, failed, triggered_by, notes |
+| `roles` | **id**, slug, name, side |
+| `settings` | **setting_key**, setting_value, updated_at |
+| `users` | **id**, client_id, side, name, email, password_hash, password_set_at, is_active, last_login_at, created_at, updated_at |
+| `user_invites` | **id**, user_id, token_hash, invited_by, created_at, expires_at, accepted_at |
+| `user_roles` | **user_id**, **role_id**, granted_at |
+
+### The tables that carry the workflow
+
+`order_lines` is the centre. A line does **not** have a status column — its
+quantity is spread across stages in `order_line_quantities`, one row per
+occupied stage, and the rows for a line always sum to `order_lines.qty_ordered`.
+Every movement is written to `order_line_stage_moves` (`from_stage` NULL means
+quantity entered the line, `to_stage` NULL means it left).
+
+Cached totals on `order_lines` — `qty_completed`, `qty_delivered`,
+`qty_invoiced`, `qty_failed`, `qty_cancelled`, `qty_free_issue_required` — are
+rewritten from the distribution after every write.
+
+`qty_free_issue_required` is **derived**, not accumulated: enough for what is
+still on the order, plus enough to remake what has failed, each rounded up
+separately.
+
+---
+
+## 4. The quantity state machine
+
+```
+awaiting_free_issue → ready_for_production → in_production → complete → delivered → invoiced
+```
+
+plus two terminal buckets: **`failed`** and **`cancelled`**.
+
+No status is stored anywhere. `OrderLine::statusLabel()` writes the distribution
+out ("12 awaiting free issue, 5 ready for production"), and
+`OrderLine::headlineStage()` picks the least-advanced non-empty flow stage for
+the badge.
+
+**Where staff may move quantity by hand** (`OrderLine::MANUAL_DESTINATIONS`):
+
+| From | To |
+|---|---|
+| `awaiting_free_issue` | ready_for_production, failed, cancelled |
+| `ready_for_production` | in_production, awaiting_free_issue, failed, cancelled |
+| `in_production` | complete, ready_for_production, failed, cancelled |
+| `complete` | in_production, failed, cancelled |
+| `delivered` | *(none)* |
+| `invoiced` | *(none)* |
+| `failed` | awaiting_free_issue, ready_for_production, cancelled |
+| `cancelled` | awaiting_free_issue, ready_for_production |
+
+`delivered` and `invoiced` are unreachable by hand on purpose: quantity becomes
+delivered by appearing on a goods-out note and invoiced by an invoice being
+raised. A second, quieter way to say the same thing would disagree within a week.
+
+**Two units of measure.** `OrderLine::UNIT_STAGES` — `awaiting_free_issue`,
+`ready_for_production`, `in_production` — are read and entered in **material
+units**; everything from `complete` onward is **final parts**. Storage is always
+final parts. Conversion happens only at the display/input boundary
+(`OrderLine::displayQty()` out, `OrderLine::storedQtyFromEntered()` in), gated on
+`Part::convertsQuantity()`, so a 1:1 part sees no conversion and no unit words.
+**When typing a quantity, you type in the unit of the stage you are taking from.**
+
+**Free-issue figures** come from one place, `OrderLine::freeIssueFigures()`,
+which returns `required`, `received`, `rejected`, `accepted`, `outstanding` and
+`surplus`. They always reconcile: `accepted + outstanding = required + surplus`,
+and only one of outstanding/surplus is ever non-zero. Nothing should compute
+these itself.
+
+**Rejections vs shortages vs failures** are three different things:
+
+- a **shortage** is material that has not arrived; the standing note already
+  asks for it and nothing else happens;
+- a **rejection** is material that arrived and cannot be used; it goes back on a
+  return note and the same quantity is added to what the line still needs;
+- a **failure** is a part that was made and is not acceptable; it sits in
+  `failed`, still counts as owed, and raises the material requirement.
+
+---
+
+## 5. Roles and permissions
+
+`users.side` (`staff`|`client`) is the fixed top-level split, enforced by a CHECK
+tying it to `client_id` nullability. Granular permission is
+`roles`/`user_roles` many-to-many plus the in-code `Capabilities::MATRIX`.
+
+A generic superset rule in `Capabilities::allows()` gives `staff.admin` any
+capability listing at least one `staff.*` role, and `client.admin` any listing a
+`client.*` role — so those two are never written into a row.
+
+**Eight roles:**
+
+| Side | Slug | Name |
+|---|---|---|
+| staff | `staff.admin` | Staff admin |
+| staff | `staff.invoicing` | Invoicing |
+| staff | `staff.production` | Production |
+| staff | `staff.quoting` | Quoting |
+| staff | `staff.raise_orders` | Raise orders |
+| client | `client.admin` | Client admin |
+| client | `client.production` | Production viewer |
+| client | `client.purchaser` | Purchaser |
+
+**Capabilities**, as written (admin supersets not repeated):
+
+| Capability | Roles |
+|---|---|
+| `view_pricing` | client.purchaser, client.admin, staff.quoting, staff.admin |
+| `manage_parts` | client.purchaser, client.admin |
+| `place_orders` | client.purchaser, client.admin |
+| `manage_client_users` | client.admin |
+| `request_quantity_change` | client.purchaser, client.admin |
+| `return_rejected_parts` | client.production, client.purchaser, client.admin |
+| `view_orders` | all three client roles + staff.production, staff.quoting, staff.invoicing, staff.admin |
+| `raise_queries` | all three client roles + staff.production, staff.quoting, staff.invoicing, staff.admin |
+| `manage_clients` | staff.admin |
+| `set_pricing` | staff.quoting, staff.admin |
+| `edit_workshop_fields` | staff.quoting, staff.production, staff.admin |
+| `production_control` | staff.production, staff.admin |
+| `issue_delivery_notes` | staff.production, staff.admin |
+| `create_client_parts` | staff.quoting, staff.admin |
+| `raise_orders` | staff.raise_orders, staff.admin |
+| `approve_quantity_changes` | staff.quoting, staff.raise_orders, staff.admin |
+| `close_orders` | staff.quoting, staff.admin |
+| `push_invoices` | staff.invoicing, staff.admin |
+| `manage_settings` | staff.admin |
+
+`Auth::authorize('x')` 403s and exits (JSON-aware). `Auth::can('x')` returns a
+bool for templates.
+
+---
+
+## 6. Routes
+
+138 routes in two middleware groups. `auth` is the client area (staff may also
+reach it, scoped to their own client); `staff` is Junction's. `csrf` is on every
+state-changing POST.
+
+The full list is best read from the router itself:
+
+```php
+$router = require 'routes/web.php';
+// $routes is a flat list of ['method','path','handler','middleware','regex']
+```
+
+**The shape to know:** the part page and the order page are each **one template
+rendered at two URLs**.
+
+| Page | Template | Payload | URLs |
+|---|---|---|---|
+| Part view | `templates/parts/show.php` | `PartView::payload()` | `/parts/{id}`, `/staff/parts/{id}` |
+| Order view | `templates/orders/show.php` | `OrderView::payload()` | `/orders/{id}`, `/staff/orders/{id}` |
+| Part edit | `templates/parts/edit.php` | `PartForm` | `/parts/{id}/edit`, `/staff/parts/{id}/edit` |
+
+Two URLs rather than one because Junction's own actions must sit behind the
+`staff` middleware group, and every link into the staff area already points
+there. One template, one payload builder, and the staff copies are deleted
+rather than kept alongside.
+
+Inside such a template the pattern is:
+
+```php
+$isStaff       = Auth::isStaff();
+$canProduce    = $isStaff && Auth::can('production_control');
+$staffBase     = '/staff/orders/' . $order['id'];
+$clientBase    = '/orders/' . $order['id'];
+$base          = $isStaff ? $staffBase : $clientBase;
+```
+
+Staff-only forms post to `$staffBase`, client actions to `$clientBase`. **Both
+halves need routes** — a form rendered for staff whose staff route was never
+registered renders happily and 404s on submit.
+
+There is no route-audit script in the repository, but the check is worth running
+by hand after adding routes: pull every `url(...)` out of the templates and test
+it against the router's own compiled `regex` values (not a second matcher of your
+own). A staff form whose route was never registered rendered for weeks before
+anybody pressed the button.
+
+---
+
+## 7. Reusable components
+
+**Partials** (`templates/partials/`):
+
+| Partial | What it is |
+|---|---|
+| `back-link.php` | The return link above a page heading. `href`, `label`. |
+| `brand.php` | Logo or fallback mark plus wordmark. |
+| `delivery-note-table.php` | One delivery-note table, any of the four kinds. Declares the shared six columns. |
+| `flash.php` | The flash stack. |
+| `footer.php` | Page footer. |
+| `free-issue-fields.php` | The has-free-issue toggle, relationship and factor. |
+| `free-issue-relationship.php` | The relationship wording. |
+| `nav.php` | Primary navigation, permission-filtered (see §9). |
+| `order-builder.php` | The line builder on the order forms. |
+| `order-notes-queries.php` | Notes and queries, both audiences. Posts to `/staff/orders/...` or `/orders/...` by viewer. |
+| `part-media.php` | Part photo/document/tooling grid. |
+| `qty-bar.php` | A done-of-total progress bar. `label`, `done`, `total`. |
+| `stage-moves.php` | The production-status table and its move controls. |
+| `stepper.php` | The proportional stage bar. |
+| `theme-init.php` | Sets `data-theme` before first paint. |
+
+**Services** (`src/Services/`): `Branding`, `ClearBooksClient`,
+`ClearBooksCustomerSync`, `FreeIssueNoteService`, `Invitations`,
+`Notifications`, `OrderPlacement`, `OrderView`, `PartForm`, `PartView`,
+`PartsOnOrder`, `PartsReturnService`, `PdfService`, `QrCodeService`,
+`ReferenceNumber`, `Reminders`, `RouteCardService`.
+
+**Table classes in `app.css`**, each with a `<colgroup>` and declared widths so
+tables showing the same thing line up between pages: `.dn-table` (the four
+delivery-note tables), `.stage-table`, `.failed-table`, `.table-orders`,
+`.table-parts`, `.table-people`, `.table-receipts`. All use
+`table-layout: fixed` with one unsized column to absorb the remainder, and fall
+back to `auto` under 900px.
+
+**JS behaviours** are `data-` attribute driven in `public/js/app.js`, no build
+step: `data-theme-toggle`, `data-nav`, `data-dismiss`, `data-flash-autohide`,
+`data-toggle-password`, `data-copy`, `data-checkin-*`, `data-reject-*`,
+`data-cpn-check` / `data-cpn-status` / `data-cpn-client`.
+
+---
+
+## 8. Documents and paperwork
+
+**Four delivery-note types**, one vocabulary for both audiences
+(`DeliveryNote::TYPE_LABELS`):
+
+| Type | Label | Direction |
+|---|---|---|
+| `free_issue_in` | Free-Issue Sent | client → Junction (a standing request) |
+| `goods_out` | Completed Parts Sent | Junction → client |
+| `material_return` | Rejected Free-Issue Returned | Junction → client |
+| `parts_return` | Rejected Parts Returned | client → Junction |
+
+Reference prefixes: `FIDN-`, `DN-`, `RTN-`, `RPN-`, plus `ORD-` and route cards
+derived as `RC-{order}-{line}`. All per-year sequences from
+`reference_sequences` via `ReferenceNumber::next()`.
+
+**Free-issue notes and route cards are rendered live and never stored** — what
+they ask for changes as material arrives, so a saved copy would be wrong. Notes
+that record a movement (goods out, both returns) keep their PDF.
+
+**One outstanding free-issue request per line**, reissued rather than
+duplicated. Anything needing more material points at the standing note.
+
+---
+
+## 9. Navigation (`templates/partials/nav.php`)
+
+Groups with children; a link is shown only if its `permission` passes, and a
+group disappears when nothing under it does.
+
+**Staff:**
+
+| Group | Children (permission) |
+|---|---|
+| Orders | Place an order (`raise_orders`), All orders (`view_orders`), Delivery notes (`view_orders`) |
+| Parts | New part (`create_client_parts`), All parts (—) |
+| Reports | *(top-level, `view_orders`)* |
+| Settings | Clients (`manage_clients`), Users, Logo, Email, Email templates, Reminders, Clear Books (all `manage_settings`) |
+
+**Client:**
+
+| Group | Children (permission) |
+|---|---|
+| Parts | New part (`manage_parts`), All parts (—) |
+| Orders | Place an order (`place_orders`), All orders (`view_orders`) |
+| Team | *(top-level, `manage_client_users`)* |
+
+Every top-level list is one click away from anywhere, which is why a page's
+"back" link points at the specific order/client/part it came from rather than at
+a list the sidebar already offers.
+
+---
+
+## 10. Notifications
+
+Opt-in per person; everybody starts subscribed to nothing. Registry in
+`Core/NotificationTypes.php`; wording in `Mail/EmailTemplate.php` (defaults are
+the source of truth, the `email_templates` table holds overrides only).
+
+| Type | Side | Capability | Group |
+|---|---|---|---|
+| `part_quoted` | both | `view_pricing` | Orders |
+| `order_confirmed` | both | — | Orders |
+| `order_in_production` | both | — | Orders |
+| `free_issue_note_issued` | both | — | Free-issue material |
+| `free_issue_checked_in` | both | — | Free-issue material |
+| `material_rejected` | both | — | Free-issue material |
+| `delivery_note_issued` | both | — | Despatch, returns and invoicing |
+| `parts_returned` | staff | — | Despatch, returns and invoicing |
+| `invoice_raised` | both | `view_pricing` | Despatch, returns and invoicing |
+| `query_raised` | both | — | Questions and changes |
+| `query_answered` | both | — | Questions and changes |
+| `quantity_change_requested` | staff | — | Questions and changes |
+| `quantity_change_decided` | both | — | Questions and changes |
+| `parts_outstanding` | staff | — | Junction workload |
+
+A template's merge fields are declared beside its wording, so the editor offers
+exactly what the sending code supplies.
+
+---
+
+## 11. Uploads
+
+| Kind | Max | Extensions |
+|---|---|---|
+| `drawing` | 25 MB | pdf, dwg, dxf, step, stp, iges, igs, png, jpg, jpeg |
+| `po` | 15 MB | pdf, png, jpg, jpeg, doc, docx |
+| `photo` | 10 MB | png, jpg, jpeg, webp |
+| `part_document` | 25 MB | pdf, png, jpg, jpeg, webp, doc, docx, xls, xlsx, txt |
+| `part_tooling` | 50 MB | CNC/CAM and archive formats |
+| `logo` | 2 MB | png, jpg, jpeg, webp |
+
+**PHP's `post_max_size` must exceed the largest of these**, or PHP discards the
+request body and the missing CSRF token is reported as an expired session.
+`install.sh` derives `upload_max_filesize`, `post_max_size` and nginx's
+`client_max_body_size` from the application's own config; `tracker doctor`
+checks the two PHP limits against it and fails when they disagree.
+
+`Upload::store()`, `Image::process()` and `PdfService` all create their
+directories on demand, so no pre-created list is needed anywhere.
+
+Photos are normalised to a 2400px longest edge with a 480px thumbnail beside
+them; `thumb_path` is nullable and the file controller falls back to the full
+image.
+
+---
+
+## 12. Administration
+
+`sudo tracker <command>` (`manage.sh`). Anything touching the database goes
+through `bin/console.php` so it uses the application's own models and
+validation; anything needing root is done in the shell script.
+
+Notable: `doctor` (the first thing to run when something is wrong), `backup`
+(database + uploads + `.env`, all three needed for a restore), `reset-database`
+and `reset-uploads` (each asks twice, requires `RESET` typed in full, ignores
+`--yes`, and refuses without a terminal).
+
+---
+
+## 13. Known state
+
+- **No automated test suite.** Verification is a full HTTP sweep across four
+  role levels plus browser measurement of layout.
+- **No invoice has been raised against a live Clear Books account**, and the
+  customer read behind the client sync is equally unproven against live data.
+  Both are built from the published spec rather than guessed.
+- **SMTP is not configured** in any environment used so far, so every send has
+  failed at the connection by design.
+- `exif_read_data` is unavailable on the Windows development machine, so EXIF
+  auto-rotation degrades silently there.

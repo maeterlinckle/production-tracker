@@ -3,12 +3,22 @@
 Where the codebase actually is, written from the code and the live schema
 rather than from memory. Read this before picking the work up again.
 
-**Last verified:** 20 August 2026, against `production_tracker_dev` on the
-local MariaDB 12.3 instance and a full browser/HTTP pass across all three role
+**Last verified:** 28 August 2026, against `production_tracker_dev` on the
+local MariaDB 12.3 instance and a full browser/HTTP pass across all four role
 levels.
 
-For *how to install and run it*, see [`docs/INSTALL.md`](docs/INSTALL.md).
-This file is about what exists and why, not how to deploy it.
+Two other documents, so it is clear which answers what:
+
+- [`docs/PROJECT-STATE.md`](docs/PROJECT-STATE.md) — a factual snapshot of
+  what exists **now**: every table and column, the routes, the conventions,
+  the quantity state machine, the shared components, the permission matrix
+  and the navigation. Start there when you need to know how something is
+  currently named or wired. It carries no history.
+- [`docs/INSTALL.md`](docs/INSTALL.md) — how to install, run and administer it.
+
+**This file is the narrative record**: what was built in each round and, more
+importantly, why it was built that way. It is the place to look when a design
+decision seems odd and you want to know what it was weighed against.
 
 ---
 

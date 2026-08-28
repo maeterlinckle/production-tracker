@@ -137,8 +137,9 @@ sudo tracker help
 ```
 
 Full detail, including the Clear Books setup, is in
-**[docs/INSTALL.md](docs/INSTALL.md)**. The current state of the codebase —
-schema, patterns, what is done and what is not — is in
+**[docs/INSTALL.md](docs/INSTALL.md)**. What the codebase looks like right now —
+every table, route, convention and component — is in
+**[docs/PROJECT-STATE.md](docs/PROJECT-STATE.md)**; why it looks that way is in
 **[PROJECT_STATE.md](PROJECT_STATE.md)**.
 
 ## Licence

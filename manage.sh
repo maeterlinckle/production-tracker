@@ -268,12 +268,32 @@ db_service() {
 }
 
 # A defaults file for the application's own database credentials, so a password
-# never appears in the process list.
+# never appears in the process list — and is removed however the script ends.
+#
+# An EXIT trap rather than the per-function `trap ... RETURN` this used to
+# carry. A RETURN trap only fires when the function returns normally, and
+# `set -e` does not return from a function -- it exits the shell. So the one
+# case the cleanup existed for, a command failing part-way, was the one case it
+# did not cover: a failed backup left the password in /tmp. Measured, not
+# assumed.
+DB_CNF_FILES=()
+
+db_cnf_cleanup() {
+    local f
+    for f in ${DB_CNF_FILES+"${DB_CNF_FILES[@]}"}; do
+        [ -n "$f" ] && rm -f "$f"
+    done
+    DB_CNF_FILES=()
+}
+
+trap db_cnf_cleanup EXIT
+
 db_client_cnf() {
     local cnf; cnf="$(mktemp)"; chmod 600 "$cnf"
     printf '[client]\nuser=%s\npassword=%s\nhost=%s\nport=%s\n' \
         "$(env_get DB_USERNAME)" "$(env_get DB_PASSWORD)" \
         "$(env_get DB_HOST)" "$(env_get DB_PORT)" > "$cnf"
+    DB_CNF_FILES+=("$cnf")
     printf '%s' "$cnf"
 }
 
@@ -493,8 +513,6 @@ cmd_reset_database() {
     [ -n "$db" ] || die "No DB_DATABASE in $ENV_FILE."
 
     local cnf; cnf="$(db_client_cnf)"
-    # shellcheck disable=SC2064
-    trap "rm -f '$cnf'" RETURN
 
     local tables
     tables="$("$DB_CLIENT" --defaults-extra-file="$cnf" "$db" -N -B -e \
@@ -863,8 +881,25 @@ cmd_backup() {
     local dump="$dir/${db}-${stamp}.sql.gz"
     local cnf; cnf="$(db_client_cnf)"
 
-    "$DUMP_BIN" --defaults-extra-file="$cnf" --single-transaction --routines --events "$db" | gzip -9 > "$dump"
-    rm -f "$cnf"
+    # No --events and no --routines.
+    #
+    # The application user is granted SELECT, INSERT, UPDATE, DELETE, CREATE,
+    # DROP, ALTER, INDEX and REFERENCES on its own schema and nothing else --
+    # see install.sh, where that list is deliberate. Dumping events needs the
+    # EVENT privilege it does not have, so asking for them failed the whole
+    # backup with "Couldn't execute 'show events': Access denied".
+    #
+    # Nothing is lost by not asking. This schema has no events, no stored
+    # routines, no triggers and no views: it is plain tables written by
+    # numbered migrations, and the same grant that refuses to dump a stored
+    # program would refuse to create one. A dump taken without these flags is
+    # byte-identical to one taken as root, bar the timestamp comment.
+    #
+    # --single-transaction stays, and matters for the same reason: it takes a
+    # consistent snapshot without LOCK TABLES, which is another privilege the
+    # application user does not hold.
+    "$DUMP_BIN" --defaults-extra-file="$cnf" --single-transaction --skip-events --skip-routines "$db" \
+        | gzip -9 > "$dump"
 
     chmod 600 "$dump"
     ok "Database  $(basename "$dump")  ($(du -h "$dump" | cut -f1))"
@@ -919,7 +954,6 @@ cmd_restore() {
     else
         "$DB_CLIENT" --defaults-extra-file="$cnf" "$db" < "$dump"
     fi
-    rm -f "$cnf"
     ok "Database restored"
 
     if [ -n "$uploads" ]; then

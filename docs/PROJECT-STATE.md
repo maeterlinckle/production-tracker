@@ -654,6 +654,22 @@ Notable: `doctor` (the first thing to run when something is wrong), `backup`
 and `reset-uploads` (each asks twice, requires `RESET` typed in full, ignores
 `--yes`, and refuses without a terminal).
 
+**The application's database user is deliberately narrow** — `install.sh` grants
+`SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, ALTER, INDEX, REFERENCES` on its
+own schema and nothing else: no GRANT OPTION, CREATE USER, FILE, SUPER, PROCESS,
+EVENT, TRIGGER or LOCK TABLES.
+
+Anything run as that user has to live within it. `backup` therefore dumps with
+`--single-transaction --skip-events --skip-routines`: `--events` needs the EVENT
+privilege and failed the whole backup, and `--single-transaction` is what avoids
+needing LOCK TABLES. Nothing is lost — the schema has no events, routines,
+triggers or views, and the same grant that will not dump a stored program will
+not create one either.
+
+Temp files holding the database password are removed by an **EXIT** trap, not a
+`RETURN` one: `set -e` exits the shell rather than returning from a function, so
+a RETURN trap misses the failure case it exists for.
+
 ---
 
 ## 12.1 Accounts: switching people and companies off

@@ -2588,3 +2588,45 @@ dialog.row-editor::backdrop { background: rgb(0 0 0 / 0.5); }
     margin: 0 0 var(--space-4);
 }
 .field-set legend { padding: 0 var(--space-2); font-size: 0.82rem; color: var(--text-muted); }
+
+/* --- Required by ----------------------------------------------------------
+   When the client needs the parts. Three states and no more, because the badge
+   is read at a glance and the colour is the whole message: past, close, and
+   far enough away not to think about. */
+.due-badge {
+    display: inline-flex;
+    align-items: baseline;
+    gap: var(--space-2);
+    padding: 2px var(--space-2);
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    font-size: 0.8rem;
+    font-weight: 600;
+    white-space: nowrap;
+}
+.due-when { font-weight: 400; opacity: 0.8; }
+
+.due-overdue { background: var(--danger-soft); border-color: var(--danger); color: var(--danger); }
+.due-soon    { background: var(--warn-soft);   border-color: var(--warn);   color: var(--warn); }
+.due-ok      { background: var(--bg-sunken);   color: var(--text-muted); }
+/* Already made. Stated rather than dropped, because a date that has been met
+   is the answer to "did we get there", and removing it loses that. */
+.due-met     { background: var(--ok-soft); border-color: var(--ok); color: var(--ok); }
+
+.due-list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
+.due-list li { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--space-2); }
+
+/* The line card summary: title and any due badge share the first column, so
+   the caret stays at the far right whether or not there is a date. */
+.line-card-heading {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: var(--space-2) var(--space-3);
+    min-width: 0;
+}
+
+/* A person on a client account, with their controls. Same shape as the file
+   rows above it. */
+.user-row { align-items: flex-start; }
+.user-row .caption-edit { display: block; margin-top: var(--space-1); }

@@ -6,8 +6,9 @@ namespace App\Core;
 
 /**
  * Fixed capability -> allowed-role-slugs matrix. Deliberately not a generic
- * admin-editable permission grid -- the seven roles are spec'd and fixed, so
- * a small in-code table is simpler and just as auditable.
+ * admin-editable permission grid -- the roles are spec'd and fixed, so a small
+ * in-code table is simpler and just as auditable. A new role is a row in
+ * `roles` and a handful of edits here, both in the same migration-and-commit.
  *
  * 'staff.admin' automatically satisfies any capability that lists at least
  * one staff.* role ("full admin, everything"); 'client.admin' does the same
@@ -38,7 +39,17 @@ final class Capabilities
         // with it, and making them ask a purchaser to fill the form in is how
         // a rejection sits in somebody's inbox for a week. It commits nobody to
         // spending anything, which is what separates it from a quantity change.
-        'return_rejected_parts' => ['client.production', 'client.purchaser', 'client.admin'],
+        'return_rejected_parts' => [
+            'client.production', 'client.production_manager', 'client.purchaser', 'client.admin',
+        ],
+
+        // Saying when parts are needed. A production manager schedules the line
+        // and knows what has to land in March, which is a different job from
+        // buying it -- so this is its own role rather than something bolted on
+        // to the purchaser. It commits nobody to spending anything and changes
+        // nothing about what is owed; it is a statement of need that Junction
+        // reads to decide what to set up next.
+        'set_due_dates' => ['client.production_manager', 'client.admin'],
 
         // Both sides. Reading an order and talking about it are not client-only
         // activities: every staff role works from the order pages, and a query
@@ -47,11 +58,11 @@ final class Capabilities
         // the call sites is what lets the navigation ask the same question the
         // controllers do.
         'view_orders' => [
-            'client.production', 'client.purchaser', 'client.admin',
+            'client.production', 'client.production_manager', 'client.purchaser', 'client.admin',
             'staff.production', 'staff.quoting', 'staff.invoicing', 'staff.admin',
         ],
         'raise_queries' => [
-            'client.production', 'client.purchaser', 'client.admin',
+            'client.production', 'client.production_manager', 'client.purchaser', 'client.admin',
             'staff.production', 'staff.quoting', 'staff.invoicing', 'staff.admin',
         ],
 

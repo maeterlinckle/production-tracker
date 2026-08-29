@@ -31,6 +31,17 @@ final class Reminders
 {
     public const KIND = 'parts_outstanding';
 
+    /**
+     * How many parts the digest lists before it stops and points at the report.
+     *
+     * A digest nobody scrolls to the end of is a digest nobody reads. Parts
+     * rather than lines, because a part is what the reader acts on.
+     */
+    private const MAX_PARTS = 25;
+
+    /** Shared cell padding and rule. Inline, because email clients drop stylesheets. */
+    private const CELL = 'padding:5px 10px;border-bottom:1px solid #e2e8f0;';
+
     /** Sending is off until somebody turns it on: a fresh install emails nobody. */
     public static function isEnabled(): bool
     {
@@ -203,28 +214,12 @@ final class Reminders
      */
     private static function fields(array $lines, array $totals, int $ageingDays): array
     {
-        // Longest-open first: the digest is a nudge, and the thing most worth
-        // nudging about is what has been sitting the longest.
-        usort($lines, static fn (array $a, array $b): int => (int) $b['days_open'] <=> (int) $a['days_open']);
-
-        $items = [];
-        foreach (array_slice($lines, 0, 40) as $line) {
-            $hold = PartsOnOrder::holdReason($line);
-
-            $items[] = $line['order_number'] . '  '
-                . $line['cpn'] . ' ' . $line['part_name'] . ' — '
-                . $line['client_name'] . ' — '
-                . (int) $line['qty_outstanding'] . ' of ' . (int) $line['qty_ordered'] . ' outstanding — '
-                . ($hold !== '' ? $hold : (int) $line['days_open'] . ' days');
-        }
-
-        if (count($lines) > 40) {
-            $items[] = '… and ' . (count($lines) - 40) . ' more on the report.';
-        }
+        $parts = PartsOnOrder::groupByPart($lines);
 
         return [
             'count'         => (string) count($lines),
-            'items'         => implode("\n", $items),
+            'part_count'    => (string) count($parts),
+            'items'         => self::itemsHtml($parts, $ageingDays),
             'ageing_count'  => (string) $totals['ageing'],
             'ageing_days'   => (string) $ageingDays,
             'ageing_line'   => $totals['ageing'] === 0
@@ -234,5 +229,90 @@ final class Reminders
             'blocked_count' => (string) $totals['blocked'],
             'report_url'    => absolute_url('/staff/reports/parts-on-order'),
         ];
+    }
+
+    /**
+     * The digest body: one block per part, its orders underneath it.
+     *
+     * Grouped by part rather than listed by line, because the digest is read to
+     * decide what to set up next and that decision is made a part at a time. A
+     * part wanted on three orders is one machine setup, and a flat list sorted
+     * by age scattered those three down the page with no hint they belonged
+     * together — so the reader did the grouping in their head, every week.
+     *
+     * A cut-down version of the parts-on-order report on purpose. The report
+     * has the material figures, the discrepancies and the hold reasons; this
+     * has the part, how much is owed, and anything actually blocking it. It is
+     * a nudge to go and look, not a substitute for looking.
+     *
+     * Written as inline-styled tables because that is what survives an email
+     * client. Anything relying on a stylesheet, on floats or on flexbox is
+     * rendered by Outlook as a single column of unstyled text.
+     *
+     * @param array<int,array<string,mixed>> $parts from PartsOnOrder::groupByPart()
+     */
+    private static function itemsHtml(array $parts, int $ageingDays): string
+    {
+        $shown = array_slice($parts, 0, self::MAX_PARTS);
+        $blocks = [];
+
+        foreach ($shown as $part) {
+            $rows = [];
+
+            // Oldest order first within a part: if anything here is going to be
+            // chased, it is whatever has been waiting longest.
+            $lines = $part['lines'];
+            usort($lines, static fn (array $a, array $b): int => (int) $b['days_open'] <=> (int) $a['days_open']);
+
+            foreach ($lines as $line) {
+                $hold = PartsOnOrder::holdReason($line);
+                $age = (int) $line['days_open'];
+                $old = $age > $ageingDays;
+
+                $rows[] = '<tr>'
+                    . '<td style="' . self::CELL . 'white-space:nowrap">' . e((string) $line['order_number']) . '</td>'
+                    . '<td style="' . self::CELL . 'text-align:right;white-space:nowrap"><strong>'
+                        . (int) $line['qty_outstanding'] . '</strong> of ' . (int) $line['qty_ordered'] . '</td>'
+                    . '<td style="' . self::CELL . '">'
+                        . ($hold !== ''
+                            ? '<span style="color:#b45309">' . e($hold) . '</span>'
+                            : '<span style="color:' . ($old ? '#b45309' : '#64748b') . '">'
+                                . $age . ' day' . ($age === 1 ? '' : 's') . ' open</span>')
+                    . '</td>'
+                    . '</tr>';
+            }
+
+            $blocks[] = '<table role="presentation" cellpadding="0" cellspacing="0" width="100%" '
+                . 'style="border-collapse:collapse;margin:0 0 18px">'
+                . '<tr><td style="padding:8px 10px;background:#f1f5f9;border-left:3px solid #334155">'
+                    . '<strong style="font-size:15px">' . e((string) $part['cpn']) . '</strong>'
+                    . ' <span style="color:#334155">' . e((string) $part['part_name']) . '</span><br>'
+                    . '<span style="color:#64748b;font-size:13px">'
+                        . e((string) $part['client_name'])
+                        . ' &middot; <strong>' . (int) $part['qty_outstanding'] . '</strong> outstanding'
+                        . ' across ' . (int) $part['order_count'] . ' order'
+                        . ((int) $part['order_count'] === 1 ? '' : 's')
+                        . ((int) $part['qty_awaiting_despatch'] > 0
+                            ? ' &middot; ' . (int) $part['qty_awaiting_despatch'] . ' made, waiting to go out'
+                            : '')
+                        . ((int) $part['qty_failed'] > 0
+                            ? ' &middot; ' . (int) $part['qty_failed'] . ' failed'
+                            : '')
+                    . '</span>'
+                . '</td></tr>'
+                . '<tr><td style="padding:0">'
+                    . '<table role="presentation" cellpadding="0" cellspacing="0" width="100%" '
+                    . 'style="border-collapse:collapse;font-size:13px">' . implode('', $rows) . '</table>'
+                . '</td></tr>'
+                . '</table>';
+        }
+
+        if (count($parts) > self::MAX_PARTS) {
+            $blocks[] = '<p style="color:#64748b;font-size:13px">&hellip; and '
+                . (count($parts) - self::MAX_PARTS) . ' more part'
+                . (count($parts) - self::MAX_PARTS === 1 ? '' : 's') . ' on the report.</p>';
+        }
+
+        return implode('', $blocks);
     }
 }

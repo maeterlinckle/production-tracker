@@ -155,7 +155,7 @@ final class Mailer
         $merged  = array_merge(self::commonFields($toName), $fields);
         $subject = Merge::render((string) $template['subject'], $merged);
         $isHtml  = (bool) $template['is_html'];
-        $content = Merge::render((string) $template['body'], $merged, $isHtml);
+        $content = Merge::render((string) $template['body'], $merged, $isHtml, EmailTemplate::rawFields($templateKey));
 
         if (!$isHtml) {
             return self::send($toEmail, $toName, $subject, $content, $templateKey, $relatedType, $relatedId, false);

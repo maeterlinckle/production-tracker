@@ -134,7 +134,16 @@ final class EmailTemplateController
 
         $isHtml        = (bool) $template['is_html'];
         $mergedSubject = Merge::render($subject, $fields);
-        $mergedBody    = Merge::render($body, $fields, $isHtml);
+
+        // The same raw-field allowance the mailer uses, so a template whose
+        // sample carries built markup previews as the message rather than as a
+        // page of visible tags.
+        $mergedBody = Merge::render(
+            $body,
+            $fields,
+            $isHtml,
+            EmailTemplate::rawFields((string) $template['key'])
+        );
 
         return [
             'subject' => $mergedSubject,

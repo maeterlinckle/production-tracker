@@ -1,9 +1,42 @@
-<?php /** @var array $client */ /** @var array $users */ /** @var array $parts */ /** @var array $orders */ ?>
+<?php
+/**
+ * @var array      $client
+ * @var array      $users
+ * @var array      $parts
+ * @var array      $orders
+ * @var array|null $deactivation who switched the account off, and why
+ */
+$isActive = (bool) $client['is_active'];
+?>
 <?= partial("partials/back-link", ["href" => "/staff/clients", "label" => "Back to clients"]) ?>
 
 <div class="card-header">
-    <h1 class="mt-0 mb-0"><?= e($client['name']) ?></h1>
+    <h1 class="mt-0 mb-0">
+        <?= e($client['name']) ?>
+        <?php if (!$isActive): ?><span class="badge badge-muted">Account switched off</span><?php endif; ?>
+    </h1>
 </div>
+
+<?php if (!$isActive): ?>
+    <?php /*
+        Said at the top, not buried in a panel further down: everything else on
+        this page is about a company nobody can currently sign in as, and
+        reading their order list without knowing that is how somebody spends
+        ten minutes wondering why nothing is moving.
+    */ ?>
+    <div class="callout callout-warn">
+        <p class="mb-1"><strong>This account is switched off.</strong></p>
+        <p class="mb-0">
+            Nobody on it can sign in, their orders are frozen where they stand, and their work is out of
+            the day-to-day lists. Nothing has been deleted.
+            <?php if ($deactivation !== null): ?>
+                Switched off <?= e(format_datetime($deactivation['deactivated_at'])) ?><?php
+                ?><?= $deactivation['deactivated_by_name'] ? ' by ' . e($deactivation['deactivated_by_name']) : '' ?><?php
+                ?><?= $deactivation['deactivated_reason'] ? ' — ' . e($deactivation['deactivated_reason']) : '' ?>.
+            <?php endif; ?>
+        </p>
+    </div>
+<?php endif; ?>
 
 <div class="grid grid-2">
     <div class="card">
@@ -33,9 +66,7 @@
                 <div class="field"><label for="company_number">Company number</label><input type="text" id="company_number" name="company_number" value="<?= e($client['company_number'] ?? '') ?>"></div>
             </div>
             <div class="field"><label for="notes">Notes</label><textarea id="notes" name="notes"><?= e($client['notes'] ?? '') ?></textarea></div>
-            <div class="field">
-                <label><input type="checkbox" name="is_active" value="1" <?= $client['is_active'] ? 'checked' : '' ?> style="width:auto;min-height:auto"> Active</label>
-            </div>
+            <?php /* Switching the account off is its own action, below. */ ?>
             <button type="submit" class="btn btn-primary">Save changes</button>
         </form>
 
@@ -82,9 +113,41 @@
             <?php else: ?>
                 <ul class="file-list">
                     <?php foreach ($users as $user): ?>
-                        <li>
-                            <span><?= e($user['name']) ?> <span class="muted"><?= e($user['email']) ?></span></span>
+                        <li class="user-row">
                             <span>
+                                <?= e($user['name']) ?> <span class="muted"><?= e($user['email']) ?></span>
+                                <?php if (!(bool) $user['is_active']): ?>
+                                    <span class="badge badge-muted">Deactivated</span>
+                                <?php endif; ?>
+
+                                <?php /*
+                                    Correcting a name or an email, and switching
+                                    somebody off. Deactivating rather than
+                                    deleting: everything they raised keeps their
+                                    name on it.
+                                */ ?>
+                                <details class="caption-edit">
+                                    <summary>Edit</summary>
+                                    <form method="post" action="<?= url('/staff/clients/' . $client['id'] . '/users/' . $user['id']) ?>">
+                                        <?= csrf_field() ?>
+                                        <div class="form-row">
+                                            <div class="field">
+                                                <label for="cu_name_<?= (int) $user['id'] ?>">Name</label>
+                                                <input type="text" id="cu_name_<?= (int) $user['id'] ?>" name="name"
+                                                       value="<?= e($user['name']) ?>" required>
+                                            </div>
+                                            <div class="field">
+                                                <label for="cu_email_<?= (int) $user['id'] ?>">Email</label>
+                                                <input type="email" id="cu_email_<?= (int) $user['id'] ?>" name="email"
+                                                       value="<?= e($user['email']) ?>" required>
+                                            </div>
+                                        </div>
+                                        <div class="hint">Changing the email changes what they sign in with.</div>
+                                        <button type="submit" class="btn btn-sm">Save details</button>
+                                    </form>
+                                </details>
+                            </span>
+                            <span class="media-actions">
                                 <?php if (!$user['has_password']): ?>
                                     <span class="badge badge-warn">Invited</span>
                                     <form method="post" action="<?= url('/staff/clients/' . $client['id'] . '/users/' . $user['id'] . '/reinvite') ?>" class="inline-form">
@@ -94,6 +157,10 @@
                                 <?php else: ?>
                                     <span class="badge <?= $user['is_active'] ? 'badge-ok' : 'badge-muted' ?>"><?= $user['is_active'] ? 'Active' : 'Inactive' ?></span>
                                 <?php endif; ?>
+                                <form method="post" action="<?= url('/staff/clients/' . $client['id'] . '/users/' . $user['id'] . '/toggle-active') ?>" class="inline-form">
+                                    <?= csrf_field() ?>
+                                    <button type="submit" class="btn btn-sm"><?= $user['is_active'] ? 'Deactivate' : 'Reactivate' ?></button>
+                                </form>
                             </span>
                         </li>
                     <?php endforeach; ?>
@@ -158,6 +225,47 @@
                 <a href="<?= url('/staff/clients/' . $client['id'] . '/free-issue-note/new') ?>" class="btn btn-sm">New free-issue note</a>
                 <a href="<?= url('/staff/clients/' . $client['id'] . '/delivery-note/new') ?>" class="btn btn-sm">New delivery note</a>
             </div>
+        </div>
+
+        <?php /*
+            Switching the whole account off. Its own panel with its own reason,
+            rather than a checkbox on the details form somebody clears while
+            editing a postcode — this stops a company working and is worth the
+            deliberate act.
+        */ ?>
+        <div class="card">
+            <h2 class="mt-0"><?= $isActive ? 'Switch this account off' : 'Switch this account back on' ?></h2>
+
+            <?php if ($isActive): ?>
+                <p class="text-muted">
+                    For a client who has stopped trading with Junction. Their orders freeze where they
+                    stand rather than being cancelled, their orders and parts drop out of the day-to-day
+                    lists, and nobody on the account can sign in. Everything is kept and comes straight
+                    back if the account is switched on again.
+                </p>
+                <form method="post" action="<?= url('/staff/clients/' . $client['id'] . '/active') ?>">
+                    <?= csrf_field() ?>
+                    <input type="hidden" name="active" value="0">
+                    <div class="field">
+                        <label for="deactivate_reason">Why</label>
+                        <input type="text" id="deactivate_reason" name="reason" required
+                               placeholder="e.g. Ceased trading, or moved to another supplier">
+                        <div class="hint">Shown here afterwards. It is the only record of the decision.</div>
+                    </div>
+                    <button type="submit" class="btn">Switch off <?= e($client['name']) ?></button>
+                </form>
+            <?php else: ?>
+                <p class="text-muted">
+                    Everything comes back exactly as it was: the orders unfreeze at the stage they
+                    stopped at, the parts return to the lists, and the people who could sign in before
+                    can sign in again. Anybody deactivated individually stays deactivated.
+                </p>
+                <form method="post" action="<?= url('/staff/clients/' . $client['id'] . '/active') ?>">
+                    <?= csrf_field() ?>
+                    <input type="hidden" name="active" value="1">
+                    <button type="submit" class="btn btn-primary">Reactivate <?= e($client['name']) ?></button>
+                </form>
+            <?php endif; ?>
         </div>
     </div>
 </div>

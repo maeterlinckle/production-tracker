@@ -85,12 +85,12 @@ shared include. Patterns may be copied; code may not.
 
 ## 3. Schema
 
-42 tables, migrations `001`–`014` applied. Primary keys in bold.
+43 tables, migrations `001`–`015` applied. Primary keys in bold.
 
 | Table | Columns |
 |---|---|
 | `clearbooks_tokens` | **id**, access_token, refresh_token, expires_at, updated_at |
-| `clients` | **id**, name, clearbooks_entity_id, address_line1, address_line2, address_city, address_county, address_postcode, address_country, main_contact_name, main_contact_email, main_contact_phone, billing_email, vat_number, company_number, clearbooks_synced_at, clearbooks_synced_by, notes, is_active, created_at, updated_at |
+| `clients` | **id**, name, clearbooks_entity_id, address_line1, address_line2, address_city, address_county, address_postcode, address_country, main_contact_name, main_contact_email, main_contact_phone, billing_email, vat_number, company_number, clearbooks_synced_at, clearbooks_synced_by, notes, is_active, deactivated_at, deactivated_by, deactivated_reason, created_at, updated_at |
 | `delivery_notes` | **id**, type, client_id, related_note_id, reference, pdf_file_path, issued_by, issued_at, invoiced, invoiced_at, notes, created_at |
 | `delivery_note_lines` | **id**, delivery_note_id, order_line_id, qty |
 | `email_log` | **id**, to_email, subject, template_key, related_type, related_id, status, error, sent_at |
@@ -104,6 +104,7 @@ shared include. Patterns may be copied; code may not.
 | `orders` | **id**, client_id, order_number, po_number, po_file_path, po_original_filename, placed_by, placed_at, notes, created_at, updated_at, closed_at, closed_by, close_reason |
 | `order_lines` | **id**, order_id, part_id, line_no, qty_ordered, unit_price, qty_free_issue_required, qty_free_issue_received, qty_free_issue_rejected, qty_completed, qty_delivered, qty_invoiced, qty_failed, qty_cancelled, notes, created_at, updated_at, closed_at, closed_by, close_reason |
 | `order_line_change_requests` | **id**, order_line_id, initiated_by, qty_at_request, qty_requested, reason, status, requested_by, requested_at, reviewed_by, reviewed_at, review_notes |
+| `order_line_due_dates` | **id**, order_line_id, qty, due_date, note, set_by, set_at |
 | `order_line_quantities` | **order_line_id**, **stage**, qty, updated_at |
 | `order_line_stage_moves` | **id**, order_line_id, from_stage, to_stage, qty, reason, moved_by, moved_at |
 | `order_notes` | **id**, order_id, user_id, body, created_at |
@@ -215,7 +216,7 @@ A generic superset rule in `Capabilities::allows()` gives `staff.admin` any
 capability listing at least one `staff.*` role, and `client.admin` any listing a
 `client.*` role — so those two are never written into a row.
 
-**Eight roles:**
+**Nine roles:**
 
 | Side | Slug | Name |
 |---|---|---|
@@ -226,6 +227,7 @@ capability listing at least one `staff.*` role, and `client.admin` any listing a
 | staff | `staff.raise_orders` | Raise orders |
 | client | `client.admin` | Client admin |
 | client | `client.production` | Production viewer |
+| client | `client.production_manager` | Production manager |
 | client | `client.purchaser` | Purchaser |
 
 **Capabilities**, as written (admin supersets not repeated):
@@ -237,9 +239,10 @@ capability listing at least one `staff.*` role, and `client.admin` any listing a
 | `place_orders` | client.purchaser, client.admin |
 | `manage_client_users` | client.admin |
 | `request_quantity_change` | client.purchaser, client.admin |
-| `return_rejected_parts` | client.production, client.purchaser, client.admin |
-| `view_orders` | all three client roles + staff.production, staff.quoting, staff.invoicing, staff.admin |
-| `raise_queries` | all three client roles + staff.production, staff.quoting, staff.invoicing, staff.admin |
+| `return_rejected_parts` | client.production, client.production_manager, client.purchaser, client.admin |
+| `set_due_dates` | client.production_manager, client.admin |
+| `view_orders` | all four client roles + staff.production, staff.quoting, staff.invoicing, staff.admin |
+| `raise_queries` | all four client roles + staff.production, staff.quoting, staff.invoicing, staff.admin |
 | `manage_clients` | staff.admin |
 | `set_pricing` | staff.quoting, staff.admin |
 | `edit_workshop_fields` | staff.quoting, staff.production, staff.admin |
@@ -259,7 +262,7 @@ bool for templates.
 
 ## 6. Routes
 
-149 routes in two middleware groups (62 GET, 87 POST). `auth` is the client area (staff may also
+154 routes in two middleware groups (62 GET, 92 POST). `auth` is the client area (staff may also
 reach it, scoped to their own client); `staff` is Junction's. `csrf` is on every
 state-changing POST.
 
@@ -580,6 +583,23 @@ the source of truth, the `email_templates` table holds overrides only).
 | `quantity_change_decided` | both | — | Questions and changes |
 | `parts_outstanding` | staff | — | Junction workload |
 
+**Merge values are escaped, with one narrow exception.** `Merge::render()`
+escapes every substituted value in an HTML body — they are data, and some of
+them are text a client typed. A template may declare `raw_fields`, and only
+those are passed through: today that is `items` on `parts_outstanding`, whose
+markup `Reminders::itemsHtml()` builds itself and whose every interpolated value
+it escapes. The list lives beside the template's wording so adding to it is a
+visible decision.
+
+**The parts-outstanding digest is grouped by part, not listed by line.** It is
+read to decide what to set up next, and that decision is made a part at a time:
+a part wanted on three orders is one machine setup, and a flat list scattered
+those three down the page. Built from `PartsOnOrder::groupByPart()` — the same
+grouping the parts-on-order report uses — and cut down to the part, what is
+owed, and anything blocking it. Inline-styled tables, because that is what
+survives an email client; `Merge::htmlToText()` separates cells so the text
+alternative stays readable. Capped at 25 parts, then it points at the report.
+
 A template's merge fields are declared beside its wording, so the editor offers
 exactly what the sending code supplies.
 
@@ -633,6 +653,66 @@ Notable: `doctor` (the first thing to run when something is wrong), `backup`
 (database + uploads + `.env`, all three needed for a restore), `reset-database`
 and `reset-uploads` (each asks twice, requires `RESET` typed in full, ignores
 `--yes`, and refuses without a terminal).
+
+---
+
+## 12.1 Accounts: switching people and companies off
+
+**Nothing is ever deleted.** A user who has raised orders, asked questions and
+written notes is attached to all of it; removing the row would take that history
+with it or leave it pointing at nothing. Deactivation everywhere, as with
+archived parts.
+
+**One user** — `users.is_active`. Set from the client's own team page
+(`manage_client_users`) or from Junction's client page (`manage_clients`), both
+through `App\Services\ClientUsers`, which is also where name/email edits and
+their uniqueness check live. `ClientUsers::isLastActiveAdmin()` refuses to
+deactivate a company's only remaining `client.admin`: they would then be unable
+to invite anybody, fix their own roles, or reactivate the person who could.
+
+**A whole client** — `clients.is_active`, plus `deactivated_at`,
+`deactivated_by` and `deactivated_reason`, set only by
+`StaffClientController::setActive()` (a reason is required). It does three
+things, and **all three are derived from that one flag** rather than written
+across their records:
+
+| | How |
+|---|---|
+| Nobody can sign in | `Auth::attempt()` refuses, and `User::findActive()` joins `clients` so an open session dies on its next request |
+| Their work is out of the lists | `Order::all($includeInactiveClients)` and `Part::search(['active_clients_only' => …])`, with a toggle on each staff list |
+| Their orders freeze | every mutating staff action asks `Client::isActive()` — `StaffOrderController::findLine()` covers the line actions, `refuseIfFrozen()` the order-level ones |
+
+There is deliberately **no stored frozen flag**. One would have to be set on
+every order at deactivation and unset at reactivation, and the first one missed
+by a new code path is an order frozen for ever with nothing to explain it.
+
+Reactivation is therefore complete and needs no repair: the orders unfreeze at
+the stage they stopped at, the lists fill back in, and **a user deactivated
+individually stays deactivated** — their own `is_active` was never touched.
+
+---
+
+## 12.2 Required by
+
+`order_line_due_dates`: a quantity and a date, several rows per line, set by the
+client under `set_due_dates` (`client.production_manager` or `client.admin`).
+
+They change nothing about what is owed — the quantity on the order is still the
+quantity on the order. They are a statement of need that Junction reads to
+decide what to run next, which is why the model is mostly about surfacing the
+*next* one:
+
+- `OrderLineDueDate::next()` walks the schedule against `qty_completed` and
+  returns the earliest requirement not yet covered. Measured against
+  **completed**, not delivered: a part that is made and waiting for a van is not
+  one anybody needs chasing about, and a date that stays red until the courier
+  has been is a date people learn to ignore.
+- `urgency()` returns `overdue` / `soon` / `ok` rather than a number of days,
+  because the page uses it to pick a colour and the colour is the message.
+  A requirement already covered renders as `met`.
+
+Surfaced on the **collapsed** order line card, since that is where an order is
+scanned, and listed in full inside it.
 
 ---
 

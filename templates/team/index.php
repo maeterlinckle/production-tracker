@@ -33,6 +33,30 @@ use App\Core\Auth;
                     <td>
                         <strong><?= e($user['name']) ?></strong>
                         <div class="cell-sub"><?= e($user['email']) ?></div>
+                        <?php /*
+                            Correcting a name or an email in place. People marry,
+                            and companies change their email domain; neither
+                            should mean deleting an account and losing everything
+                            it raised.
+                        */ ?>
+                        <details class="caption-edit">
+                            <summary>Edit details</summary>
+                            <form method="post" action="<?= url('/team/' . $user['id']) ?>">
+                                <?= csrf_field() ?>
+                                <div class="field">
+                                    <label class="sr-only" for="tu_name_<?= (int) $user['id'] ?>">Name</label>
+                                    <input type="text" id="tu_name_<?= (int) $user['id'] ?>" name="name"
+                                           value="<?= e($user['name']) ?>" placeholder="Name" required>
+                                </div>
+                                <div class="field">
+                                    <label class="sr-only" for="tu_email_<?= (int) $user['id'] ?>">Email</label>
+                                    <input type="email" id="tu_email_<?= (int) $user['id'] ?>" name="email"
+                                           value="<?= e($user['email']) ?>" placeholder="Email" required>
+                                </div>
+                                <div class="hint">The email is what they sign in with.</div>
+                                <button type="submit" class="btn btn-sm">Save details</button>
+                            </form>
+                        </details>
                     </td>
                     <td>
                         <form method="post" action="<?= url('/team/' . $user['id'] . '/roles') ?>" class="form-inline">

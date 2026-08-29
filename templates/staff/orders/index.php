@@ -1,5 +1,28 @@
-<?php /** @var array $orders */ ?>
-<h1 class="mt-0">Orders</h1>
+<?php
+/**
+ * @var array $orders
+ * @var bool  $includeClosed whether orders on switched-off accounts are shown
+ * @var int   $hiddenCount   how many are being left out
+ */
+?>
+<div class="card-header">
+    <h1 class="mt-0 mb-0">Orders</h1>
+    <?php /*
+        Orders on a switched-off account are out of the list rather than gone.
+        The toggle only appears when there are some to show, so the ordinary
+        case is not carrying a control for a situation that does not exist.
+    */ ?>
+    <?php if ($includeClosed || $hiddenCount > 0): ?>
+        <div style="display:flex; gap: var(--space-2); align-items:center">
+            <?php if (!$includeClosed): ?>
+                <span class="text-muted"><?= $hiddenCount ?> on switched-off accounts</span>
+                <a href="<?= url('/staff/orders?accounts=all') ?>" class="btn btn-sm">Show them</a>
+            <?php else: ?>
+                <a href="<?= url('/staff/orders') ?>" class="btn btn-sm">Hide switched-off accounts</a>
+            <?php endif; ?>
+        </div>
+    <?php endif; ?>
+</div>
 
 <div class="card">
     <?php if ($orders === []): ?>
@@ -33,7 +56,7 @@
                 <?php foreach ($orders as $order): ?>
                     <tr>
                         <td><?= e($order['order_number']) ?></td>
-                        <td class="wrap"><?= e($order['client_name']) ?></td>
+                        <td class="wrap"><?= e($order['client_name']) ?><?php if (isset($order['client_is_active']) && !(bool) $order['client_is_active']): ?> <span class="badge badge-muted">Off</span><?php endif; ?></td>
                         <td><?= format_date($order['placed_at']) ?></td>
                         <td class="align-right"><?= (int) $order['line_count'] ?></td>
                         <td><?= status_badge($order['rollup_status']) ?></td>

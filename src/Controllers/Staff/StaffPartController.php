@@ -45,6 +45,11 @@ final class StaffPartController
         $term = trim((string) Request::query('q', ''));
         $clientId = (int) Request::query('client', 0) ?: null;
 
+        // Parts belonging to a switched-off client are out of the list unless
+        // the account filter asks for them, or that client is what is being
+        // looked at.
+        $includeClosed = Request::query('accounts') === 'all' || $clientId !== null;
+
         $result = Part::search([
             'term' => $term,
             'client_id' => $clientId,
@@ -52,6 +57,7 @@ final class StaffPartController
             'only_unquoted' => $onlyUnquoted,
             // Junction's own fields are Junction's to search.
             'include_internal' => true,
+            'active_clients_only' => !$includeClosed,
             'page' => (int) Request::query('page', 1),
         ]);
 

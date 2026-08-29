@@ -91,6 +91,11 @@ $router->group(['auth'], function (Router $router): void {
     $router->post('/orders/{id:\d+}/lines/{lineId:\d+}/change-request', [OrderController::class, 'requestQuantityChange'], ['csrf']);
     $router->post('/orders/{id:\d+}/po-documents', [OrderController::class, 'uploadPoDocument'], ['csrf']);
 
+    // When the client needs the parts on a line. A statement of need rather
+    // than a change to the order, so it is not a quantity-change request and
+    // does not go near approval.
+    $router->post('/orders/{id:\d+}/lines/{lineId:\d+}/due-dates', [OrderController::class, 'updateDueDates'], ['csrf']);
+
     // Rejected parts going the other way: the client raises the note, and
     // Junction moves the quantity when the parcel actually turns up.
     $router->post('/orders/{id:\d+}/parts-returns', [OrderController::class, 'raisePartsReturn'], ['csrf']);
@@ -111,6 +116,7 @@ $router->group(['auth'], function (Router $router): void {
 
     $router->get('/team', [TeamController::class, 'index']);
     $router->post('/team', [TeamController::class, 'store'], ['csrf']);
+    $router->post('/team/{id:\d+}', [TeamController::class, 'updateUser'], ['csrf']);
     $router->post('/team/{id:\d+}/roles', [TeamController::class, 'updateRoles'], ['csrf']);
     $router->post('/team/{id:\d+}/toggle-active', [TeamController::class, 'toggleActive'], ['csrf']);
     $router->post('/team/{id:\d+}/reinvite', [TeamController::class, 'reinvite'], ['csrf']);
@@ -129,7 +135,13 @@ $router->group(['staff'], function (Router $router): void {
     $router->get('/staff/clients/{id:\d+}', [StaffClientController::class, 'show']);
     $router->post('/staff/clients/{id:\d+}', [StaffClientController::class, 'update'], ['csrf']);
     $router->post('/staff/clients/{id:\d+}/from-clearbooks', [StaffClientController::class, 'pullFromClearBooks'], ['csrf']);
+    // Switching a whole account off, and back on. Its own action rather than a
+    // checkbox on the details form -- see StaffClientController::setActive().
+    $router->post('/staff/clients/{id:\d+}/active', [StaffClientController::class, 'setActive'], ['csrf']);
+
     $router->post('/staff/clients/{id:\d+}/users', [StaffClientController::class, 'addUser'], ['csrf']);
+    $router->post('/staff/clients/{id:\d+}/users/{userId:\d+}', [StaffClientController::class, 'updateUser'], ['csrf']);
+    $router->post('/staff/clients/{id:\d+}/users/{userId:\d+}/toggle-active', [StaffClientController::class, 'toggleUserActive'], ['csrf']);
     $router->post('/staff/clients/{id:\d+}/users/{userId:\d+}/reinvite', [StaffClientController::class, 'reinviteUser'], ['csrf']);
 
     $router->get('/staff/parts', [StaffPartController::class, 'index']);

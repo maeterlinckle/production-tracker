@@ -16,6 +16,7 @@ use App\Models\DeliveryNote;
 use App\Models\Order;
 use App\Models\OrderLine;
 use App\Models\OrderLineChangeRequest;
+use App\Models\OrderLineDueDate;
 use App\Models\OrderNote;
 use App\Models\OrderPhoto;
 use App\Models\OrderPoDocument;
@@ -99,6 +100,56 @@ final class OrderController
      * usually the paperwork that justifies the change -- and it is added to the
      * order's document history rather than replacing what is there.
      */
+    /**
+     * When the client needs the parts on one line.
+     *
+     * A statement of need, not a change to the order: nothing about what is
+     * owed moves, so this is not a quantity-change request and does not go
+     * near approval. Junction reads it to decide what to set up next.
+     */
+    public function updateDueDates(string $id, string $lineId): void
+    {
+        Auth::authorize('set_due_dates');
+
+        $order = $this->findVisibleOrder((int) $id);
+        if ($order === null) {
+            return;
+        }
+
+        $line = OrderLine::find((int) $lineId);
+
+        if ($line === null || (int) $line['order_id'] !== (int) $order['id']) {
+            View::renderError(404, 'Line not found', 'That line is not on this order.');
+
+            return;
+        }
+
+        if (!Client::isActive((int) $order['client_id'])) {
+            Flash::error('This account is not active, so nothing on it can be changed.');
+            Response::redirect('/orders/' . $id . '#line-' . $lineId);
+        }
+
+        $quantities = Request::post('due_qty', []);
+        $dates = Request::post('due_date', []);
+        $notes = Request::post('due_note', []);
+
+        $rows = [];
+        if (is_array($quantities)) {
+            foreach (array_values($quantities) as $i => $qty) {
+                $rows[] = [
+                    'qty' => (string) $qty,
+                    'due_date' => (string) (array_values((array) $dates)[$i] ?? ''),
+                    'note' => (string) (array_values((array) $notes)[$i] ?? ''),
+                ];
+            }
+        }
+
+        OrderLineDueDate::replace((int) $lineId, $rows, (int) Auth::id());
+
+        Flash::success('Required-by dates updated. Junction can see them on the order.');
+        Response::redirect('/orders/' . $id . '#line-' . $lineId);
+    }
+
     public function requestQuantityChange(string $id, string $lineId): void
     {
         Auth::authorize('request_quantity_change');

@@ -16,6 +16,7 @@ use App\Models\Part;
 use App\Models\Role;
 use App\Models\User;
 use App\Services\ClearBooksCustomerSync;
+use App\Services\ClientUsers;
 use App\Services\Invitations;
 use RuntimeException;
 
@@ -173,6 +174,7 @@ final class StaffClientController
         View::render('staff/clients/show', [
             'title' => $client['name'],
             'client' => $client,
+            'deactivation' => Client::deactivationDetail((int) $client['id']),
             'users' => $users,
             'parts' => Part::forClient($client['id']),
             'orders' => Order::forClient($client['id']),
@@ -190,8 +192,10 @@ final class StaffClientController
             return;
         }
 
+        // Switching an account off is its own action, with its own reason and
+        // its own record of who did it -- not a checkbox on the details form
+        // that somebody clears while editing a postcode.
         $data = $this->extract();
-        $data['is_active'] = Request::boolean('is_active') ? 1 : 0;
 
         $validator = new Validator($data);
         $validator->required('name', 'Client name');
@@ -204,6 +208,121 @@ final class StaffClientController
         Client::update((int) $id, $data);
         Flash::success('Client updated.');
         Response::redirect('/staff/clients/' . $id);
+    }
+
+    /**
+     * Switch a whole client account off, or back on.
+     *
+     * Nothing is deleted. Their orders and parts drop out of the day-to-day
+     * lists, their orders freeze where they stand, and nobody under the
+     * account can sign in — all of which is derived from this one flag rather
+     * than written across their records, so reactivating puts everything back
+     * exactly as it was. See App\Models\Client::setActive().
+     */
+    public function setActive(string $id): void
+    {
+        Auth::authorize('manage_clients');
+
+        $client = Client::find((int) $id);
+        if ($client === null) {
+            View::renderError(404, 'Client not found', 'That client does not exist.');
+
+            return;
+        }
+
+        $activate = Request::post('active') === '1';
+
+        if (!$activate && trim((string) Request::post('reason', '')) === '') {
+            Flash::error('Say why the account is being switched off — it is the only record of it.');
+            Response::redirect('/staff/clients/' . $id);
+        }
+
+        Client::setActive((int) $id, $activate, (int) Auth::id(), Request::post('reason'));
+
+        Flash::success($activate
+            ? $client['name'] . ' is active again. Their orders, parts and sign-ins are back.'
+            : $client['name'] . ' has been switched off. Their orders are frozen, their work is out of the '
+                . 'day-to-day lists, and nobody on that account can sign in. Nothing has been deleted.');
+
+        Response::redirect('/staff/clients/' . $id);
+    }
+
+    /**
+     * Deactivate or reactivate one of a client's users.
+     *
+     * The same operation the client's own admin has on their team page, from
+     * Junction's side — because the person asking for it is as often on the
+     * phone to Junction as logged in themselves.
+     */
+    public function toggleUserActive(string $id, string $userId): void
+    {
+        Auth::authorize('manage_clients');
+
+        $user = $this->findClientUser((int) $id, (int) $userId);
+        if ($user === null) {
+            return;
+        }
+
+        $deactivating = (bool) $user['is_active'];
+
+        if ($deactivating && ClientUsers::isLastActiveAdmin((int) $user['id'])) {
+            Flash::error(
+                $user['name'] . ' is the only active administrator on this account. Give somebody else '
+                . 'the client admin role first, or the company will have nobody who can manage their own users.'
+            );
+            Response::redirect('/staff/clients/' . $id);
+        }
+
+        User::setActive((int) $user['id'], !$deactivating);
+
+        Flash::success(($deactivating ? 'Deactivated ' : 'Reactivated ') . $user['name']
+            . ($deactivating ? '. Their history stays on the orders and queries they raised.' : '.'));
+
+        Response::redirect('/staff/clients/' . $id);
+    }
+
+    /** Correct a client user's name or email address. */
+    public function updateUser(string $id, string $userId): void
+    {
+        Auth::authorize('manage_clients');
+
+        $user = $this->findClientUser((int) $id, (int) $userId);
+        if ($user === null) {
+            return;
+        }
+
+        $problem = ClientUsers::updateDetails(
+            (int) $user['id'],
+            (string) Request::post('name', ''),
+            (string) Request::post('email', '')
+        );
+
+        $problem === null
+            ? Flash::success('Details updated.')
+            : Flash::error($problem);
+
+        Response::redirect('/staff/clients/' . $id);
+    }
+
+    /**
+     * A user, checked to be one of this client's.
+     *
+     * The id comes off a form, and Junction managing one client's people must
+     * not reach into another's through this client's URL.
+     *
+     * @return array<string,mixed>|null
+     */
+    private function findClientUser(int $clientId, int $userId): ?array
+    {
+        $user = User::find($userId);
+
+        if ($user === null || (int) $user['client_id'] !== $clientId) {
+            View::renderError(404, 'User not found', 'That user is not on this client account.');
+
+            return null;
+        }
+
+        return $user;
     }
 
     public function addUser(string $id): void

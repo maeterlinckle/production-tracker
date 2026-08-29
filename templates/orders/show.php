@@ -11,6 +11,7 @@
  * @var array  $client
  * @var array  $lines
  * @var array  $lineDetail
+ * @var array  $dueDates
  * @var array  $parts
  * @var array  $deliveryNotes
  * @var array  $invoicesByDn
@@ -28,6 +29,7 @@ use App\Models\DeliveryNote;
 use App\Models\Order;
 use App\Models\OrderLine;
 use App\Models\OrderLineChangeRequest;
+use App\Models\OrderLineDueDate;
 use App\Models\OrderPhoto;
 use App\Models\Part;
 
@@ -38,6 +40,11 @@ $canApprove = $isStaff && Auth::can('approve_quantity_changes');
 $canClose = $isStaff && Auth::can('close_orders');
 $canRequestChange = !$isStaff && Auth::can('request_quantity_change');
 $orderClosed = Order::isClosed($order);
+
+// Saying when parts are needed is the client's. There is nothing to schedule on
+// an order that has been closed down, or for a client whose account is off.
+$canSetDueDates = !$isStaff && Auth::can('set_due_dates')
+    && !$orderClosed && (bool) $client['is_active'];
 
 $staffBase = '/staff/orders/' . $order['id'];
 $clientBase = '/orders/' . $order['id'];
@@ -130,9 +137,33 @@ $noteHref = static fn (array $dn): string => $isStaff
         The bar lives in the summary rather than being repeated below, so it
         does not move when the card opens.
     */ ?>
+    <?php
+    /*
+        When the client needs these parts.
+
+        On the summary rather than inside the card, because the card is closed
+        by default and "what is due next" is exactly the question somebody
+        scans an order for. Measured against what has been *completed*, not
+        delivered: a part that is made and waiting for a van is not one anybody
+        needs chasing about, and a date that stays red until the courier has
+        been is a date people learn to ignore.
+    */
+    $lineDue = $dueDates[$lineId] ?? [];
+    $nextDue = OrderLineDueDate::next($lineDue, (int) $line['qty_completed']);
+    ?>
     <details class="card line-card" id="line-<?= $lineId ?>" data-line-card>
         <summary class="line-card-summary">
-            <h3 class="line-card-title"><?= e($line['cpn']) ?> — <?= e($line['part_name']) ?></h3>
+            <?php /* Title and due badge share the first column, so the caret
+                     stays at the far right whether or not there is a date. */ ?>
+            <span class="line-card-heading">
+                <h3 class="line-card-title"><?= e($line['cpn']) ?> — <?= e($line['part_name']) ?></h3>
+                <?php if ($nextDue !== null): ?>
+                    <span class="due-badge due-<?= e(OrderLineDueDate::urgency($nextDue['due_date'])) ?>">
+                        <?= (int) $nextDue['qty'] ?> by <?= e(format_date($nextDue['due_date'])) ?>
+                        <span class="due-when"><?= e(OrderLineDueDate::sentence($nextDue['due_date'])) ?></span>
+                    </span>
+                <?php endif; ?>
+            </span>
             <span class="caret" aria-hidden="true"></span>
             <?= partial('partials/stepper', ['line' => $line]) ?>
         </summary>
@@ -167,6 +198,75 @@ $noteHref = static fn (array $dn): string => $isStaff
                 Closed down <?= format_date($line['closed_at']) ?><?= $line['close_reason'] ? ' — ' . e($line['close_reason']) : '' ?>.
                 Cancelled quantity no longer counts as outstanding.
             </p>
+        <?php endif; ?>
+
+        <?php /*
+            Required by.
+
+            Above production status because it is what production status is
+            measured against. The client says when they need parts; Junction
+            reads it. Nothing here changes what is owed — the quantity on the
+            order is still the quantity on the order.
+        */ ?>
+        <?php if ($lineDue !== [] || $canSetDueDates): ?>
+            <div class="line-section">
+                <h4 class="line-section-title">Required by</h4>
+
+                <?php if ($lineDue === []): ?>
+                    <p class="text-muted mb-0">No dates set. Junction works to the order as a whole.</p>
+                <?php else: ?>
+                    <?php
+                    // Running total, so each row can say whether it is already
+                    // covered by what has been made.
+                    $covered = 0;
+                    ?>
+                    <ul class="due-list">
+                        <?php foreach ($lineDue as $requirement):
+                            $covered += (int) $requirement['qty'];
+                            $met = $covered <= (int) $line['qty_completed'];
+                            $urgency = $met ? 'met' : OrderLineDueDate::urgency($requirement['due_date']);
+                            ?>
+                            <li>
+                                <span class="due-badge due-<?= e($urgency) ?>">
+                                    <?= (int) $requirement['qty'] ?> by <?= e(format_date($requirement['due_date'])) ?>
+                                </span>
+                                <span class="text-muted">
+                                    <?= $met ? 'made' : e(OrderLineDueDate::sentence($requirement['due_date'])) ?><?php
+                                    ?><?= $requirement['note'] ? ' — ' . e($requirement['note']) : '' ?>
+                                </span>
+                            </li>
+                        <?php endforeach; ?>
+                    </ul>
+                <?php endif; ?>
+
+                <?php if ($canSetDueDates): ?>
+                    <div style="margin-top: var(--space-3)">
+                        <?= partial('partials/row-editor', [
+                            'id' => 'due_' . $lineId,
+                            'title' => 'Required by — ' . $line['cpn'],
+                            'action' => $clientBase . '/lines/' . $lineId . '/due-dates',
+                            'trigger' => $lineDue === [] ? 'Set when you need these' : 'Edit dates',
+                            'intro' => 'How many you need, and by when. Several rows if it is staged — '
+                                . '50 by the end of March and the rest by June is two rows, not one.',
+                            'columns' => [
+                                ['name' => 'due_qty', 'label' => 'Quantity', 'type' => 'number',
+                                 'min' => '1', 'step' => '1', 'width' => 'narrow', 'placeholder' => 'Qty'],
+                                ['name' => 'due_date', 'label' => 'Needed by', 'type' => 'date',
+                                 'width' => 'narrow', 'placeholder' => 'Date'],
+                                ['name' => 'due_note', 'label' => 'Note', 'type' => 'text',
+                                 'placeholder' => 'Why, or what it is for (optional)'],
+                            ],
+                            'rows' => array_map(static fn (array $d): array => [
+                                'due_qty' => $d['qty'],
+                                'due_date' => $d['due_date'],
+                                'due_note' => $d['note'],
+                            ], $lineDue),
+                            'footnote' => 'Two rows on the same date is a contradiction rather than a schedule, '
+                                . 'so the last one entered wins.',
+                        ]) ?>
+                    </div>
+                <?php endif; ?>
+            </div>
         <?php endif; ?>
 
         <?php /* The client sees the same breakdown, without the controls. */ ?>

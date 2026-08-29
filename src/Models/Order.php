@@ -20,10 +20,32 @@ final class Order
         return Database::all('SELECT * FROM orders WHERE client_id = :client_id ORDER BY placed_at DESC', ['client_id' => $clientId]);
     }
 
-    public static function all(): array
+    /**
+     * Every order, or only those belonging to clients still trading.
+     *
+     * A deactivated client's orders are hidden rather than deleted: they are
+     * still what happened, still attributable, and still there the moment the
+     * account is switched back on. Junction's list can ask for them with
+     * `$includeInactiveClients`, which is what the "show closed accounts"
+     * toggle does.
+     */
+    public static function all(bool $includeInactiveClients = false): array
     {
-        return Database::all(
-            'SELECT o.*, c.name AS client_name FROM orders o JOIN clients c ON c.id = o.client_id ORDER BY o.placed_at DESC'
+        $sql = 'SELECT o.*, c.name AS client_name, c.is_active AS client_is_active
+                  FROM orders o JOIN clients c ON c.id = o.client_id';
+
+        if (!$includeInactiveClients) {
+            $sql .= ' WHERE c.is_active = 1';
+        }
+
+        return Database::all($sql . ' ORDER BY o.placed_at DESC');
+    }
+
+    /** How many orders belong to clients that are switched off. */
+    public static function countOnInactiveClients(): int
+    {
+        return (int) Database::scalar(
+            'SELECT COUNT(*) FROM orders o JOIN clients c ON c.id = o.client_id WHERE c.is_active = 0'
         );
     }
 

@@ -32,9 +32,26 @@ use RuntimeException;
 
 final class StaffOrderController
 {
+    /** Said the same way wherever a switched-off account stops something. */
+    private const FROZEN_MESSAGE = "This client's account is switched off, so their orders are frozen. "
+        . 'Reactivate the client to move anything on it.';
+
+    /**
+     * Every order, minus the ones belonging to clients who are switched off.
+     *
+     * Hidden rather than gone: the toggle brings them back, and nothing about
+     * them has been deleted.
+     */
     public function index(): void
     {
-        View::render('staff/orders/index', ['title' => 'Orders', 'orders' => Order::withRollup(Order::all())]);
+        $includeClosed = Request::query('accounts') === 'all';
+
+        View::render('staff/orders/index', [
+            'title' => 'Orders',
+            'orders' => Order::withRollup(Order::all($includeClosed)),
+            'includeClosed' => $includeClosed,
+            'hiddenCount' => $includeClosed ? 0 : Order::countOnInactiveClients(),
+        ]);
     }
 
     // -- Raising an order on a client's behalf --------------------------------
@@ -305,6 +322,8 @@ final class StaffOrderController
             return;
         }
 
+        $this->refuseIfFrozen($order);
+
         $reason = trim((string) Request::post('reason', ''));
         if ($reason === '') {
             Flash::error('Say why the order is being closed down.');
@@ -405,6 +424,8 @@ final class StaffOrderController
 
             return;
         }
+
+        $this->refuseIfFrozen($order);
 
         $this->storePoDocument($order, '/staff/orders/' . $id);
     }
@@ -546,6 +567,8 @@ final class StaffOrderController
             return;
         }
 
+        $this->refuseIfFrozen($order);
+
         $poNumber = trim((string) Request::post('po_number', ''));
         if ($poNumber === '') {
             Flash::error('Enter a PO number.');
@@ -614,6 +637,8 @@ final class StaffOrderController
 
             return;
         }
+
+        $this->refuseIfFrozen($order);
 
         $allowed = Config::get('uploads.order_document.extensions');
         $maxBytes = (int) Config::get('uploads.order_document.max_bytes');
@@ -729,6 +754,26 @@ final class StaffOrderController
             return null;
         }
 
+        // A switched-off client's work is frozen where it stands. Refused here,
+        // in the one place every line action already passes through, rather
+        // than remembered separately in each of them.
+        if (!Client::isActive((int) $line['client_id'])) {
+            Flash::error(self::FROZEN_MESSAGE);
+            Response::redirect('/staff/orders/' . $line['order_id']);
+        }
+
         return $line;
+    }
+
+    /**
+     * The same refusal for the actions that work from an order rather than a
+     * line.
+     */
+    private function refuseIfFrozen(array $order): void
+    {
+        if (!Client::isActive((int) $order['client_id'])) {
+            Flash::error(self::FROZEN_MESSAGE);
+            Response::redirect('/staff/orders/' . $order['id']);
+        }
     }
 }

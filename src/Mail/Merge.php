@@ -17,6 +17,14 @@ namespace App\Mail;
  * Values are data, never markup: in an HTML template every substituted value is
  * escaped before it goes in. The template body itself is written by a staff
  * administrator and is left alone.
+ *
+ * `$rawFields` is the one exception, and it is deliberately narrow. A field is
+ * only listed there when the application builds its markup itself — the
+ * parts-outstanding digest lays its own table out, because a table is what
+ * survives an email client — and the code that builds it escapes every value
+ * it puts inside. Nothing a user typed ever reaches a raw field unescaped. The
+ * list is per template, declared beside the template's wording, so adding to it
+ * is a visible decision rather than a flag somebody passes.
  */
 final class Merge
 {
@@ -24,15 +32,21 @@ final class Merge
 
     /**
      * @param array<string,string> $fields
+     * @param array<int,string>    $rawFields names whose values are already markup
      */
-    public static function render(string $text, array $fields, bool $html = false): string
+    public static function render(string $text, array $fields, bool $html = false, array $rawFields = []): string
     {
         return (string) preg_replace_callback(
             self::PATTERN,
-            static function (array $match) use ($fields, $html): string {
-                $value = (string) ($fields[strtolower($match[1])] ?? '');
+            static function (array $match) use ($fields, $html, $rawFields): string {
+                $name = strtolower($match[1]);
+                $value = (string) ($fields[$name] ?? '');
 
                 if (!$html) {
+                    return $value;
+                }
+
+                if (in_array($name, $rawFields, true)) {
                     return $value;
                 }
 
@@ -99,7 +113,17 @@ final class Merge
 
         // A <br> at the end of a source line would otherwise become two breaks.
         $text = preg_replace('#<br\s*/?>\s*#i', "\n", $text) ?? $text;
-        $text = preg_replace('#</(p|div|tr|li|h[1-6])\s*>#i', "\n\n", $text) ?? $text;
+
+        // Cells within a row are separated, not broken. Without this a table —
+        // which is the only layout an email client can be relied on to render,
+        // so it is what the parts-outstanding digest is built from — collapses
+        // in the text alternative to "ORD-2026-000728 of 4011 days open", three
+        // columns run together with nothing between them.
+        $text = preg_replace('#</(td|th)\s*>#i', '   ', $text) ?? $text;
+        // One line per row rather than a blank line between every one.
+        $text = preg_replace('#</tr\s*>#i', "\n", $text) ?? $text;
+
+        $text = preg_replace('#</(p|div|li|h[1-6]|table)\s*>#i', "\n\n", $text) ?? $text;
         $text = strip_tags($text);
         $text = html_entity_decode($text, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 

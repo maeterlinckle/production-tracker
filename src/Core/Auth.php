@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Core;
 
+use App\Models\Client;
 use App\Models\User;
 
 final class Auth
@@ -137,6 +138,20 @@ final class Auth
         }
 
         if (!(bool) $user['is_active']) {
+            LoginThrottle::record($email, $ip, false);
+
+            return 'This account has been deactivated. Please contact Junction.';
+        }
+
+        // A client account switched off blocks everybody under it, whatever
+        // their own is_active says. Checked here rather than by deactivating
+        // each user in turn, so switching the client back on restores exactly
+        // who could sign in before — including leaving the people who had been
+        // deactivated one at a time deactivated.
+        //
+        // Same wording as an individual deactivation on purpose: which of the
+        // two it is is not the signing-in stranger's business.
+        if ($user['client_id'] !== null && !Client::isActive((int) $user['client_id'])) {
             LoginThrottle::record($email, $ip, false);
 
             return 'This account has been deactivated. Please contact Junction.';

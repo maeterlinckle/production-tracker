@@ -13,6 +13,7 @@ use App\Core\View;
 use App\Models\Invite;
 use App\Models\Role;
 use App\Models\User;
+use App\Services\ClientUsers;
 use App\Services\Invitations;
 
 /** Client-side self-service: a client.admin manages users within their own client only. */
@@ -103,6 +104,28 @@ final class TeamController
         Response::redirect('/team');
     }
 
+    /** Correct a colleague's name or email address. */
+    public function updateUser(string $id): void
+    {
+        Auth::authorize('manage_client_users');
+        $user = $this->findOwnClientUser((int) $id);
+        if ($user === null) {
+            return;
+        }
+
+        $problem = ClientUsers::updateDetails(
+            (int) $user['id'],
+            (string) Request::post('name', ''),
+            (string) Request::post('email', '')
+        );
+
+        $problem === null
+            ? Flash::success('Details updated.')
+            : Flash::error($problem);
+
+        Response::redirect('/team');
+    }
+
     public function updateRoles(string $id): void
     {
         Auth::authorize('manage_client_users');
@@ -134,8 +157,19 @@ final class TeamController
             Response::redirect('/team');
         }
 
-        User::setActive($user['id'], !(bool) $user['is_active']);
-        Flash::success(((bool) $user['is_active'] ? 'Deactivated ' : 'Activated ') . $user['name'] . '.');
+        $deactivating = (bool) $user['is_active'];
+
+        if ($deactivating && ClientUsers::isLastActiveAdmin((int) $user['id'])) {
+            Flash::error(
+                $user['name'] . ' is the only other active administrator here. Give somebody else the '
+                . 'administrator role first, so there is always more than one person who can manage the team.'
+            );
+            Response::redirect('/team');
+        }
+
+        User::setActive($user['id'], !$deactivating);
+        Flash::success(($deactivating ? 'Deactivated ' : 'Activated ') . $user['name']
+            . ($deactivating ? '. They can no longer sign in; everything they raised stays on the record.' : '.'));
         Response::redirect('/team');
     }
 

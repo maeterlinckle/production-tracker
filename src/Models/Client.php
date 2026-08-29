@@ -77,6 +77,74 @@ final class Client
      * else. Kept apart so an ordinary edit does not make the local copy look
      * freshly synced when it is not.
      */
+    /**
+     * Is this client's account switched on?
+     *
+     * Asked by everything that changes something, and cached for the length of
+     * one request: a page that touches several orders would otherwise ask the
+     * same question a dozen times, and the answer cannot change halfway through
+     * a request.
+     */
+    public static function isActive(int $id): bool
+    {
+        static $cache = [];
+
+        if (!array_key_exists($id, $cache)) {
+            $cache[$id] = (bool) Database::scalar(
+                'SELECT is_active FROM clients WHERE id = :id',
+                ['id' => $id]
+            );
+        }
+
+        return $cache[$id];
+    }
+
+    /**
+     * Switch a client's account off, or back on.
+     *
+     * Nothing is deleted and nothing cascades. The client's own users keep
+     * their individual `is_active` exactly as they had it — the block on
+     * signing in comes from the client being off, so switching the client back
+     * on restores who could sign in rather than switching everybody on
+     * including the people who had been deactivated one at a time.
+     *
+     * Their orders freeze because every action that would move one asks
+     * `isActive()` first, not because anything is written to the orders. A
+     * stored frozen flag would have to be set on every order here and unset on
+     * every order at reactivation, and the first one missed by a new code path
+     * is an order frozen forever with nothing to explain why.
+     */
+    public static function setActive(int $id, bool $active, int $userId, ?string $reason = null): void
+    {
+        Database::query(
+            'UPDATE clients SET
+                is_active = :is_active,
+                deactivated_at = :deactivated_at,
+                deactivated_by = :deactivated_by,
+                deactivated_reason = :reason
+             WHERE id = :id',
+            [
+                'id' => $id,
+                'is_active' => $active ? 1 : 0,
+                'deactivated_at' => $active ? null : date('Y-m-d H:i:s'),
+                'deactivated_by' => $active ? null : $userId,
+                'reason' => $active ? null : (trim((string) $reason) ?: null),
+            ]
+        );
+    }
+
+    /** Who switched it off, for the banner on the client's page. */
+    public static function deactivationDetail(int $id): ?array
+    {
+        return Database::one(
+            'SELECT c.deactivated_at, c.deactivated_reason, u.name AS deactivated_by_name
+               FROM clients c
+          LEFT JOIN users u ON u.id = c.deactivated_by
+              WHERE c.id = :id AND c.is_active = 0',
+            ['id' => $id]
+        );
+    }
+
     public static function recordClearBooksSync(int $id, int $userId): void
     {
         Database::query(
@@ -96,7 +164,7 @@ final class Client
                 address_country = :address_country, main_contact_name = :main_contact_name,
                 main_contact_email = :main_contact_email, main_contact_phone = :main_contact_phone,
                 billing_email = :billing_email, vat_number = :vat_number,
-                company_number = :company_number, notes = :notes, is_active = :is_active
+                company_number = :company_number, notes = :notes
              WHERE id = :id',
             [
                 'id' => $id,
@@ -115,7 +183,6 @@ final class Client
                 'vat_number' => $data['vat_number'] ?? null,
                 'company_number' => $data['company_number'] ?? null,
                 'notes' => $data['notes'] ?? null,
-                'is_active' => $data['is_active'] ?? 1,
             ]
         );
     }

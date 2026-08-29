@@ -10,6 +10,7 @@ use App\Models\Invoice;
 use App\Models\Order;
 use App\Models\OrderLine;
 use App\Models\OrderLineChangeRequest;
+use App\Models\OrderLineDueDate;
 use App\Models\OrderNote;
 use App\Models\OrderPhoto;
 use App\Models\OrderPoDocument;
@@ -55,6 +56,11 @@ final class OrderView
             $parts[$lineId] = Part::find((int) $line['part_id']);
         }
 
+        // When the client needs the parts. One query for the order rather than
+        // one per line, and read by both audiences: the client sets them, and
+        // they are the first thing Junction looks at to decide what to run.
+        $dueDates = OrderLineDueDate::forLines(array_column($lines, 'id'));
+
         $deliveryNotes = DeliveryNote::forOrder($orderId);
         $invoicesByDn = [];
         foreach ($deliveryNotes as $note) {
@@ -75,6 +81,7 @@ final class OrderView
             'client' => Client::find((int) $order['client_id']),
             'lines' => $lines,
             'lineDetail' => $lineDetail,
+            'dueDates' => $dueDates,
             'parts' => $parts,
             'deliveryNotes' => $deliveryNotes,
             'invoicesByDn' => $invoicesByDn,

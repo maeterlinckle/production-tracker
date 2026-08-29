@@ -521,21 +521,31 @@ HTML,
             'name'        => 'Parts outstanding digest',
             'description' => 'The scheduled round-up of order lines still to be finished, sent to Junction staff who have opted in. Run from cron; see Settings → Reminders.',
             'group'       => 'Reminders',
-            'subject'     => '{{count}} part(s) still outstanding — {{app_name}}',
+            'subject'     => '{{part_count}} part(s) outstanding on {{count}} order line(s) — {{app_name}}',
             'body'        => <<<'HTML'
 <p>Hello {{recipient_name}},</p>
 
-<p>The following order lines are still outstanding.</p>
+<p>
+    <strong>{{part_count}}</strong> part(s) are still outstanding, across
+    <strong>{{count}}</strong> order line(s). They are grouped by part below — a part wanted on
+    several orders is one setup, so it is listed once with its orders under it.
+</p>
 
-<div class="items">{{items}}</div>
+{{items}}
 
 <p>{{ageing_line}}</p>
 
 <p><a href="{{report_url}}">Open the parts-on-order report</a></p>
 HTML,
+            // The digest builds its own table: a table is what survives an
+            // email client, and nothing else reliably distinguishes a part
+            // heading from the orders under it. Reminders::itemsHtml() escapes
+            // every value it puts inside.
+            'raw_fields' => ['items'],
             'fields' => [
-                'count'         => 'How many lines are listed',
-                'items'         => 'The list itself: order, part, client, quantity outstanding and how long it has been waiting',
+                'count'         => 'How many order lines are outstanding in total',
+                'part_count'    => 'How many distinct parts those lines cover',
+                'items'         => 'The digest itself: one block per part, with its orders, quantities and anything blocking them',
                 'ageing_count'  => 'How many have been open longer than the ageing threshold in Settings → Reminders',
                 'ageing_days'   => 'That threshold, in days',
                 'ageing_line'   => 'A ready-made sentence about the older ones, or blank if there are none',
@@ -544,7 +554,33 @@ HTML,
             ],
             'sample' => [
                 'count'         => '3',
-                'items'         => "ORD-2026-0004  ACME-100 Spindle housing — Acme Engineering — 8 of 20 outstanding — 11 days\nORD-2026-0003  ACME-200 End cap — Acme Engineering — 20 of 20 outstanding — awaiting free issue\nORD-2026-0001  ACME-100 Spindle housing — Acme Engineering — 2 of 10 outstanding — 26 days",
+                'part_count'    => '2',
+                // Deliberately the real markup the digest sends, so the preview
+                // in Settings shows what will actually arrive.
+                'items'         =>
+                    '<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;margin:0 0 18px">'
+                    . '<tr><td style="padding:8px 10px;background:#f1f5f9;border-left:3px solid #334155">'
+                    . '<strong style="font-size:15px">ACME-100</strong> <span style="color:#334155">Spindle housing</span><br>'
+                    . '<span style="color:#64748b;font-size:13px">Acme Engineering &middot; <strong>10</strong> outstanding across 2 orders</span>'
+                    . '</td></tr><tr><td style="padding:0">'
+                    . '<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;font-size:13px">'
+                    . '<tr><td style="padding:5px 10px;border-bottom:1px solid #e2e8f0;white-space:nowrap">ORD-2026-0001</td>'
+                    . '<td style="padding:5px 10px;border-bottom:1px solid #e2e8f0;text-align:right;white-space:nowrap"><strong>2</strong> of 10</td>'
+                    . '<td style="padding:5px 10px;border-bottom:1px solid #e2e8f0;"><span style="color:#b45309">26 days open</span></td></tr>'
+                    . '<tr><td style="padding:5px 10px;border-bottom:1px solid #e2e8f0;white-space:nowrap">ORD-2026-0004</td>'
+                    . '<td style="padding:5px 10px;border-bottom:1px solid #e2e8f0;text-align:right;white-space:nowrap"><strong>8</strong> of 20</td>'
+                    . '<td style="padding:5px 10px;border-bottom:1px solid #e2e8f0;"><span style="color:#64748b">11 days open</span></td></tr>'
+                    . '</table></td></tr></table>'
+                    . '<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;margin:0 0 18px">'
+                    . '<tr><td style="padding:8px 10px;background:#f1f5f9;border-left:3px solid #334155">'
+                    . '<strong style="font-size:15px">ACME-200</strong> <span style="color:#334155">End cap</span><br>'
+                    . '<span style="color:#64748b;font-size:13px">Acme Engineering &middot; <strong>20</strong> outstanding across 1 order</span>'
+                    . '</td></tr><tr><td style="padding:0">'
+                    . '<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;font-size:13px">'
+                    . '<tr><td style="padding:5px 10px;border-bottom:1px solid #e2e8f0;white-space:nowrap">ORD-2026-0003</td>'
+                    . '<td style="padding:5px 10px;border-bottom:1px solid #e2e8f0;text-align:right;white-space:nowrap"><strong>20</strong> of 20</td>'
+                    . '<td style="padding:5px 10px;border-bottom:1px solid #e2e8f0;"><span style="color:#b45309">awaiting free issue</span></td></tr>'
+                    . '</table></td></tr></table>',
                 'ageing_count'  => '1',
                 'ageing_days'   => '21',
                 'ageing_line'   => '1 of these has been open for more than 21 days.',
@@ -666,6 +702,22 @@ HTML,
      *
      * @return array<string,mixed>|null
      */
+    /**
+     * Fields whose value is markup the application built, not text somebody
+     * typed, and which must therefore not be escaped on the way into an HTML
+     * body.
+     *
+     * Declared per template and deliberately short. The code producing one of
+     * these escapes every value it puts inside — see Reminders::itemsHtml() —
+     * so nothing a user wrote reaches a message unescaped either way.
+     *
+     * @return array<int,string>
+     */
+    public static function rawFields(string $key): array
+    {
+        return self::DEFAULTS[$key]['raw_fields'] ?? [];
+    }
+
     public static function find(string $key): ?array
     {
         if (!self::exists($key)) {

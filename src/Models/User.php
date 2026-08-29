@@ -8,9 +8,26 @@ use App\Core\Database;
 
 final class User
 {
+    /**
+     * The signed-in user, if they are still allowed to be.
+     *
+     * A client account switched off takes its people with it, and it is checked
+     * here rather than only at sign-in so that somebody already signed in when
+     * it happens is signed out on their next request — otherwise deactivating a
+     * client would leave whoever had a tab open still walking around inside it.
+     *
+     * Staff have no `client_id`, so the join never applies to them.
+     */
     public static function findActive(int $id): ?array
     {
-        $user = Database::one('SELECT * FROM users WHERE id = :id AND is_active = 1', ['id' => $id]);
+        $user = Database::one(
+            'SELECT u.* FROM users u
+        LEFT JOIN clients c ON c.id = u.client_id
+            WHERE u.id = :id
+              AND u.is_active = 1
+              AND (u.client_id IS NULL OR c.is_active = 1)',
+            ['id' => $id]
+        );
 
         return $user === null ? null : self::withRoles($user);
     }

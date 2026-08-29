@@ -208,6 +208,13 @@ final class Part
             $where[] = "p.status = 'draft'";
         }
 
+        // A switched-off client's parts are hidden from Junction's list rather
+        // than deleted. The client's own list never needs this: they cannot
+        // sign in at all while their account is off.
+        if (!empty($options['active_clients_only'])) {
+            $where[] = 'c.is_active = 1';
+        }
+
         if ($term !== '') {
             $fields = ['p.cpn', 'p.name', 'p.description', 'p.notes'];
             if ($includeInternal) {

@@ -82,23 +82,28 @@ final class PartForm
         $data = [
             'name' => Request::post('name', ''),
             'description' => Request::post('description', ''),
-            'usual_order_qty' => Request::post('usual_order_qty') ?: null,
             'target_price' => Request::post('target_price') ?: null,
             'notes' => Request::post('notes', ''),
-        ];
+        ] + Part::readOrderReferenceInput();
 
         $validator = new Validator($data);
         $validator->required('name', 'Name');
+        Part::validateOrderReference($data, $validator);
 
-        if ($data['usual_order_qty'] !== null) {
-            $validator->integerMin('usual_order_qty', 'Usual order quantity', 1);
-        }
         if ($data['target_price'] !== null) {
             $validator->numeric('target_price', 'Target price');
         }
 
         if ($validator->fails()) {
             return $errors + $validator->errors();
+        }
+
+        // Absent from readOrderReferenceInput() means the person saving was
+        // never shown the box. Preserve what is stored rather than blanking a
+        // figure they could not see — the same rule material cost follows.
+        if (!array_key_exists('last_order_value', $data)) {
+            $existing = Part::find($partId);
+            $data['last_order_value'] = $existing['last_order_value'] ?? null;
         }
 
         Part::updateClientFields($partId, $data, (int) Auth::id());

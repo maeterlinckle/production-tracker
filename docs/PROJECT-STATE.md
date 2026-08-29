@@ -85,7 +85,7 @@ shared include. Patterns may be copied; code may not.
 
 ## 3. Schema
 
-41 tables, migrations `001`–`013` applied. Primary keys in bold.
+42 tables, migrations `001`–`014` applied. Primary keys in bold.
 
 | Table | Columns |
 |---|---|
@@ -112,14 +112,15 @@ shared include. Patterns may be copied; code may not.
 | `order_po_documents` | **id**, order_id, po_number, file_path, original_filename, mime_type, file_size, is_original, note, uploaded_by, uploaded_at |
 | `order_queries` | **id**, order_id, raised_by, subject, body, status, created_at, updated_at |
 | `order_query_replies` | **id**, order_query_id, user_id, body, created_at |
-| `parts` | **id**, client_id, cpn, name, description, usual_order_qty, target_price, notes, has_free_issue, free_issue_relationship, free_issue_factor, free_issue_updated_by, free_issue_updated_at, status, is_archived, internal_notes, estimated_build_time_minutes, actual_build_time_minutes, quoted_price, quoted_price_set_by, quoted_price_set_at, price_under_review, base_material, material_source, material_cost, created_by, updated_by, created_at, updated_at |
+| `parts` | **id**, client_id, cpn, name, description, usual_order_multiple, expected_next_order_qty, last_order_value, last_order_qty, last_order_date, target_price, notes, has_free_issue, free_issue_relationship, free_issue_factor, free_issue_updated_by, free_issue_updated_at, status, is_archived, internal_notes, estimated_build_time_minutes, actual_build_time_minutes, quoted_price, quoted_price_set_by, quoted_price_set_at, price_under_review, base_material, material_source, material_cost, created_by, updated_by, created_at, updated_at |
+| `part_drawings` | **id**, part_id, name, position, created_by, created_at |
 | `part_price_breaks` | **id**, part_id, kind, qty, price, set_by, set_at |
 | `part_quote_drafts` | **part_id**, machine_rate_per_minute, markup_percent, draft_total, notes, updated_by, updated_at |
 | `part_quote_lines` | **id**, part_id, label, amount, position |
 | `part_time_entries` | **id**, part_id, kind, task, minutes, position, recorded_by, recorded_at |
 | `parts_return_receipts` | **id**, delivery_note_id, order_line_id, qty_received, notes, received_by, received_at |
 | `part_alternate_numbers` | **id**, part_id, number, label |
-| `part_files` | **id**, part_id, file_path, original_filename, mime_type, file_size, version_no, is_current, uploaded_by, uploaded_at |
+| `part_files` | **id**, part_id, drawing_id, file_path, original_filename, mime_type, file_size, version_no, is_current, uploaded_by, uploaded_at |
 | `part_free_issue_materials` | **id**, part_id, reference, notes |
 | `part_links` | **id**, part_id, linked_part_id, created_by, created_at |
 | `part_media` | **id**, part_id, kind, is_main, caption, file_path, thumb_path, original_filename, mime_type, file_size, uploaded_by, uploaded_at |
@@ -258,7 +259,7 @@ bool for templates.
 
 ## 6. Routes
 
-146 routes in two middleware groups (62 GET, 84 POST). `auth` is the client area (staff may also
+149 routes in two middleware groups (62 GET, 87 POST). `auth` is the client area (staff may also
 reach it, scoped to their own client); `staff` is Junction's. `csrf` is on every
 state-changing POST.
 
@@ -336,13 +337,14 @@ error message is.
 | `part-media.php` | Part photo/document/tooling grid, plus the order attachments tagged with this part. |
 | `parts-results.php` | The parts listing region: count, table, pages. Both audiences, and what the AJAX search asks for on its own. |
 | `quote-standard-inputs.php` | The rate and mark-up boxes inside the draft-quote editor. Empty means "follow Settings". |
+| `order-reference-fields.php` | Usual multiple, expected next quantity and the last order. Shared by all three part forms. |
 | `row-editor.php` | The popup holding a list of rows that add up. Four uses on the part page — see §7.1. |
 | `qty-bar.php` | A done-of-total progress bar. `label`, `done`, `total`. |
 | `stage-moves.php` | The production-status table and its move controls. |
 | `stepper.php` | The proportional stage bar. Built from spans, so it is valid inside a `<summary>`. |
 | `theme-init.php` | Sets `data-theme` before first paint. |
 
-**Services** (`src/Services/`): `Branding`, `ClearBooksClient`,
+**Services** (`src/Services/`): `Branding`, `ClearBooksClient`, `DrawingUpload`,
 `ClearBooksCustomerSync`, `FreeIssueNoteService`, `Invitations`,
 `Notifications`, `OrderPlacement`, `OrderView`, `PartForm`, `PartView`,
 `PartsOnOrder`, `PartsReturnService`, `PdfService`, `QrCodeService`,
@@ -465,6 +467,37 @@ that record a movement (goods out, both returns) keep their PDF.
 **One outstanding free-issue request per line**, reissued rather than
 duplicated. Anything needing more material points at the standing note.
 
+### Drawings: named, several per part, versioned each
+
+A part has **one or more named drawings** (`part_drawings`), and each is a
+lineage of revisions (`part_files.drawing_id`). A fabrication has a general
+arrangement and a detail per sub-component; before this, uploading the second
+superseded the first and nothing on the page said the two were different
+drawings rather than two versions of one.
+
+- **The name lives on the drawing, not on the file.** Renaming does not touch
+  the history. Unique per part (`uq_part_drawings_name`), so the names actually
+  distinguish.
+- **Version numbers are per drawing** (`uq_part_files_version` on
+  `drawing_id, version_no`), so a part with three drawings has three v1s. So is
+  `is_current`: exactly one per drawing.
+- **`PartFile::create()` does the numbering and the demotion in one
+  transaction**, with `SELECT … FOR UPDATE`, so two uploads at once cannot both
+  come out as v3 or both end up current.
+- **Nothing is ever replaced.** A superseded revision keeps its file and stays
+  viewable, because parts already made were made to it.
+
+`App\Services\DrawingUpload` is the one place that reads an upload, for all
+three forms that accept one. A submission names its drawing with either
+`drawing_id` (an existing one, checked against this part) or `drawing_name` (a
+new one). A name already in use is **not** an error — it folds into that
+drawing as its next revision, because two people adding "Op 20 detail" minutes
+apart mean the same drawing.
+
+Deleting is all-or-nothing: a whole drawing and every revision of it, staff
+only. A single revision cannot be removed from a history, because a version
+sequence with a hole in it is a record nothing can explain.
+
 ### Attachments: two kinds, deliberately
 
 | | `part_media` | `order_photos` |
@@ -556,13 +589,24 @@ exactly what the sending code supplies.
 
 | Kind | Max | Extensions |
 |---|---|---|
-| `drawing` | 25 MB | pdf, dwg, dxf, step, stp, iges, igs, png, jpg, jpeg |
+| `drawing` | 25 MB | pdf, dwg, dxf, step, stp, iges, igs, png, jpg, jpeg, doc, docx, xls, xlsx |
 | `po` | 15 MB | pdf, png, jpg, jpeg, doc, docx |
 | `photo` | 10 MB | png, jpg, jpeg, webp |
 | `part_document` | 25 MB | pdf, png, jpg, jpeg, webp, doc, docx, xls, xlsx, txt |
 | `order_document` | 25 MB | pdf, png, jpg, jpeg, webp, doc, docx, xls, xlsx, txt |
-| `part_tooling` | 50 MB | CNC/CAM and archive formats |
+| `part_tooling` | 50 MB | CNC/CAM and archive formats, plus doc, docx, xls, xlsx |
 | `logo` | 2 MB | png, jpg, jpeg, webp |
+
+**The extension list is not the whole check.** `Upload::KNOWN_MIMES` maps an
+extension to what its contents are allowed to look like, and an extension with
+no entry there is taken purely on the strength of its name. The office formats
+need several answers each because libmagic differs by version: a legacy .doc or
+.xls is an OLE2 compound file, reported on this machine as
+`application/x-ole-storage` and elsewhere as `application/CDFV2` or the
+specific Office type. The modern formats are ZIP containers and report
+`application/zip`, so a renamed .zip passes — telling them apart properly means
+reading `[Content_Types].xml` out of the archive, which needs an extension that
+is not always installed.
 
 **PHP's `post_max_size` must exceed the largest of these**, or PHP discards the
 request body and the missing CSRF token is reported as an expired session.
@@ -592,7 +636,35 @@ and `reset-uploads` (each asks twice, requires `RESET` typed in full, ignores
 
 ---
 
-## 13. What a part costs, and how long it takes
+## 13. How a part is ordered
+
+Four reference fields on `parts`, all set by the client and by staff on their
+behalf, all optional, and all read and validated in one place —
+`Part::readOrderReferenceInput()` and `Part::validateOrderReference()` — so the
+three forms that offer them cannot drift. The boxes themselves are
+`partials/order-reference-fields.php`.
+
+| Column | Means |
+|---|---|
+| `usual_order_multiple` | The batch size this part is ordered in |
+| `expected_next_order_qty` | What is likely to be ordered next |
+| `last_order_value` / `last_order_qty` / `last_order_date` | The last order, as recorded by hand |
+
+**The last order here is not the order history.** `orders` only knows about
+orders placed through this system; a part machined for ten years before any of
+it existed has a last order that is not in there. The two are shown in separate
+panels on the part page and labelled, so neither is read as the other.
+
+`last_order_value` is a price and follows the rule every price follows: absent
+from the form and refused by the reader for anybody without `view_pricing`. The
+key is *omitted* rather than nulled in that case, so a caller can tell "not
+allowed to set this" from "set it to nothing" and preserve what is stored —
+the same shape `material_cost` uses. Every role that can edit these fields today
+also holds `view_pricing`, so that branch is defensive rather than exercised.
+
+---
+
+## 14. What a part costs, and how long it takes
 
 Four lists on the part page, all edited through the same row editor (§7.1).
 
@@ -656,7 +728,7 @@ done it is one call in one place.
 
 ---
 
-## 14. Known state
+## 15. Known state
 
 - **No automated test suite.** Verification is a full HTTP sweep across four
   role levels plus browser measurement of layout.

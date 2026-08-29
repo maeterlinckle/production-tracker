@@ -7,6 +7,7 @@ namespace App\Services;
 use App\Models\OrderLine;
 use App\Models\OrderPhoto;
 use App\Models\Part;
+use App\Models\PartDrawing;
 use App\Models\PartFile;
 use App\Models\PartLink;
 use App\Models\PartMedia;
@@ -44,7 +45,12 @@ final class PartView
         return [
             'title' => $part['cpn'],
             'part' => $part,
-            'files' => PartFile::forPart($partId),
+            // A part has one or more named drawings, each with its own
+            // revision history. `drawings` is the list; `revisions` is every
+            // file grouped by drawing id, in one query rather than one per
+            // drawing.
+            'drawings' => PartDrawing::forPart($partId),
+            'revisions' => PartFile::byDrawing($partId),
             'mainPhoto' => PartMedia::mainPhoto($partId),
             'attachments' => PartMedia::groupAttachments($media),
             'altNumbers' => Part::alternateNumbers($partId),

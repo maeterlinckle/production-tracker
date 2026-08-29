@@ -47,17 +47,13 @@
             <label for="description">Further description</label>
             <textarea id="description" name="description"><?= old($old, 'description') ?></textarea>
         </div>
-        <div class="form-row">
-            <div class="field">
-                <label for="usual_order_qty">Usual order quantity</label>
-                <input type="number" min="1" id="usual_order_qty" name="usual_order_qty" value="<?= old($old, 'usual_order_qty') ?>">
-            </div>
-            <div class="field">
-                <label for="target_price">Previous / target price</label>
-                <input type="number" step="0.01" min="0" id="target_price" name="target_price" value="<?= old($old, 'target_price') ?>">
-                <div class="hint">The client-visible target, not the quoted price — set that from the part page once it exists.</div>
-            </div>
+        <div class="field">
+            <label for="target_price">Previous / target price</label>
+            <input type="number" step="0.01" min="0" id="target_price" name="target_price" value="<?= old($old, 'target_price') ?>">
+            <div class="hint">The client-visible target, not the quoted price — set that from the part page once it exists.</div>
         </div>
+
+        <?= partial('partials/order-reference-fields', ['oldValues' => $old]) ?>
         <div class="field">
             <label for="notes">Notes</label>
             <textarea id="notes" name="notes"><?= old($old, 'notes') ?></textarea>

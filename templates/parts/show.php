@@ -7,7 +7,8 @@
  * appear and which buttons are live — not the page.
  *
  * @var array      $part
- * @var array      $files
+ * @var array      $drawings   named drawings, from PartDrawing::forPart()
+ * @var array      $revisions  drawing id => its files, newest first
  * @var array|null $mainPhoto
  * @var array      $attachments
  * @var array      $altNumbers
@@ -101,40 +102,169 @@ $here = $isStaff ? $staffBase : $clientBase;
             <?php endif; ?>
         </div>
 
-        <div class="card">
+        <?php
+        /*
+            Drawings.
+
+            A part used to have one lineage, so uploading a second drawing
+            superseded the first and there was nothing on the page to say the
+            two were different drawings rather than two revisions of one. Now
+            each named drawing is its own block with its own history, and the
+            upload form has to say which one it is for.
+
+            The current revision is the thing on show; the history is folded
+            away beside it, like the movement log on an order line — a list
+            somebody opens when they have a reason to.
+        */
+        $canEditDrawings = $canEditWorkshop || $canManageClientPart;
+        $drawingBase = $isStaff ? $staffBase : $clientBase;
+        $uploadAction = $isStaff ? $staffBase . '/drawings' : $clientBase . '/files';
+        ?>
+        <div class="card" id="drawings">
             <h2 class="mt-0">Drawings</h2>
-            <?php if ($files === []): ?>
+
+            <?php if ($drawings === []): ?>
                 <p class="text-muted">No drawings uploaded yet.</p>
             <?php else: ?>
-                <ul class="file-list">
-                    <?php foreach ($files as $file): ?>
-                        <li>
-                            <span>
-                                <?= e($file['original_filename']) ?>
-                                <span class="text-muted">v<?= (int) $file['version_no'] ?></span>
-                                <?php if ((bool) $file['is_current']): ?>
-                                    <span class="badge badge-ok">Current</span>
+                <p class="text-muted">
+                    Each drawing keeps its own revisions. The current one is what a job is run to; the
+                    ones it replaced are kept and stay viewable, because parts already made were made
+                    to them.
+                </p>
+
+                <?php foreach ($drawings as $drawing):
+                    $history = $revisions[(int) $drawing['id']] ?? [];
+                    $current = null;
+                    foreach ($history as $revision) {
+                        if ((bool) $revision['is_current']) {
+                            $current = $revision;
+                            break;
+                        }
+                    }
+                    $superseded = array_values(array_filter($history, static fn ($r) => !(bool) $r['is_current']));
+                    ?>
+                    <div class="drawing-block">
+                        <div class="drawing-head">
+                            <h3 class="drawing-name"><?= e($drawing['name']) ?></h3>
+                            <?php if ($current !== null): ?>
+                                <a href="<?= url('/files/drawings/' . $current['id']) ?>" class="btn btn-sm">View current</a>
+                            <?php endif; ?>
+                        </div>
+
+                        <?php if ($current === null): ?>
+                            <p class="text-muted mb-0">No file on this drawing yet.</p>
+                        <?php else: ?>
+                            <p class="drawing-current mb-0">
+                                <?= e($current['original_filename']) ?>
+                                <span class="badge badge-ok">v<?= (int) $current['version_no'] ?> &middot; current</span>
+                                <span class="text-muted">
+                                    <?= format_date($current['uploaded_at']) ?><?php
+                                    ?><?= $isStaff && ($current['uploaded_by_name'] ?? null) ? ', ' . e($current['uploaded_by_name']) : '' ?>
+                                </span>
+                            </p>
+                        <?php endif; ?>
+
+                        <?php if ($superseded !== []): ?>
+                            <details class="drawing-history">
+                                <summary>
+                                    Earlier revisions (<?= count($superseded) ?>)
+                                    <span class="caret" aria-hidden="true"></span>
+                                </summary>
+                                <ul class="file-list" style="margin-top: var(--space-2)">
+                                    <?php foreach ($superseded as $old): ?>
+                                        <li>
+                                            <span>
+                                                <?= e($old['original_filename']) ?>
+                                                <span class="text-muted">
+                                                    v<?= (int) $old['version_no'] ?> &middot;
+                                                    <?= format_date($old['uploaded_at']) ?>
+                                                </span>
+                                            </span>
+                                            <a href="<?= url('/files/drawings/' . $old['id']) ?>" class="btn btn-sm">View</a>
+                                        </li>
+                                    <?php endforeach; ?>
+                                </ul>
+                            </details>
+                        <?php endif; ?>
+
+                        <?php if ($canEditDrawings): ?>
+                            <div class="drawing-actions">
+                                <?php /* A revision goes to this drawing, so the drawing is named in the form. */ ?>
+                                <details class="disclosure-action">
+                                    <summary class="btn btn-sm">Upload a new revision</summary>
+                                    <form method="post" action="<?= url($uploadAction) ?>" enctype="multipart/form-data"
+                                          style="margin-top: var(--space-3)">
+                                        <?= csrf_field() ?>
+                                        <input type="hidden" name="drawing_id" value="<?= (int) $drawing['id'] ?>">
+                                        <div class="field">
+                                            <label for="revision_<?= (int) $drawing['id'] ?>">
+                                                New revision of &ldquo;<?= e($drawing['name']) ?>&rdquo;
+                                            </label>
+                                            <input type="file" id="revision_<?= (int) $drawing['id'] ?>" name="drawings[]" multiple>
+                                            <div class="hint">Becomes v<?= count($history) + 1 ?>. Nothing is replaced.</div>
+                                        </div>
+                                        <button type="submit" class="btn btn-sm">Upload</button>
+                                    </form>
+                                </details>
+
+                                <details class="disclosure-action">
+                                    <summary class="btn btn-sm">Rename</summary>
+                                    <form method="post" action="<?= url($drawingBase . '/drawings/' . (int) $drawing['id'] . '/rename') ?>"
+                                          class="action-row" style="margin-top: var(--space-3)">
+                                        <?= csrf_field() ?>
+                                        <label class="sr-only" for="rename_<?= (int) $drawing['id'] ?>">Drawing name</label>
+                                        <input type="text" class="input-grow" id="rename_<?= (int) $drawing['id'] ?>"
+                                               name="name" value="<?= e($drawing['name']) ?>"
+                                               maxlength="<?= App\Models\PartDrawing::NAME_MAX ?>" required>
+                                        <button type="submit" class="btn btn-sm">Save name</button>
+                                    </form>
+                                </details>
+
+                                <?php if ($canEditWorkshop): ?>
+                                    <?php /*
+                                        Junction's to remove, and all of it at once: a history with one
+                                        entry taken out of the middle is a version sequence with a hole
+                                        nothing can explain.
+                                    */ ?>
+                                    <details class="disclosure-action">
+                                        <summary class="btn btn-sm">Remove</summary>
+                                        <form method="post" action="<?= url($staffBase . '/drawings/' . (int) $drawing['id'] . '/delete') ?>"
+                                              style="margin-top: var(--space-3)">
+                                            <?= csrf_field() ?>
+                                            <p class="text-muted mb-2">
+                                                Removes &ldquo;<?= e($drawing['name']) ?>&rdquo; and
+                                                <?= count($history) === 1 ? 'its one revision' : 'all ' . count($history) . ' of its revisions' ?>.
+                                                There is no undo.
+                                            </p>
+                                            <button type="submit" class="btn btn-sm">Remove this drawing</button>
+                                        </form>
+                                    </details>
                                 <?php endif; ?>
-                            </span>
-                            <a href="<?= url('/files/drawings/' . $file['id']) ?>" class="btn btn-sm">View</a>
-                        </li>
-                    <?php endforeach; ?>
-                </ul>
+                            </div>
+                        <?php endif; ?>
+                    </div>
+                <?php endforeach; ?>
             <?php endif; ?>
 
-            <?php if ($canEditWorkshop || $canManageClientPart): ?>
-                <form method="post" action="<?= url($isStaff ? $staffBase . '/drawings' : $clientBase . '/files') ?>"
-                      enctype="multipart/form-data" style="margin-top: var(--space-4)">
+            <?php if ($canEditDrawings): ?>
+                <form method="post" action="<?= url($uploadAction) ?>" enctype="multipart/form-data"
+                      style="margin-top: var(--space-5)">
                     <?= csrf_field() ?>
+                    <h3 class="line-section-title">Add another drawing</h3>
                     <div class="field">
-                        <label for="drawings">Upload a new revision</label>
-                        <input type="file" id="drawings" name="drawings[]" multiple>
+                        <label for="drawing_name">What is it of?</label>
+                        <input type="text" id="drawing_name" name="drawing_name"
+                               maxlength="<?= App\Models\PartDrawing::NAME_MAX ?>"
+                               placeholder="e.g. General arrangement, or Op 20 detail" required>
                         <div class="hint">
-                            Becomes the current revision. The one it replaces is kept and stays viewable —
-                            parts already made were made to it.
+                            A short name, so this drawing is told apart from the others on the part.
                         </div>
                     </div>
-                    <button type="submit" class="btn btn-sm">Upload drawing</button>
+                    <div class="field">
+                        <label for="drawings">File(s)</label>
+                        <input type="file" id="drawings" name="drawings[]" multiple>
+                    </div>
+                    <button type="submit" class="btn btn-sm">Add drawing</button>
                 </form>
             <?php endif; ?>
         </div>
@@ -512,8 +642,12 @@ $here = $isStaff ? $staffBase : $clientBase;
                     <?php endif; ?>
                 <?php endif; ?>
                 <div class="summary-row">
-                    <span class="summary-key">Usual order qty</span>
-                    <span class="summary-value"><?= e((string) ($part['usual_order_qty'] ?? '—')) ?></span>
+                    <span class="summary-key">Usual order multiple</span>
+                    <span class="summary-value"><?= e((string) ($part['usual_order_multiple'] ?? '—')) ?></span>
+                </div>
+                <div class="summary-row">
+                    <span class="summary-key">Expected next order</span>
+                    <span class="summary-value"><?= e((string) ($part['expected_next_order_qty'] ?? '—')) ?></span>
                 </div>
                 <div class="summary-row">
                     <span class="summary-key">Free issue</span>
@@ -521,6 +655,41 @@ $here = $isStaff ? $staffBase : $clientBase;
                 </div>
             </div>
         </div>
+
+        <?php
+        /*
+            The last order as somebody typed it in, which is not the same thing
+            as the order history further down the page — that only knows about
+            orders placed through this system, and this part may have been
+            machined for years before any of it existed. Kept in its own panel
+            and labelled, so the two are never read as one.
+        */
+        $hasLastOrder = ($part['last_order_qty'] ?? null) !== null
+            || ($part['last_order_date'] ?? null) !== null
+            || ($canSeePricing && ($part['last_order_value'] ?? null) !== null);
+        ?>
+        <?php if ($hasLastOrder): ?>
+        <div class="card">
+            <h2 class="mt-0">Last order</h2>
+            <p class="text-muted">Recorded by hand, however that order was placed.</p>
+            <div class="summary-list">
+                <?php if ($canSeePricing): ?>
+                    <div class="summary-row">
+                        <span class="summary-key">Value</span>
+                        <span class="summary-value"><?= $part['last_order_value'] !== null ? format_money($part['last_order_value']) : '—' ?></span>
+                    </div>
+                <?php endif; ?>
+                <div class="summary-row">
+                    <span class="summary-key">Quantity</span>
+                    <span class="summary-value"><?= e((string) ($part['last_order_qty'] ?? '—')) ?></span>
+                </div>
+                <div class="summary-row">
+                    <span class="summary-key">Date</span>
+                    <span class="summary-value"><?= $part['last_order_date'] !== null ? format_date($part['last_order_date']) : '—' ?></span>
+                </div>
+            </div>
+        </div>
+        <?php endif; ?>
 
         <?php if ($canSeePricing): ?>
         <div class="card" id="pricing">

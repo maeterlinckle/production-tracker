@@ -28,17 +28,13 @@
             <label for="description">Further description</label>
             <textarea id="description" name="description"><?= old($old, 'description') ?></textarea>
         </div>
-        <div class="form-row">
-            <div class="field">
-                <label for="usual_order_qty">Usual order quantity</label>
-                <input type="number" min="1" id="usual_order_qty" name="usual_order_qty" value="<?= old($old, 'usual_order_qty') ?>">
-            </div>
-            <div class="field">
-                <label for="target_price">Previous / target price</label>
-                <input type="number" step="0.01" min="0" id="target_price" name="target_price" value="<?= old($old, 'target_price') ?>">
-                <div class="hint">Informational — Junction will still set the official quoted price.</div>
-            </div>
+        <div class="field">
+            <label for="target_price">Previous / target price</label>
+            <input type="number" step="0.01" min="0" id="target_price" name="target_price" value="<?= old($old, 'target_price') ?>">
+            <div class="hint">Informational — Junction will still set the official quoted price.</div>
         </div>
+
+        <?= partial('partials/order-reference-fields', ['oldValues' => $old]) ?>
         <div class="field">
             <label for="notes">Notes</label>
             <textarea id="notes" name="notes"><?= old($old, 'notes') ?></textarea>
@@ -68,12 +64,29 @@
         ]) ?>
     </div>
 
+    <?php /*
+        One drawing here, named. A part can carry several — a general
+        arrangement and a detail per sub-component — but they are added from
+        the part page afterwards, where each has room to say what it is. Asking
+        for all of them on the form that creates the part would mean a set of
+        repeating name-and-file pairs before anybody has even saved a CPN.
+    */ ?>
     <div class="card">
-        <h2 class="mt-0">Drawing(s)</h2>
+        <h2 class="mt-0">Drawing</h2>
+        <div class="field">
+            <label for="drawing_name">What is it of?</label>
+            <input type="text" id="drawing_name" name="drawing_name" maxlength="120"
+                   value="<?= old($old, 'drawing_name', 'Main drawing') ?>"
+                   placeholder="e.g. General arrangement">
+            <div class="hint">
+                A short name. More drawings can be added to this part once it exists, each with its own
+                revisions.
+            </div>
+        </div>
         <div class="field">
             <label for="drawings">Upload drawing file(s)</label>
             <input type="file" id="drawings" name="drawings[]" multiple>
-            <div class="hint">PDF, DWG, DXF, STEP, IGES or image files, up to 25 MB each.</div>
+            <div class="hint">PDF, DWG, DXF, STEP, IGES, Word, Excel or image files, up to 25 MB each.</div>
         </div>
     </div>
 

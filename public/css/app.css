@@ -2534,3 +2534,57 @@ dialog.row-editor::backdrop { background: rgb(0 0 0 / 0.5); }
 .price-break-list { list-style: none; margin: var(--space-2) 0 0; padding: 0; display: grid; gap: var(--space-1); }
 .price-break-list li { display: flex; justify-content: space-between; gap: var(--space-3); font-size: 0.9rem; }
 .price-break-qty { color: var(--text-muted); }
+
+/* --- A part's named drawings ----------------------------------------------
+   One block per drawing: its name, the revision in force, its history folded
+   away, and what can be done to it. Separated by a rule rather than by margin
+   alone, because the whole point is that two drawings on a part are two
+   things and not two versions of one. */
+.drawing-block + .drawing-block {
+    margin-top: var(--space-4);
+    padding-top: var(--space-4);
+    border-top: 1px solid var(--border);
+}
+.drawing-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-3);
+    flex-wrap: wrap;
+}
+.drawing-name { margin: 0; font-size: 1rem; overflow-wrap: anywhere; }
+.drawing-current {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    margin-top: var(--space-2);
+    overflow-wrap: anywhere;
+}
+.drawing-history { margin-top: var(--space-2); }
+.drawing-history > summary {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    list-style: none;
+    cursor: pointer;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+.drawing-history > summary::-webkit-details-marker { display: none; }
+.drawing-history > summary:hover { color: var(--text); }
+.drawing-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-3); }
+/* Each action opens its own panel, so an open one takes the full width rather
+   than squeezing a form into a third of the row. */
+.drawing-actions > details { flex: 0 1 auto; }
+.drawing-actions > details[open] { flex: 1 1 100%; }
+
+/* Several boxes that are one fact — the last order's value, quantity and date.
+   Fenced so they read as a group rather than as three unrelated fields. */
+.field-set {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: var(--space-3);
+    margin: 0 0 var(--space-4);
+}
+.field-set legend { padding: 0 var(--space-2); font-size: 0.82rem; color: var(--text-muted); }

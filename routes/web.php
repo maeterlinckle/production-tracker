@@ -62,7 +62,11 @@ $router->group(['auth'], function (Router $router): void {
     $router->post('/parts/{id:\d+}', [PartController::class, 'update'], ['csrf']);
     $router->post('/parts/{id:\d+}/archive', [PartController::class, 'archive'], ['csrf']);
     $router->post('/parts/{id:\d+}/delete', [PartController::class, 'delete'], ['csrf']);
+    // A drawing: either a new named one, or the next revision of one already
+    // there. Which of the two is decided by what the form posted -- see
+    // App\Services\DrawingUpload.
     $router->post('/parts/{id:\d+}/files', [PartController::class, 'uploadFile'], ['csrf']);
+    $router->post('/parts/{id:\d+}/drawings/{drawingId:\d+}/rename', [PartController::class, 'renameDrawing'], ['csrf']);
     $router->post('/parts/{id:\d+}/photos', [PartController::class, 'uploadPhoto'], ['csrf']);
     $router->post('/parts/{id:\d+}/photos/{photoId:\d+}/delete', [PartController::class, 'deletePhoto'], ['csrf']);
     // The client's own target price at different quantities. Only ever the
@@ -143,6 +147,9 @@ $router->group(['staff'], function (Router $router): void {
     // A new drawing revision, and the part's own media library: setup photos,
     // machine settings, tooling files.
     $router->post('/staff/parts/{id:\d+}/drawings', [StaffPartController::class, 'uploadDrawing'], ['csrf']);
+    $router->post('/staff/parts/{id:\d+}/drawings/{drawingId:\d+}/rename', [StaffPartController::class, 'renameDrawing'], ['csrf']);
+    // All-or-nothing: a single revision cannot be deleted out of a history.
+    $router->post('/staff/parts/{id:\d+}/drawings/{drawingId:\d+}/delete', [StaffPartController::class, 'deleteDrawing'], ['csrf']);
     $router->post('/staff/parts/{id:\d+}/media', [StaffPartController::class, 'uploadMedia'], ['csrf']);
     // A caption is written mid-upload, before anybody has seen the file in
     // context. This is how it gets fixed afterwards.

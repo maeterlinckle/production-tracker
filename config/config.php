@@ -80,8 +80,15 @@ return [
     ],
 
     'uploads' => [
+        // Office formats are here because drawings arrive as them: a dimensioned
+        // sketch pasted into Word, an inspection schedule as a spreadsheet.
+        // Refusing those meant they got emailed instead, which is the one place
+        // nobody looks for a drawing.
         'drawing' => [
-            'extensions' => ['pdf', 'dwg', 'dxf', 'step', 'stp', 'iges', 'igs', 'png', 'jpg', 'jpeg'],
+            'extensions' => [
+                'pdf', 'dwg', 'dxf', 'step', 'stp', 'iges', 'igs', 'png', 'jpg', 'jpeg',
+                'doc', 'docx', 'xls', 'xlsx',
+            ],
             'max_bytes' => 25 * 1024 * 1024,
         ],
         'po' => [
@@ -115,6 +122,9 @@ return [
             'extensions' => [
                 'nc', 'tap', 'gcode', 'ngc', 'cnc', 'mpf', 'spf', 'eia', 'iso', 'ptp', 'anc', 'min',
                 'txt', 'csv', 'zip', 'pdf', 'step', 'stp', 'iges', 'igs', 'dxf', 'dwg',
+                // A tool list is a spreadsheet and a setting sheet is a Word
+                // document more often than either is anything else.
+                'doc', 'docx', 'xls', 'xlsx',
             ],
             'max_bytes' => 50 * 1024 * 1024,
         ],

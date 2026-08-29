@@ -13,6 +13,23 @@ final class Validator
     {
     }
 
+    /**
+     * Record a failure the rules here cannot express.
+     *
+     * A date that has to parse, a code that has to exist: the check belongs
+     * next to the thing that knows the rule, and its answer belongs in the
+     * same list as everything else so the form renders one set of messages.
+     *
+     * First message per field wins, as with every rule above — the earliest
+     * failure is the one that explains the rest.
+     */
+    public function addError(string $field, string $message): self
+    {
+        $this->errors[$field] ??= $message;
+
+        return $this;
+    }
+
     public function required(string $field, string $label): self
     {
         $value = $this->data[$field] ?? null;

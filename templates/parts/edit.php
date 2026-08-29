@@ -65,11 +65,6 @@ $cancel = $action;
                 <textarea id="description" name="description"><?= e($part['description'] ?? '') ?></textarea>
             </div>
             <div class="form-row">
-                <div class="field">
-                    <label for="usual_order_qty">Usual order quantity</label>
-                    <input type="number" min="1" id="usual_order_qty" name="usual_order_qty" value="<?= e((string) ($part['usual_order_qty'] ?? '')) ?>">
-                    <?php if (isset($errors['usual_order_qty'])): ?><div class="error"><?= e($errors['usual_order_qty']) ?></div><?php endif; ?>
-                </div>
                 <?php if ($canSeePricing): ?>
                     <div class="field">
                         <label for="target_price">Previous / target price</label>
@@ -89,6 +84,13 @@ $cancel = $action;
                     </div>
                 <?php endif; ?>
             </div>
+
+            <?= partial('partials/order-reference-fields', [
+                'values' => $part,
+                'errors' => $errors,
+                'showPricing' => $canSeePricing,
+            ]) ?>
+
             <div class="field">
                 <label for="notes">Notes</label>
                 <textarea id="notes" name="notes"><?= e($part['notes'] ?? '') ?></textarea>

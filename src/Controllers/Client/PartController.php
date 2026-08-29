@@ -14,10 +14,12 @@ use App\Core\Upload;
 use App\Core\Validator;
 use App\Core\View;
 use App\Models\Part;
+use App\Models\PartDrawing;
 use App\Models\PartFile;
 use App\Models\PartLink;
 use App\Models\PartMedia;
 use App\Models\PartPriceBreak;
+use App\Services\DrawingUpload;
 use App\Services\PartForm;
 use App\Services\PartView;
 
@@ -83,19 +85,17 @@ final class PartController
             'cpn' => Request::post('cpn', ''),
             'name' => Request::post('name', ''),
             'description' => Request::post('description', ''),
-            'usual_order_qty' => Request::post('usual_order_qty') ?: null,
             'target_price' => Request::post('target_price') ?: null,
             'notes' => Request::post('notes', ''),
-        ];
+        ] + Part::readOrderReferenceInput();
 
         $validator = new Validator($data);
         $validator->required('cpn', 'Client part number')
             ->maxLength('cpn', 'Client part number', 80)
             ->required('name', 'Name');
 
-        if ($data['usual_order_qty'] !== null) {
-            $validator->integerMin('usual_order_qty', 'Usual order quantity', 1);
-        }
+        Part::validateOrderReference($data, $validator);
+
         if ($data['target_price'] !== null) {
             $validator->numeric('target_price', 'Target price');
         }
@@ -191,14 +191,41 @@ final class PartController
         Response::redirect('/parts');
     }
 
+    /**
+     * A drawing on an existing part: a new one, or a revision of one already
+     * there. Which of the two is decided by what the form posted — see
+     * App\Services\DrawingUpload.
+     */
     public function uploadFile(string $id): void
     {
         Auth::authorize('manage_parts');
         $part = $this->findOwnedPart((int) $id);
-        $this->handleFileUploads($part['id']);
 
-        Flash::success('Drawing uploaded.');
-        Response::redirect('/parts/' . $part['id']);
+        DrawingUpload::handleAndFlash($part);
+        Response::redirect('/parts/' . $part['id'] . '#drawings');
+    }
+
+    /** Rename one of this part's drawings. Its revisions are untouched. */
+    public function renameDrawing(string $id, string $drawingId): void
+    {
+        Auth::authorize('manage_parts');
+        $part = $this->findOwnedPart((int) $id);
+
+        $drawing = PartDrawing::find((int) $drawingId);
+        if ($drawing === null || (int) $drawing['part_id'] !== $part['id']) {
+            View::renderError(404, 'Drawing not found', 'That drawing is not on this part.');
+
+            return;
+        }
+
+        $problem = PartDrawing::rename((int) $drawingId, (string) Request::post('name', ''));
+        if ($problem !== null) {
+            Flash::error($problem);
+        } else {
+            Flash::success('Drawing renamed.');
+        }
+
+        Response::redirect('/parts/' . $part['id'] . '#drawings');
     }
 
     public function uploadPhoto(string $id): void
@@ -421,30 +448,19 @@ final class PartController
         Part::setFreeIssue($partId, Part::readFreeIssueInput(), (int) Auth::id());
     }
 
+    /**
+     * Drawings attached while the part is being created.
+     *
+     * The new-part form has one file box and one name box, so everything sent
+     * with it is the first revision of one drawing. More drawings are added
+     * from the part page afterwards, where there is room to say which is
+     * which.
+     */
     private function handleFileUploads(int $partId): void
     {
-        $allowed = Config::get('uploads.drawing.extensions');
-        $maxBytes = (int) Config::get('uploads.drawing.max_bytes');
-
-        foreach (Upload::files('drawings') as $file) {
-            $error = Upload::validate($file, $allowed, $maxBytes);
-            if ($error !== null) {
-                Flash::error($error);
-                continue;
-            }
-
-            $relativePath = Upload::store($file, 'drawings/' . $partId);
-            $absolutePath = Upload::absolutePath($relativePath);
-            $mime = $absolutePath !== null ? Upload::detectMime($absolutePath) : null;
-
-            PartFile::create([
-                'part_id' => $partId,
-                'file_path' => $relativePath,
-                'original_filename' => Upload::displayName((string) $file['name']),
-                'mime_type' => $mime,
-                'file_size' => (int) $file['size'],
-                'uploaded_by' => Auth::id(),
-            ]);
+        $part = Part::find($partId);
+        if ($part !== null) {
+            DrawingUpload::handleAndFlash($part);
         }
     }
 

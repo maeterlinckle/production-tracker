@@ -377,20 +377,93 @@ final class Part
         return Database::one($sql, $params) !== null;
     }
 
+    /**
+     * The "how this part is ordered" fields, as posted by any of the part
+     * forms: the usual multiple, what is expected next, and the last order.
+     *
+     * One reader for all four forms, so none of them can quietly stop saving
+     * one of the boxes the shared partial renders.
+     *
+     * `last_order_value` is a price, so it follows the rule every other price
+     * follows: it is absent from the form and refused here for anybody without
+     * view_pricing, rather than merely hidden. The key is omitted entirely in
+     * that case so a caller can tell "not allowed to set this" from "set it to
+     * nothing" — see how the callers preserve the stored value.
+     *
+     * @return array<string,mixed>
+     */
+    public static function readOrderReferenceInput(): array
+    {
+        $post = static fn (string $key) => \App\Core\Request::post($key) ?: null;
+
+        $data = [
+            'usual_order_multiple' => $post('usual_order_multiple'),
+            'expected_next_order_qty' => $post('expected_next_order_qty'),
+            'last_order_qty' => $post('last_order_qty'),
+            'last_order_date' => $post('last_order_date'),
+        ];
+
+        if (\App\Core\Auth::can('view_pricing')) {
+            $data['last_order_value'] = $post('last_order_value');
+        }
+
+        return $data;
+    }
+
+    /**
+     * Check what readOrderReferenceInput() produced.
+     *
+     * Every one of these is optional — a part nobody has ordered yet has none
+     * of them — so each rule only applies to a box that was actually filled in.
+     *
+     * @param array<string,mixed> $data
+     */
+    public static function validateOrderReference(array $data, \App\Core\Validator $validator): void
+    {
+        foreach ([
+            'usual_order_multiple' => 'Usual order multiple',
+            'expected_next_order_qty' => 'Expected next order quantity',
+            'last_order_qty' => 'Last order quantity',
+        ] as $field => $label) {
+            if (($data[$field] ?? null) !== null) {
+                $validator->integerMin($field, $label, 1);
+            }
+        }
+
+        if (($data['last_order_value'] ?? null) !== null) {
+            $validator->numeric('last_order_value', 'Last order value');
+        }
+
+        // A date arrives from <input type="date"> as YYYY-MM-DD, but the field
+        // is a plain text box in a browser that does not support it, and the
+        // column will take anything MariaDB can coerce. Checked rather than
+        // trusted.
+        $date = $data['last_order_date'] ?? null;
+        if ($date !== null && \DateTimeImmutable::createFromFormat('!Y-m-d', (string) $date) === false) {
+            $validator->addError('last_order_date', 'Enter the last order date as a real date.');
+        }
+    }
+
     public static function create(array $data): int
     {
         return Database::insert(
             'INSERT INTO parts (
-                client_id, cpn, name, description, usual_order_qty, target_price, notes, created_by
+                client_id, cpn, name, description, usual_order_multiple, expected_next_order_qty,
+                last_order_value, last_order_qty, last_order_date, target_price, notes, created_by
             ) VALUES (
-                :client_id, :cpn, :name, :description, :usual_order_qty, :target_price, :notes, :created_by
+                :client_id, :cpn, :name, :description, :usual_order_multiple, :expected_next_order_qty,
+                :last_order_value, :last_order_qty, :last_order_date, :target_price, :notes, :created_by
             )',
             [
                 'client_id' => $data['client_id'],
                 'cpn' => $data['cpn'],
                 'name' => $data['name'],
                 'description' => $data['description'] ?? null,
-                'usual_order_qty' => $data['usual_order_qty'] ?? null,
+                'usual_order_multiple' => $data['usual_order_multiple'] ?? null,
+                'expected_next_order_qty' => $data['expected_next_order_qty'] ?? null,
+                'last_order_value' => $data['last_order_value'] ?? null,
+                'last_order_qty' => $data['last_order_qty'] ?? null,
+                'last_order_date' => $data['last_order_date'] ?? null,
                 'target_price' => $data['target_price'] ?? null,
                 'notes' => $data['notes'] ?? null,
                 'created_by' => $data['created_by'],
@@ -411,14 +484,22 @@ final class Part
     {
         Database::query(
             'UPDATE parts SET
-                name = :name, description = :description, usual_order_qty = :usual_order_qty,
+                name = :name, description = :description,
+                usual_order_multiple = :usual_order_multiple,
+                expected_next_order_qty = :expected_next_order_qty,
+                last_order_value = :last_order_value, last_order_qty = :last_order_qty,
+                last_order_date = :last_order_date,
                 target_price = :target_price, notes = :notes, updated_by = :updated_by
              WHERE id = :id',
             [
                 'id' => $id,
                 'name' => $data['name'],
                 'description' => $data['description'] ?? null,
-                'usual_order_qty' => $data['usual_order_qty'] ?? null,
+                'usual_order_multiple' => $data['usual_order_multiple'] ?? null,
+                'expected_next_order_qty' => $data['expected_next_order_qty'] ?? null,
+                'last_order_value' => $data['last_order_value'] ?? null,
+                'last_order_qty' => $data['last_order_qty'] ?? null,
+                'last_order_date' => $data['last_order_date'] ?? null,
                 'target_price' => $data['target_price'] ?? null,
                 'notes' => $data['notes'] ?? null,
                 'updated_by' => $userId,

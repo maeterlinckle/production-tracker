@@ -16,12 +16,14 @@ use App\Core\View;
 use App\Models\Client;
 use App\Models\OrderLine;
 use App\Models\Part;
+use App\Models\PartDrawing;
 use App\Models\PartFile;
 use App\Models\PartLink;
 use App\Models\PartMedia;
 use App\Models\PartPriceBreak;
 use App\Models\PartQuote;
 use App\Models\PartTimeEntry;
+use App\Services\DrawingUpload;
 use App\Services\Notifications;
 use App\Services\PartForm;
 use App\Services\PartView;
@@ -114,19 +116,17 @@ final class StaffPartController
             'cpn' => Request::post('cpn', ''),
             'name' => Request::post('name', ''),
             'description' => Request::post('description', ''),
-            'usual_order_qty' => Request::post('usual_order_qty') ?: null,
             'target_price' => Request::post('target_price') ?: null,
             'notes' => Request::post('notes', ''),
-        ];
+        ] + Part::readOrderReferenceInput();
 
         $validator = new Validator($data);
         $validator->required('cpn', 'Client part number')
             ->maxLength('cpn', 'Client part number', 80)
             ->required('name', 'Name');
 
-        if ($data['usual_order_qty'] !== null) {
-            $validator->integerMin('usual_order_qty', 'Usual order quantity', 1);
-        }
+        Part::validateOrderReference($data, $validator);
+
         if ($data['target_price'] !== null) {
             $validator->numeric('target_price', 'Target price');
         }
@@ -379,39 +379,61 @@ final class StaffPartController
             return;
         }
 
-        $allowed = Config::get('uploads.drawing.extensions');
-        $maxBytes = (int) Config::get('uploads.drawing.max_bytes');
-        $uploaded = 0;
+        DrawingUpload::handleAndFlash($part);
 
-        foreach (Upload::files('drawings') as $file) {
-            $error = Upload::validate($file, $allowed, $maxBytes);
-            if ($error !== null) {
-                Flash::error($error);
-                continue;
-            }
+        Response::redirect('/staff/parts/' . $id . '#drawings');
+    }
 
-            $relativePath = Upload::store($file, 'drawings/' . $part['id']);
-            $absolutePath = Upload::absolutePath($relativePath);
-            $mime = $absolutePath !== null ? Upload::detectMime($absolutePath) : null;
+    /** Change what a drawing is called. Its revisions are untouched. */
+    public function renameDrawing(string $id, string $drawingId): void
+    {
+        Auth::authorize('edit_workshop_fields');
 
-            PartFile::create([
-                'part_id' => $part['id'],
-                'file_path' => $relativePath,
-                'original_filename' => Upload::displayName((string) $file['name']),
-                'mime_type' => $mime,
-                'file_size' => (int) $file['size'],
-                'uploaded_by' => Auth::id(),
-            ]);
-            $uploaded++;
+        $drawing = PartDrawing::find((int) $drawingId);
+        if ($drawing === null || (int) $drawing['part_id'] !== (int) $id) {
+            View::renderError(404, 'Drawing not found', 'That drawing is not on this part.');
+
+            return;
         }
 
-        if ($uploaded > 0) {
-            Flash::success($uploaded === 1
-                ? 'Drawing uploaded. It is now the current revision; the one before it is kept in the history.'
-                : $uploaded . ' drawings uploaded. The last is the current revision.');
+        $problem = PartDrawing::rename((int) $drawingId, (string) Request::post('name', ''));
+        if ($problem !== null) {
+            Flash::error($problem);
+        } else {
+            Flash::success('Drawing renamed.');
         }
 
-        Response::redirect('/staff/parts/' . $id);
+        Response::redirect('/staff/parts/' . $id . '#drawings');
+    }
+
+    /**
+     * Remove a drawing and every revision of it.
+     *
+     * Deliberately all-or-nothing. A single revision cannot be deleted on its
+     * own: the history is the record of what parts were made to, and picking
+     * one entry out of it leaves a version sequence with a hole in it that
+     * nothing can explain.
+     */
+    public function deleteDrawing(string $id, string $drawingId): void
+    {
+        Auth::authorize('edit_workshop_fields');
+
+        $drawing = PartDrawing::find((int) $drawingId);
+        if ($drawing === null || (int) $drawing['part_id'] !== (int) $id) {
+            View::renderError(404, 'Drawing not found', 'That drawing is not on this part.');
+
+            return;
+        }
+
+        // The rows go by cascade; the files on disk have to be asked for.
+        foreach (PartFile::forDrawing((int) $drawingId) as $file) {
+            Upload::delete($file['file_path']);
+        }
+
+        PartDrawing::delete((int) $drawingId);
+        Flash::success('"' . $drawing['name'] . '" and its revisions have been removed.');
+
+        Response::redirect('/staff/parts/' . $id . '#drawings');
     }
 
     // -- Part media library (item 6) -----------------------------------------

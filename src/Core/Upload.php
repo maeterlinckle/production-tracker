@@ -42,13 +42,45 @@ final class Upload
      * number, so we fall back to extension-only checking for those rather
      * than risk false-positive rejections.
      */
+    /**
+     * What each extension's contents are allowed to look like.
+     *
+     * An extension with no entry here is not content-checked at all, so adding
+     * one is how a format stops being taken purely on the strength of its name.
+     *
+     * The office formats need several answers each because libmagic gives
+     * different ones depending on its version. A legacy .doc or .xls is an OLE2
+     * compound file, reported here as `application/x-ole-storage` and elsewhere
+     * as `application/CDFV2` or the specific Office type — measured on this
+     * machine, not guessed. Listing only `application/msword` rejected genuine
+     * Word documents outright.
+     *
+     * The modern formats are ZIP containers, so `application/zip` has to be
+     * allowed and a renamed .zip therefore passes. Telling the two apart means
+     * reading `[Content_Types].xml` out of the archive, which needs an
+     * extension that is not always installed. The check is what the file is
+     * built from, not what it claims to be, and that is as far as it goes.
+     */
+    private const OLE_MIMES = [
+        'application/x-ole-storage',
+        'application/CDFV2',
+        'application/CDFV2-corrupt',
+        'application/vnd.ms-office',
+        'application/msword',
+        'application/vnd.ms-excel',
+    ];
+
+    private const OOXML_MIMES = ['application/zip'];
+
     private const KNOWN_MIMES = [
         'pdf' => ['application/pdf'],
         'png' => ['image/png'],
         'jpg' => ['image/jpeg'],
         'jpeg' => ['image/jpeg'],
-        'doc' => ['application/msword'],
-        'docx' => ['application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/zip'],
+        'doc' => self::OLE_MIMES,
+        'xls' => self::OLE_MIMES,
+        'docx' => ['application/vnd.openxmlformats-officedocument.wordprocessingml.document', ...self::OOXML_MIMES],
+        'xlsx' => ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', ...self::OOXML_MIMES],
     ];
 
     /** Returns a human error message, or null if the file is acceptable. */

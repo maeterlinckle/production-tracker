@@ -25,7 +25,17 @@
  * @var string $totalFormat  'minutes' | 'money' — how to render the running total
  * @var string $extra    markup rendered above the rows, inside the form (optional)
  * @var string $footnote a sentence under the rows (optional)
+ * @var bool   $inline   render the rows straight into the surrounding form
+ *
+ * `inline` is for the create forms. A part that does not exist yet has no URL
+ * to post rows to, and a form cannot be nested inside another form — so on
+ * those pages the same rows, the same "add a row" and the same running total
+ * are rendered directly into the form that creates the part, and saved
+ * alongside it. Everything the person doing it sees and does is the same; only
+ * the dialog and its own save button are gone, because the page's own save
+ * button is the one that applies.
  */
+$inline = $inline ?? false;
 $intro = $intro ?? '';
 $extra = $extra ?? '';
 $footnote = $footnote ?? '';
@@ -47,15 +57,25 @@ foreach ($columns as $column) {
     }
 }
 ?>
-<?php /*
-    Hidden until the script un-hides it. A button whose only job is to open a
-    dialog is a button that does nothing when there is no script to open one,
-    and the form it would have opened is already on the page in that case.
-*/ ?>
-<button type="button" class="btn btn-sm" hidden data-row-editor-open="<?= e($id) ?>"><?= e($trigger) ?></button>
+<?php if (!$inline): ?>
+    <?php /*
+        Hidden until the script un-hides it. A button whose only job is to open
+        a dialog is a button that does nothing when there is no script to open
+        one, and the form it would have opened is already on the page in that
+        case.
+    */ ?>
+    <button type="button" class="btn btn-sm" hidden data-row-editor-open="<?= e($id) ?>"><?= e($trigger) ?></button>
+<?php endif; ?>
 
-<dialog class="row-editor" id="<?= e($id) ?>" data-row-editor
+<<?= $inline ? 'fieldset class="row-editor row-editor-inline"' : 'dialog class="row-editor"' ?>
+        id="<?= e($id) ?>" data-row-editor
         <?= $totalFormat !== '' ? 'data-row-total-format="' . e($totalFormat) . '"' : '' ?>>
+    <?php if ($inline): ?>
+        <legend><?= e($title) ?></legend>
+        <?php if ($intro !== ''): ?>
+            <p class="text-muted"><?= $intro ?></p>
+        <?php endif; ?>
+    <?php else: ?>
     <form method="post" action="<?= url($action) ?>">
         <?= csrf_field() ?>
 
@@ -67,6 +87,7 @@ foreach ($columns as $column) {
         <?php if ($intro !== ''): ?>
             <p class="text-muted"><?= $intro ?></p>
         <?php endif; ?>
+    <?php endif; ?>
 
         <?= $extra ?>
 
@@ -115,11 +136,17 @@ foreach ($columns as $column) {
             without it, somebody clears a line, sees it still sitting there,
             and hunts for a delete button that is right in front of them.
         */ ?>
-        <p class="field-hint">Saving replaces the whole list. An empty row is dropped.</p>
+        <p class="field-hint">
+            <?= $inline
+                ? 'An empty row is dropped. These are saved with the part.'
+                : 'Saving replaces the whole list. An empty row is dropped.' ?>
+        </p>
 
+    <?php if (!$inline): ?>
         <div class="row-editor-actions">
             <button type="submit" class="btn btn-primary">Save</button>
             <button type="button" class="btn" data-row-editor-close>Cancel</button>
         </div>
     </form>
-</dialog>
+    <?php endif; ?>
+</<?= $inline ? 'fieldset' : 'dialog' ?>>

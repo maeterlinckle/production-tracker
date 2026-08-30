@@ -32,6 +32,7 @@ use App\Models\Role;
 use App\Models\Setting;
 use App\Models\User;
 use App\Services\ClearBooksClient;
+use App\Services\PdfService;
 use App\Services\Reminders;
 
 function option(array $argv, string $name, ?string $default = null): ?string
@@ -185,6 +186,21 @@ function cmdDoctor(array $argv): int
     $checks[] = ['Composer packages', class_exists(\PHPMailer\PHPMailer\PHPMailer::class) ? 'ok' : 'warn',
         class_exists(\PHPMailer\PHPMailer\PHPMailer::class) ? '' : 'run composer install — email and PDFs need it'];
 
+    // A cold font cache is the difference between a PDF appearing and a PDF
+    // appearing eventually: dompdf re-parses every font on every request until
+    // it can write the parsed metrics down. See App\Services\PdfService.
+    $fontCache = PdfService::fontCachePath();
+    $cacheWritable = is_dir($fontCache) && is_writable($fontCache);
+    $checks[] = [
+        'PDF font cache',
+        $cacheWritable ? (PdfService::fontCacheIsWarm() ? 'ok' : 'warn') : 'fail',
+        $cacheWritable
+            ? (PdfService::fontCacheIsWarm()
+                ? 'warm'
+                : 'writable but empty — run "tracker pdf-warm"; until then every PDF is about a second slower')
+            : $fontCache . ' is not writable, so every PDF re-parses every font',
+    ];
+
     $mailProblems = Mailer::problems();
     $checks[] = ['Email', Mailer::isReady() ? 'ok' : 'warn',
         Mailer::isReady() ? 'ready' : ($mailProblems === [] ? 'switched off in Settings' : implode(' ', $mailProblems))];
@@ -205,6 +221,28 @@ function cmdDoctor(array $argv): int
     table(['Check', 'Status', 'Detail'], $checks);
 
     return $failed === 0 ? 0 : 1;
+}
+
+/**
+ * Build the PDF font cache.
+ *
+ * Run after an install or an update so the first person to open a route card
+ * is not the one who waits for it. Idempotent and quick once warm.
+ */
+function cmdPdfWarm(array $argv): int
+{
+    $started = microtime(true);
+    $warm = PdfService::warmFontCache();
+    $ms = (int) round((microtime(true) - $started) * 1000);
+
+    if (!$warm) {
+        fail('Could not write the font cache at ' . PdfService::fontCachePath()
+            . '. Check its ownership — until it is writable every PDF re-parses every font.');
+    }
+
+    echo "PDF font cache warm ({$ms} ms). " . PdfService::fontCachePath() . "\n";
+
+    return 0;
 }
 
 function cmdStats(array $argv): int
@@ -640,6 +678,7 @@ function cmdClearBooksStatus(array $argv): int
 $commands = [
     'doctor' => ['Environment, config, storage and database health check', 'cmdDoctor'],
     'stats' => ['Row counts across the tracker', 'cmdStats'],
+    'pdf-warm' => ['Build the PDF font cache so the first PDF is not the slow one', 'cmdPdfWarm'],
     'key:generate' => ['Print a fresh APP_KEY for .env', 'cmdKeyGenerate'],
 
     'user:list' => ['List accounts  [--active-only]', 'cmdUserList'],

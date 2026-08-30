@@ -262,7 +262,7 @@ bool for templates.
 
 ## 6. Routes
 
-154 routes in two middleware groups (62 GET, 92 POST). `auth` is the client area (staff may also
+155 routes in two middleware groups (62 GET, 93 POST). `auth` is the client area (staff may also
 reach it, scoped to their own client); `staff` is Junction's. `csrf` is on every
 state-changing POST.
 
@@ -347,11 +347,12 @@ error message is.
 | `stepper.php` | The proportional stage bar. Built from spans, so it is valid inside a `<summary>`. |
 | `theme-init.php` | Sets `data-theme` before first paint. |
 
-**Services** (`src/Services/`): `Branding`, `ClearBooksClient`, `DrawingUpload`,
-`ClearBooksCustomerSync`, `FreeIssueNoteService`, `Invitations`,
-`Notifications`, `OrderPlacement`, `OrderView`, `PartForm`, `PartView`,
-`PartsOnOrder`, `PartsReturnService`, `PdfService`, `QrCodeService`,
-`ReferenceNumber`, `Reminders`, `RouteCardService`.
+**Services** (`src/Services/`): `Branding`, `ClearBooksClient`,
+`ClearBooksCustomerSync`, `ClientPurge`, `ClientUsers`, `DrawingUpload`,
+`FreeIssueNoteService`, `Invitations`, `Notifications`, `OrderPlacement`,
+`OrderView`, `PartForm`, `PartView`, `PartsOnOrder`, `PartsReturnService`,
+`PdfService`, `QrCodeService`, `ReferenceNumber`, `Reminders`,
+`RouteCardService`.
 
 **Table classes in `app.css`**, each with a `<colgroup>` and declared widths so
 tables showing the same thing line up between pages: `.dn-table` (the four
@@ -376,8 +377,11 @@ no script at all. Everything works with JavaScript off, more slowly.
 
 **Disclosures all use the same `.caret`** and the same
 `details[open] > summary .caret` rotation, so a triangle means one thing
-everywhere: the navigation drop-downs, the order line cards, the caption
-editors.
+everywhere: the navigation drop-downs, the order line cards (`.line-card`), the
+order page's paperwork cards (`.panel-card`), the drawing histories and the
+caption editors. Notes and queries is the one card on the order page that does
+*not* fold — it is a conversation, and a message behind a heading is a message
+nobody answers.
 
 ### 7.1 The row editor
 
@@ -637,6 +641,21 @@ checks the two PHP limits against it and fails when they disagree.
 `Upload::store()`, `Image::process()` and `PdfService` all create their
 directories on demand, so no pre-created list is needed anywhere.
 
+**PDFs and the font cache.** Dompdf parses DejaVu's metrics and caches the
+parsed result; with a cache it can reuse a render is roughly twenty times
+quicker (58 ms against 1052 ms on an empty document, measured). By default that
+cache lives in `vendor/dompdf/dompdf/lib/fonts` — and `manage.sh permissions`
+makes the whole application root `root:www-data` at 750, so the web user can
+read it and never write it. Every PDF therefore re-parsed every font, on every
+request.
+
+`PdfService` points `fontCache` at `storage/uploads/cache/dompdf-fonts`
+instead — `storage/` is the one tree the web user owns. The fonts themselves are
+still read from dompdf's own directory, which only needs to be readable, so
+nothing breaks when composer replaces `vendor/`. `tracker pdf-warm` builds the
+cache and runs from both `install.sh` and `manage.sh update`; `doctor` reports
+it as cold, warm or unwritable.
+
 Photos are normalised to a 2400px longest edge with a 480px thumbnail beside
 them; `thumb_path` is nullable and the file controller falls back to the full
 image.
@@ -705,6 +724,20 @@ by a new code path is an order frozen for ever with nothing to explain it.
 Reactivation is therefore complete and needs no repair: the orders unfreeze at
 the stage they stopped at, the lists fill back in, and **a user deactivated
 individually stays deactivated** — their own `is_active` was never touched.
+
+**Deleting a client for good** is the one exception to archive-over-delete, in
+`App\Services\ClientPurge`. Three things must be true: `manage_clients`, an
+account already switched off, and the client's name typed out in full. It is
+offered only on a switched-off account, because deciding to stop working with
+somebody and deciding to erase them are different decisions.
+
+Two things make it more than `DELETE FROM clients`. The foreign keys are mostly
+RESTRICT — which is right, it is what stops an ordinary mistake taking an
+order's history with it — so the rows come out in dependency order by hand:
+invoices, delivery notes, orders, parts, users, client. And the file paths are
+collected **before** the rows go, because a path only exists in the row pointing
+at it. Rows are removed in one transaction; the files afterwards, since a
+rollback can restore a row and nothing can restore a file.
 
 ---
 
@@ -816,11 +849,24 @@ first break.
 | `target` | the client's hoped-for price | client `manage_parts`; staff `create_client_parts` |
 | `quoted` | Junction's answer | `set_pricing` |
 
-**Nothing prices an order through them yet.** Order lines are still priced at
-`parts.quoted_price`, and the part page says so in as many words. Applying a
-break changes what gets invoiced, which is not a thing to start doing as a side
-effect of adding a table. `PartPriceBreak::priceAt()` exists so that when it is
-done it is one call in one place.
+**Quoted breaks price an order.** `OrderPlacement` prices each line with
+`PartPriceBreak::priceAt()` at the quantity actually ordered — a break set at 10
+applies when 12 are ordered — worked out server-side rather than taken from the
+form, for the same reason the free-issue quantity is. A part with no breaks
+prices at `quoted_price` exactly as it always did. Target breaks price nothing;
+they are the client's statement of what they hope to pay.
+
+**A price is entered as a ladder, not a box.** One editor per kind, rows of
+"from this quantity, this price each". `PartPriceBreak::splitLadder()` puts the
+lowest row into the part's own price column (`quoted_price` / `target_price`)
+and the rest into `part_price_breaks`; `ladderRows()` is the inverse, so
+reopening the editor shows what was saved. A ladder of one row is exactly the
+single figure this replaced, stored where it always was — which is why
+everything that reads one price still works.
+
+On the create forms the same editor is rendered `inline` (see §7.1): a part that
+does not exist yet has no URL to post rows to, and a form cannot nest inside a
+form.
 
 ---
 

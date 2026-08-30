@@ -1019,6 +1019,9 @@ cmd_update() {
 
     cmd_permissions
     cmd_migrate
+    # So the first PDF after an update is not the one that pays to build the
+    # font cache -- see AppServicesPdfService.
+    console pdf-warm || true
     console doctor || true
 
     local svc; svc="$(web_service)"

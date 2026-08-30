@@ -139,6 +139,11 @@ $router->group(['staff'], function (Router $router): void {
     // checkbox on the details form -- see StaffClientController::setActive().
     $router->post('/staff/clients/{id:\d+}/active', [StaffClientController::class, 'setActive'], ['csrf']);
 
+    // The one place in the application that really deletes. Refused unless the
+    // account is already switched off and the client's name is typed in full --
+    // see StaffClientController::destroy() and App\Services\ClientPurge.
+    $router->post('/staff/clients/{id:\d+}/delete', [StaffClientController::class, 'destroy'], ['csrf']);
+
     $router->post('/staff/clients/{id:\d+}/users', [StaffClientController::class, 'addUser'], ['csrf']);
     $router->post('/staff/clients/{id:\d+}/users/{userId:\d+}', [StaffClientController::class, 'updateUser'], ['csrf']);
     $router->post('/staff/clients/{id:\d+}/users/{userId:\d+}/toggle-active', [StaffClientController::class, 'toggleUserActive'], ['csrf']);

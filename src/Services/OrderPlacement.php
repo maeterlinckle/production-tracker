@@ -11,6 +11,7 @@ use App\Models\DeliveryNote;
 use App\Models\Order;
 use App\Models\OrderLine;
 use App\Models\Part;
+use App\Models\PartPriceBreak;
 use App\Models\User;
 use RuntimeException;
 
@@ -122,10 +123,26 @@ final class OrderPlacement
             $required = Part::freeIssueQtyFor($part, $qty);
             $posted = max(0, (int) ($freeIssueQtys[$i] ?? 0));
 
+            // Priced from the quoted ladder at the quantity actually ordered:
+            // a break set at 10+ applies to an order of 12. The part's own
+            // quoted_price is the bottom rung and is what applies when nothing
+            // reaches that far down, so a part with no breaks prices exactly as
+            // it always did.
+            //
+            // Worked out here rather than taken from the form for the same
+            // reason the free-issue quantity is: what the browser showed is a
+            // convenience, and the price a client is charged is not something
+            // to accept from a posted field.
+            $unitPrice = PartPriceBreak::priceAt(
+                PartPriceBreak::forPart((int) $part['id'], 'quoted'),
+                $qty,
+                $part['quoted_price'] !== null ? (float) $part['quoted_price'] : null
+            );
+
             $lines[] = [
                 'part_id' => $part['id'],
                 'qty_ordered' => $qty,
-                'unit_price' => $part['quoted_price'],
+                'unit_price' => $unitPrice,
                 'needs_free_issue' => Part::hasFreeIssue($part),
                 'qty_free_issue_required' => Part::hasFreeIssue($part) ? max($required, $posted) : 0,
             ];

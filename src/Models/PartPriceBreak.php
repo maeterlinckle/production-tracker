@@ -75,6 +75,84 @@ final class PartPriceBreak
     }
 
     /**
+     * Split a posted price ladder into the part's own price and its breaks.
+     *
+     * The pricing forms are one editor now: rows of "from this quantity, this
+     * price each". But a part still has a single price column — `quoted_price`
+     * is what makes it orderable, and half the application reads it — so the
+     * ladder has to land in two places.
+     *
+     * The lowest quantity sets the part's price, and everything above it is a
+     * break. A ladder of one row is therefore exactly the single figure this
+     * replaced, stored exactly where it always was; a ladder of 1/50/200 is
+     * that same figure plus two breaks. Storing the bottom row as a break as
+     * well would double it up and leave the panel drawing a range of "1–0".
+     *
+     * @param array<int,array{qty:int|string,price:float|string}> $rows
+     * @return array{base:float|null,breaks:array<int,array{qty:int,price:float}>}
+     */
+    public static function splitLadder(array $rows): array
+    {
+        $clean = [];
+        foreach ($rows as $row) {
+            $qty = (int) ($row['qty'] ?? 0);
+            $price = $row['price'] ?? '';
+
+            if ($qty <= 0 || $price === '' || !is_numeric($price)) {
+                continue;
+            }
+
+            $clean[$qty] = round((float) $price, 2);
+        }
+
+        if ($clean === []) {
+            return ['base' => null, 'breaks' => []];
+        }
+
+        ksort($clean);
+
+        $lowestQty = array_key_first($clean);
+        $base = $clean[$lowestQty];
+        unset($clean[$lowestQty]);
+
+        $breaks = [];
+        foreach ($clean as $qty => $price) {
+            $breaks[] = ['qty' => $qty, 'price' => $price];
+        }
+
+        return ['base' => $base, 'breaks' => $breaks];
+    }
+
+    /**
+     * The ladder as the editor wants it back: the part's own price as the
+     * first row, then the breaks.
+     *
+     * The inverse of splitLadder(), so opening the editor shows exactly what
+     * was saved rather than the breaks with the base price mysteriously
+     * missing from the top.
+     *
+     * @param array<int,array<string,mixed>> $breaks
+     * @return array<int,array{break_qty:int|string,break_price:string}>
+     */
+    public static function ladderRows(?float $basePrice, array $breaks): array
+    {
+        $rows = [];
+
+        if ($basePrice !== null) {
+            $rows[] = ['break_qty' => 1, 'break_price' => number_format($basePrice, 2, '.', '')];
+        }
+
+        foreach ($breaks as $break) {
+            $rows[] = [
+                'break_qty' => (int) $break['qty'],
+                'break_price' => number_format((float) $break['price'], 2, '.', ''),
+            ];
+        }
+
+        return $rows;
+    }
+
+    /**
      * Replace the whole list for one kind.
      *
      * Replace rather than reconcile, as everywhere else a form shows its full

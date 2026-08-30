@@ -565,8 +565,22 @@ $noteHref = static fn (array $dn): string => $isStaff
     </details>
 <?php endforeach; ?>
 
-<div class="card">
-    <h2 class="mt-0">Purchase orders</h2>
+<?php /*
+    The rest of the page folds away too, on the same principle as the lines:
+    an order is scanned for one thing at a time, and four full cards of
+    paperwork below the lines is a lot of scrolling past what you did not come
+    for. Same markup, same caret, same behaviour.
+
+    Notes and queries are deliberately left open. They are a conversation
+    rather than a record, and a message nobody sees because it is behind a
+    heading is a message that does not get answered.
+*/ ?>
+<details class="card panel-card">
+    <summary class="panel-card-summary">
+        <h2 class="panel-card-title">Purchase orders</h2>
+        <span class="caret" aria-hidden="true"></span>
+    </summary>
+    <div class="panel-card-body">
     <p class="text-muted">Every PO document sent for this order, oldest first. Nothing is ever replaced — an amended PO is added alongside the original.</p>
     <div class="table-wrap">
         <table>
@@ -662,7 +676,8 @@ $noteHref = static fn (array $dn): string => $isStaff
             <button type="submit" class="btn">Add document</button>
         </form>
     <?php endif; ?>
-</div>
+    </div>
+</details>
 
 <?php /*
     Every piece of paper on this order, under one heading.
@@ -673,8 +688,12 @@ $noteHref = static fn (array $dn): string => $isStaff
     and holding the answer in their head. The four movements are one subject:
     material in, material back, parts out, parts back.
 */ ?>
-<div class="card" id="delivery-notes">
-    <h2 class="mt-0">Delivery Notes</h2>
+<details class="card panel-card" id="delivery-notes">
+    <summary class="panel-card-summary">
+        <h2 class="panel-card-title">Delivery Notes</h2>
+        <span class="caret" aria-hidden="true"></span>
+    </summary>
+    <div class="panel-card-body">
     <p class="text-muted">
         Everything that has travelled between <?= $isStaff ? e($client['name']) . ' and Junction' : 'you and Junction' ?>
         on this order, in both directions.
@@ -805,11 +824,16 @@ $noteHref = static fn (array $dn): string => $isStaff
             ]) ?>
         </div>
     <?php endif; ?>
-</div>
+    </div>
+</details>
 
 <?php if ($canClose && !$orderClosed): ?>
-<div class="card">
-    <h2 class="mt-0">Close the order down</h2>
+<details class="card panel-card">
+    <summary class="panel-card-summary">
+        <h2 class="panel-card-title">Close the order down</h2>
+        <span class="caret" aria-hidden="true"></span>
+    </summary>
+    <div class="panel-card-body">
     <p class="text-muted">
         Cancels off everything still to be issued, received or made, across every line. It is recorded as
         cancelled, not deleted, and stops counting as outstanding from that point. Parts already made still
@@ -822,7 +846,8 @@ $noteHref = static fn (array $dn): string => $isStaff
                placeholder="e.g. Client cancelled the programme">
         <button type="submit" class="btn">Close the order down</button>
     </form>
-</div>
+    </div>
+</details>
 <?php endif; ?>
 
 <?php if ($isStaff): ?>
@@ -858,8 +883,12 @@ $partCheckboxes = static function (string $idPrefix, array $checked) use ($tagga
     <?php
 };
 ?>
-<div class="card" id="photos">
-    <h2 class="mt-0">Photos and documents</h2>
+<details class="card panel-card" id="photos">
+    <summary class="panel-card-summary">
+        <h2 class="panel-card-title">Photos and documents</h2>
+        <span class="caret" aria-hidden="true"></span>
+    </summary>
+    <div class="panel-card-body">
     <p class="text-muted">
         Staff-only, and specific to how <em>this</em> order went — a mark on one batch, a packing shot,
         an inspection report. Anything that describes the part itself belongs on the part, where it is
@@ -942,14 +971,16 @@ $partCheckboxes = static function (string $idPrefix, array $checked) use ($tagga
             </div>
             <?php $partCheckboxes('upload', []); ?>
             <div class="field">
-                <label for="photos">Upload photo(s) or document(s)</label>
-                <input type="file" id="photos" name="photos[]" multiple>
+                <label for="order_files">Upload photo(s) or document(s)</label>
+                <input type="file" id="order_files" name="photos[]" multiple>
                 <div class="hint">Pictures, PDFs and office documents. Everything uploaded at once gets the same tags.</div>
             </div>
             <button type="submit" class="btn">Upload</button>
         </form>
     <?php endif; ?>
-</div>
+    </div>
+</details>
 <?php endif; ?>
 
+<?php /* Left open on purpose — see the note above the purchase orders card. */ ?>
 <?= partial('partials/order-notes-queries', ['order' => $order, 'notes' => $notes, 'queries' => $queries]) ?>

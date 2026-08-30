@@ -671,7 +671,16 @@ $here = $isStaff ? $staffBase : $clientBase;
         <?php if ($hasLastOrder): ?>
         <div class="card">
             <h2 class="mt-0">Last order</h2>
-            <p class="text-muted">Recorded by hand, however that order was placed.</p>
+            <?php /*
+                Written plainly on purpose. The one thing people get wrong
+                about this card is thinking it updates itself, so that is the
+                sentence that has to be unmissable.
+            */ ?>
+            <p class="text-muted">
+                The last time this part was bought. Somebody types these in — they do not update on
+                their own. They can cover orders placed before this system existed, or by phone or
+                email. Orders placed here are listed further down, under Order history.
+            </p>
             <div class="summary-list">
                 <?php if ($canSeePricing): ?>
                     <div class="summary-row">
@@ -696,18 +705,44 @@ $here = $isStaff ? $staffBase : $clientBase;
             <h2 class="mt-0">Pricing</h2>
 
             <?php if ($isStaff): ?>
+                <?php /*
+                    The quoted price is a ladder, not a box.
+
+                    Its bottom rung is the part's quoted_price — still what
+                    makes a part orderable and still what everything else
+                    reads — and the rungs above it are the breaks. One row is
+                    exactly the single figure this replaced.
+                */ ?>
+                <p class="quoted-price-headline mb-0">
+                    <?= $part['quoted_price'] !== null ? format_money($part['quoted_price']) : '<span class="text-muted">not yet quoted</span>' ?>
+                    <?php if (($priceBreaks['quoted'] ?? []) !== []): ?>
+                        <span class="text-muted">each, before quantity breaks</span>
+                    <?php endif; ?>
+                </p>
                 <?php if (Auth::can('set_pricing')): ?>
-                    <form method="post" action="<?= url($staffBase . '/price') ?>">
-                        <?= csrf_field() ?>
-                        <div class="field">
-                            <label for="quoted_price">Quoted price</label>
-                            <input type="number" step="0.01" min="0" id="quoted_price" name="quoted_price" value="<?= e((string) ($part['quoted_price'] ?? '')) ?>" required>
-                            <div class="hint">Client-visible once set, and what an order line is priced at.</div>
-                        </div>
-                        <button type="submit" class="btn btn-primary">Set quoted price</button>
-                    </form>
-                <?php else: ?>
-                    <p class="mb-0"><?= format_money($part['quoted_price']) ?></p>
+                    <div style="margin-top: var(--space-3)">
+                        <?= partial('partials/row-editor', [
+                            'id' => 'quoted_ladder',
+                            'title' => 'Quoted price — ' . $part['cpn'],
+                            'action' => $staffBase . '/price',
+                            'trigger' => $part['quoted_price'] === null ? 'Set the quoted price' : 'Edit quoted price',
+                            'intro' => 'A quantity, and the price each from that quantity upward. The lowest row is '
+                                . 'what a single part is quoted at and is what the client sees; add rows only where '
+                                . 'the price actually changes with the size of the order.',
+                            'columns' => [
+                                ['name' => 'break_qty', 'label' => 'From quantity', 'type' => 'number',
+                                 'min' => '1', 'step' => '1', 'width' => 'narrow', 'placeholder' => 'Qty'],
+                                ['name' => 'break_price', 'label' => 'Price each', 'type' => 'number',
+                                 'step' => '0.01', 'min' => '0', 'width' => 'narrow', 'placeholder' => 'Price'],
+                            ],
+                            'rows' => PartPriceBreak::ladderRows(
+                                $part['quoted_price'] !== null ? (float) $part['quoted_price'] : null,
+                                $priceBreaks['quoted'] ?? []
+                            ),
+                            'footnote' => 'An order line is priced at whichever row applies to the quantity ordered — '
+                                . 'a row set at 10 applies when 12 are ordered.',
+                        ]) ?>
+                    </div>
                 <?php endif; ?>
             <?php endif; ?>
 
@@ -726,12 +761,12 @@ $here = $isStaff ? $staffBase : $clientBase;
             $breakKinds = [];
             if ($isStaff) {
                 // Junction may set the client's target as it may set the
-                // target price itself, and its own quote.
+                // target price itself. The quoted ladder is edited at the top
+                // of this panel, price and breaks together, so it is not
+                // offered a second editor here — two ways to set the same
+                // figures is how the two disagree.
                 if (Auth::can('create_client_parts')) {
                     $breakKinds['target'] = $staffBase . '/price-breaks/target';
-                }
-                if (Auth::can('set_pricing')) {
-                    $breakKinds['quoted'] = $staffBase . '/price-breaks/quoted';
                 }
             } elseif ($canManageClientPart) {
                 $breakKinds['target'] = $clientBase . '/price-breaks';

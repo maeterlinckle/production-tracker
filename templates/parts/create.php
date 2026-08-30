@@ -28,11 +28,34 @@
             <label for="description">Further description</label>
             <textarea id="description" name="description"><?= old($old, 'description') ?></textarea>
         </div>
-        <div class="field">
-            <label for="target_price">Previous / target price</label>
-            <input type="number" step="0.01" min="0" id="target_price" name="target_price" value="<?= old($old, 'target_price') ?>">
-            <div class="hint">Informational — Junction will still set the official quoted price.</div>
-        </div>
+        <?php /*
+            Target pricing, at whatever quantities matter.
+
+            A single "target price" only ever fitted parts bought one way. A
+            part run in 12s and 250s has a different hoped-for price at each,
+            and being able to say so is the whole point — one row is still the
+            simple case.
+
+            Rendered inline rather than as the popup used on a saved part,
+            because the part does not exist yet and there is nowhere to post
+            rows to. Same fields, saved with the part.
+        */ ?>
+        <?= partial('partials/row-editor', [
+            'inline' => true,
+            'id' => 'target_breaks_new',
+            'title' => 'Target price',
+            'intro' => 'What you hope to pay, and from what quantity. One row is fine; add more if the '
+                . 'price you are working to changes with the size of the order. '
+                . 'Junction still sets the official quoted price.',
+            'columns' => [
+                ['name' => 'break_qty', 'label' => 'From quantity', 'type' => 'number',
+                 'min' => '1', 'step' => '1', 'width' => 'narrow', 'placeholder' => 'Qty'],
+                ['name' => 'break_price', 'label' => 'Price each', 'type' => 'number',
+                 'step' => '0.01', 'min' => '0', 'width' => 'narrow', 'placeholder' => 'Price'],
+            ],
+            'rows' => $old['target_breaks'] ?? [],
+            'footnote' => 'Leave it empty if you would rather not say.',
+        ]) ?>
 
         <?= partial('partials/order-reference-fields', ['oldValues' => $old]) ?>
         <div class="field">

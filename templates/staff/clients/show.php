@@ -5,6 +5,7 @@
  * @var array      $parts
  * @var array      $orders
  * @var array|null $deactivation who switched the account off, and why
+ * @var array      $purgeSummary what deleting the client would remove
  */
 $isActive = (bool) $client['is_active'];
 ?>
@@ -267,5 +268,58 @@ $isActive = (bool) $client['is_active'];
                 </form>
             <?php endif; ?>
         </div>
+
+        <?php /*
+            Deleting for good.
+
+            Only offered once the account is off, because deciding to stop
+            working with somebody and deciding to erase them are different
+            decisions and should be made on different days. Folded away, and
+            behind their name typed out in full: a button and an "are you sure"
+            are two clicks in the same place, and there is no undo behind this
+            one.
+        */ ?>
+        <?php if (!$isActive): ?>
+        <div class="card danger-card">
+            <h2 class="mt-0">Delete this client for good</h2>
+            <p class="text-muted">
+                Everything else in the tracker is archived rather than deleted, so that history stays
+                readable. This is the exception, for an account Junction has finished with entirely.
+            </p>
+
+            <details class="disclosure-action">
+                <summary class="btn">Delete <?= e($client['name']) ?> permanently</summary>
+
+                <div style="margin-top: var(--space-3)">
+                    <p class="mb-2"><strong>This cannot be undone.</strong> It will permanently remove:</p>
+
+                    <ul class="purge-list">
+                        <?php foreach ($purgeSummary as $label => $count): ?>
+                            <li>
+                                <strong><?= (int) $count ?></strong> <?= e($label) ?>
+                            </li>
+                        <?php endforeach; ?>
+                    </ul>
+
+                    <p class="text-muted">
+                        Their parts, drawings, orders, delivery notes, invoices, queries, photos and user
+                        accounts all go, and every file listed above is deleted from disk. Nothing about
+                        this client will be recoverable from the application afterwards — only from a
+                        backup taken before now.
+                    </p>
+
+                    <form method="post" action="<?= url('/staff/clients/' . $client['id'] . '/delete') ?>">
+                        <?= csrf_field() ?>
+                        <div class="field">
+                            <label for="confirm_name">Type <strong><?= e($client['name']) ?></strong> to confirm</label>
+                            <input type="text" id="confirm_name" name="confirm_name" autocomplete="off" required
+                                   placeholder="<?= e($client['name']) ?>">
+                        </div>
+                        <button type="submit" class="btn btn-danger">Delete this client and all of their data</button>
+                    </form>
+                </div>
+            </details>
+        </div>
+        <?php endif; ?>
     </div>
 </div>

@@ -85,7 +85,10 @@ final class PartController
             'cpn' => Request::post('cpn', ''),
             'name' => Request::post('name', ''),
             'description' => Request::post('description', ''),
-            'target_price' => Request::post('target_price') ?: null,
+            // The target price is a ladder now -- see PartForm::readPriceLadder().
+            // Its bottom rung lands in target_price, so everything that reads a
+            // single figure carries on reading one.
+            'target_price' => null,
             'notes' => Request::post('notes', ''),
         ] + Part::readOrderReferenceInput();
 
@@ -96,9 +99,7 @@ final class PartController
 
         Part::validateOrderReference($data, $validator);
 
-        if ($data['target_price'] !== null) {
-            $validator->numeric('target_price', 'Target price');
-        }
+        $ladder = PartForm::readPriceLadder();
 
         $errors = $validator->errors();
         if (!isset($errors['cpn']) && Part::cpnExists($clientId, (string) $data['cpn'])) {
@@ -107,13 +108,24 @@ final class PartController
 
         if ($errors !== []) {
             Flash::setErrors($errors);
-            Flash::setOld($data);
+            // The ladder goes back with everything else, so a rejected save
+            // does not throw away rows somebody has just typed.
+            Flash::setOld($data + ['target_breaks' => PartForm::ladderOld($ladder)]);
             Response::redirect('/parts/new');
         }
 
         $data['client_id'] = $clientId;
         $data['created_by'] = Auth::id();
         $partId = Part::create($data);
+
+        // Assigned, not merged with `+`: that operator keeps the left-hand
+        // value where a key already exists, and `target_price` is already in
+        // $data as null — so the price would have been quietly dropped.
+        $base = PartForm::applyPriceLadder($partId, 'target', $ladder, (int) Auth::id());
+        if ($base !== null) {
+            $data['target_price'] = $base;
+            Part::updateClientFields($partId, $data, (int) Auth::id());
+        }
 
         $this->saveAltNumbers($partId);
         $this->saveFreeIssueMaterials($partId);

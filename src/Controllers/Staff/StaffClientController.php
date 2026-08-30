@@ -16,6 +16,7 @@ use App\Models\Part;
 use App\Models\Role;
 use App\Models\User;
 use App\Services\ClearBooksCustomerSync;
+use App\Services\ClientPurge;
 use App\Services\ClientUsers;
 use App\Services\Invitations;
 use RuntimeException;
@@ -175,6 +176,9 @@ final class StaffClientController
             'title' => $client['name'],
             'client' => $client,
             'deactivation' => Client::deactivationDetail((int) $client['id']),
+            // What deleting them would remove. Only counted for a switched-off
+            // account, because that is the only page that offers it.
+            'purgeSummary' => (bool) $client['is_active'] ? [] : ClientPurge::summary((int) $client['id']),
             'users' => $users,
             'parts' => Part::forClient($client['id']),
             'orders' => Order::forClient($client['id']),
@@ -245,6 +249,59 @@ final class StaffClientController
                 . 'day-to-day lists, and nobody on that account can sign in. Nothing has been deleted.');
 
         Response::redirect('/staff/clients/' . $id);
+    }
+
+    /**
+     * Delete a client and everything that was ever theirs.
+     *
+     * The one place in the application that really deletes rather than
+     * archiving. Three things have to be true before it will: staff.admin, an
+     * account already switched off, and the client's name typed out in full.
+     * The name is what makes it hard to do by accident — a Delete button and a
+     * confirmation dialog are two clicks in the same place, and this is not a
+     * mistake anybody recovers from.
+     */
+    public function destroy(string $id): void
+    {
+        Auth::authorize('manage_clients');
+
+        $client = Client::find((int) $id);
+        if ($client === null) {
+            View::renderError(404, 'Client not found', 'That client does not exist.');
+
+            return;
+        }
+
+        $typed = trim((string) Request::post('confirm_name', ''));
+
+        if ($typed !== trim((string) $client['name'])) {
+            Flash::error('The name did not match, so nothing has been deleted. Type "' . $client['name'] . '" exactly.');
+            Response::redirect('/staff/clients/' . $id);
+        }
+
+        try {
+            $result = ClientPurge::purge((int) $id);
+        } catch (RuntimeException $e) {
+            Flash::error($e->getMessage());
+            Response::redirect('/staff/clients/' . $id);
+
+            return;
+        }
+
+        $counts = [];
+        foreach ($result['rows'] as $label => $n) {
+            if ($n > 0) {
+                $counts[] = $n . ' ' . $label;
+            }
+        }
+
+        Flash::success(
+            $client['name'] . ' has been deleted, along with '
+            . ($counts === [] ? 'everything on the account' : implode(', ', $counts))
+            . '. ' . $result['files_deleted'] . ' file(s) removed from disk.'
+        );
+
+        Response::redirect('/staff/clients');
     }
 
     /**

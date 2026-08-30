@@ -1735,6 +1735,10 @@ fi
 # ---------------------------------------------------------------------------
 step "Checking it over"
 
+# Build the PDF font cache now, so the first route card somebody opens is not
+# the one that pays about a second to parse every font. See PdfService.
+php_app bin/console.php pdf-warm || warn "The PDF font cache could not be built; PDFs will be slower until it can be."
+
 php_app bin/console.php doctor || warn "The checks above found something worth fixing."
 
 if [ "$WEB_SERVER" != none ] && have curl; then

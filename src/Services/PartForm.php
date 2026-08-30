@@ -8,6 +8,7 @@ use App\Core\Auth;
 use App\Core\Request;
 use App\Core\Validator;
 use App\Models\Part;
+use App\Models\PartPriceBreak;
 
 /**
  * Reading a part edit out of the request, and applying whatever the person
@@ -23,6 +24,76 @@ use App\Models\Part;
  */
 final class PartForm
 {
+    /**
+     * The price ladder posted by a part form, as (quantity, price) rows.
+     *
+     * Both create forms and both editors post the same two parallel arrays, so
+     * reading them lives here rather than in each of the four.
+     *
+     * @return array<int,array{qty:string,price:string}>
+     */
+    public static function readPriceLadder(): array
+    {
+        $quantities = Request::post('break_qty', []);
+        $prices = Request::post('break_price', []);
+
+        if (!is_array($quantities)) {
+            return [];
+        }
+
+        $prices = array_values((array) $prices);
+        $rows = [];
+
+        foreach (array_values($quantities) as $i => $qty) {
+            $rows[] = ['qty' => (string) $qty, 'price' => (string) ($prices[$i] ?? '')];
+        }
+
+        return $rows;
+    }
+
+    /**
+     * A posted ladder in the shape the editor renders rows from, so a rejected
+     * save comes back with the rows still in it.
+     *
+     * @param array<int,array{qty:string,price:string}> $rows
+     * @return array<int,array{break_qty:string,break_price:string}>
+     */
+    public static function ladderOld(array $rows): array
+    {
+        return array_values(array_map(
+            static fn (array $r): array => ['break_qty' => $r['qty'], 'break_price' => $r['price']],
+            array_filter($rows, static fn (array $r): bool => trim($r['qty']) !== '' || trim($r['price']) !== '')
+        ));
+    }
+
+    /**
+     * Apply a posted ladder to a part: its own price column, then its breaks.
+     *
+     * Nothing happens when the ladder is empty — a client who would rather not
+     * name a target price leaves the rows blank, and that is not the same as
+     * asking for the price to be cleared.
+     */
+    public static function applyPriceLadder(int $partId, string $kind, array $rows, int $userId): ?float
+    {
+        $ladder = PartPriceBreak::splitLadder($rows);
+
+        if ($ladder['base'] === null) {
+            return null;
+        }
+
+        PartPriceBreak::replace(
+            $partId,
+            $kind,
+            array_map(
+                static fn (array $b): array => ['qty' => $b['qty'], 'price' => $b['price']],
+                $ladder['breaks']
+            ),
+            $userId
+        );
+
+        return $ladder['base'];
+    }
+
     /** Everything a client may set on their own part, and staff on their behalf. */
     public static function canEditClientFields(): bool
     {

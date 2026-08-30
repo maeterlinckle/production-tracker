@@ -564,23 +564,56 @@ final class StaffPartController
         Response::redirect('/staff/parts/' . $id);
     }
 
+    /**
+     * The quoted price, as a ladder of quantities.
+     *
+     * One editor replaces the single box. Its bottom rung is the part's
+     * `quoted_price` — still the figure that makes a part orderable and still
+     * what everything else reads — and the rungs above it are price breaks. A
+     * ladder of one row is exactly the single price this replaced.
+     *
+     * An order line is priced from this ladder at the quantity actually
+     * ordered; see App\Services\OrderPlacement.
+     */
     public function setPrice(string $id): void
     {
         Auth::authorize('set_pricing');
-        $price = Request::post('quoted_price', '');
 
-        $validator = new Validator(['quoted_price' => $price]);
-        $validator->required('quoted_price', 'Quoted price')->numeric('quoted_price', 'Quoted price');
+        $part = Part::find((int) $id);
+        if ($part === null) {
+            View::renderError(404, 'Part not found', 'That part does not exist.');
 
-        if ($validator->fails()) {
-            Flash::error('Enter a valid quoted price.');
-            Response::redirect('/staff/parts/' . $id);
+            return;
         }
 
-        Part::setQuotedPrice((int) $id, (float) $price, (int) Auth::id());
-        Notifications::partQuoted(Part::find((int) $id));
-        Flash::success('Quoted price set — the client can now see it and place an order.');
-        Response::redirect('/staff/parts/' . $id);
+        $ladder = PartPriceBreak::splitLadder(
+            array_map(
+                static fn (array $r): array => ['qty' => $r['qty'], 'price' => $r['price']],
+                PartForm::readPriceLadder()
+            )
+        );
+
+        if ($ladder['base'] === null) {
+            Flash::error('Give at least one quantity and a price — the lowest quantity is the price a single part is quoted at.');
+            Response::redirect('/staff/parts/' . $id . '#pricing');
+        }
+
+        PartPriceBreak::replace((int) $id, 'quoted', $ladder['breaks'], (int) Auth::id());
+
+        // setQuotedPrice is what flips the part to "quoted" and records who
+        // priced it, so it stays the way the base rung is written.
+        $changed = $part['quoted_price'] === null || (float) $part['quoted_price'] !== $ladder['base'];
+        Part::setQuotedPrice((int) $id, $ladder['base'], (int) Auth::id());
+
+        if ($changed) {
+            Notifications::partQuoted(Part::find((int) $id));
+        }
+
+        Flash::success($ladder['breaks'] === []
+            ? 'Quoted price set — the client can now see it and place an order.'
+            : 'Quoted price set, with ' . count($ladder['breaks']) . ' quantity break(s). An order is priced at whichever applies.');
+
+        Response::redirect('/staff/parts/' . $id . '#pricing');
     }
 
     /**

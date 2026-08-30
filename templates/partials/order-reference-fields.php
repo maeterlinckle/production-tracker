@@ -66,8 +66,9 @@ $error = static function (string $field) use ($errors): string {
 <fieldset class="field-set">
     <legend>Last order</legend>
     <p class="field-hint mb-0">
-        As last ordered, however that order was placed. Kept by hand — orders placed through this
-        system have their own history on the part page.
+        The last time this part was bought. Fill these in yourself — they do not update on their own.
+        Use them for orders placed before this system, or by phone or email. Orders placed here are
+        already listed on the part page under Order history.
     </p>
     <div class="form-row">
         <?php if ($showPricing): ?>

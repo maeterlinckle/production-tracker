@@ -651,11 +651,25 @@ main.container { padding-block: var(--space-5) var(--space-6); }
  * `vertical-align` and a margin. `nowrap` keeps a pair of buttons on one line;
  * the table already scrolls horizontally inside `.table-wrap` when it needs to.
  */
+/* The actions cell lines up with the rest of its row.
+ *
+ * It used to be the one cell in the row set to `vertical-align: middle` while
+ * every other cell was `top`. On a short row nobody noticed; on the users
+ * table, where the roles cell holds a form and a row can be 295px tall, the
+ * buttons floated somewhere in the middle of all that while the name, the
+ * roles and the status all started at the top — so the last column visibly
+ * failed to line up with the row it belonged to, and drifted differently on
+ * every row depending on how tall that row happened to be.
+ *
+ * Top, like everything else. The buttons now start on the same line as the
+ * name beside them whatever the row does.
+ */
 td.actions {
     white-space: nowrap;
-    vertical-align: middle;
+    vertical-align: top;
 }
 
+/* Within the cell they still sit on one line together. */
 td.actions > * { vertical-align: middle; }
 
 /* Half a gap: inline layout contributes the other half itself, because the
@@ -2264,8 +2278,18 @@ legend.label { padding: 0; }
 /* Rows carry two lines in most cells, so the default row padding doubles up. */
 .table-people th, .table-people td { padding: var(--space-2) var(--space-3); }
 .table-people .cell-sub { font-size: 0.8rem; }
-.table-people .actions { display: flex; flex-wrap: wrap; gap: var(--space-1); }
-.table-people .actions .btn { white-space: nowrap; }
+/* The buttons wrap inside a narrow column, but the cell stays a cell.
+ *
+ * This was `display: flex` on the `<td>` itself, which does make the buttons
+ * wrap — and also takes the cell out of the table's row-height sizing. The
+ * cell then sized to its own content, 17px against a 109px row, so the row's
+ * bottom border was drawn part of the way up the last column: a stray rule
+ * floating beside every row, and a column that lined up with nothing.
+ *
+ * Letting the inline forms wrap as words does the same job and leaves the cell
+ * a table-cell, which is what draws a full-height border. */
+.table-people td.actions { white-space: normal; line-height: 2.2; }
+.table-people td.actions .btn { white-space: nowrap; }
 
 /* --- The live part-number check --------------------------------------------
    One line under the CPN field on the new-part forms, saying whether the
@@ -2630,3 +2654,57 @@ dialog.row-editor::backdrop { background: rgb(0 0 0 / 0.5); }
    rows above it. */
 .user-row { align-items: flex-start; }
 .user-row .caption-edit { display: block; margin-top: var(--space-1); }
+
+/* --- Page-level cards that fold away ---------------------------------------
+   The same disclosure as an order line, one level up: the paperwork sections
+   of an order page. Shares .caret and its rotation rule, so a triangle keeps
+   meaning one thing. Notes and queries deliberately does not use this — a
+   message behind a heading is a message nobody answers. */
+.panel-card { padding: 0; }
+.panel-card > summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    padding: var(--space-4);
+    border-radius: inherit;
+    cursor: pointer;
+    list-style: none;
+}
+.panel-card > summary::-webkit-details-marker { display: none; }
+.panel-card > summary:hover { background: var(--bg-sunken); }
+.panel-card > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.panel-card[open] > summary {
+    border-bottom: 1px solid var(--border);
+    border-radius: var(--radius) var(--radius) 0 0;
+}
+.panel-card-title { margin: 0; font-size: 1.05rem; }
+.panel-card-body { padding: var(--space-4); }
+
+/* The row editor rendered straight into a form, for the create pages where
+   there is no saved record to post rows to yet. Same rows, same running total;
+   no dialog and no save button of its own, because the page has one. */
+.row-editor-inline {
+    display: block;
+    width: auto;
+    max-height: none;
+    padding: var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: none;
+    box-shadow: none;
+    overflow: visible;
+}
+.row-editor-inline > legend { padding: 0 var(--space-2); font-size: 0.82rem; color: var(--text-muted); }
+
+/* The quoted price above its ladder editor: the figure first, because that is
+   what somebody opens the panel to read. */
+.quoted-price-headline { font-size: 1.15rem; font-weight: 600; }
+
+/* The one panel in the application that deletes rather than archives. Marked
+   out, because it should not look like the panels either side of it. */
+.danger-card { border-color: var(--danger); }
+.danger-card > h2 { color: var(--danger); }
+
+.purge-list { margin: 0 0 var(--space-3); padding-left: var(--space-5); }
+.purge-list li { margin-bottom: 2px; }

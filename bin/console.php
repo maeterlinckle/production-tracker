@@ -136,6 +136,54 @@ function describeOwnership(string $path): string
 }
 
 /**
+ * The largest upload the application offers, and which kind it belongs to.
+ *
+ * The one place that number is worked out. `doctor` compares PHP's limits
+ * against it, and `install.sh` and `tracker php-limits` set PHP's limits from
+ * it — all three have to agree, and they only do if they ask the same question
+ * of the same config.
+ *
+ * @return array{0:int,1:string} bytes, and the kind that is largest
+ */
+function largestAllowedUpload(): array
+{
+    $largest = 0;
+    $kindName = '';
+
+    foreach ((array) Config::get('uploads', []) as $kind => $rules) {
+        $bytes = (int) ($rules['max_bytes'] ?? 0);
+        if ($bytes > $largest) {
+            $largest = $bytes;
+            $kindName = (string) $kind;
+        }
+    }
+
+    return [$largest, $kindName];
+}
+
+/**
+ * Where PHP is reading its settings from.
+ *
+ * A limit that will not move is nearly always a second file setting it again
+ * further down the list, so the fix starts with knowing which files are in
+ * play — and whether ours is among them at all.
+ */
+function iniSourceHint(): string
+{
+    $loaded = php_ini_loaded_file();
+    $scanned = array_filter(array_map('trim', explode(',', (string) php_ini_scanned_files())));
+    $ours = array_values(array_filter($scanned, static fn (string $file): bool
+        => str_contains($file, '99-production-tracker.ini')));
+
+    $hint = 'PHP is reading ' . ($loaded === false ? 'no php.ini' : $loaded);
+    $hint .= $scanned === [] ? ' and no scanned files' : ' and ' . count($scanned) . ' scanned file(s)';
+
+    return $hint . ($ours === []
+        ? '; none of them is 99-production-tracker.ini'
+        : '; including ' . $ours[0]);
+}
+
+/**
  * The state of the PDF font cache, as a [status, detail] pair for `doctor`.
  *
  * "Writable" is only meaningful together with *who is asking*. `tracker` runs
@@ -238,15 +286,7 @@ function cmdDoctor(array $argv): int
      * single file plus the other fields, and ideally for more than one file at
      * a time on the screens that accept several.
      */
-    $largest = 0;
-    $largestKind = '';
-    foreach ((array) Config::get('uploads', []) as $kind => $rules) {
-        $bytes = (int) ($rules['max_bytes'] ?? 0);
-        if ($bytes > $largest) {
-            $largest = $bytes;
-            $largestKind = (string) $kind;
-        }
-    }
+    [$largest, $largestKind] = largestAllowedUpload();
 
     $mb = static fn (int $bytes): string => rtrim(rtrim(number_format($bytes / 1048576, 1), '0'), '.') . 'M';
     $perFile = Request::iniBytes('upload_max_filesize');
@@ -256,14 +296,19 @@ function cmdDoctor(array $argv): int
         'upload_max_filesize',
         $perFile >= $largest ? 'ok' : 'fail',
         $mb($perFile) . ' — the app allows ' . $mb($largest) . " ({$largestKind})"
-            . ($perFile >= $largest ? '' : '; raise it or PHP refuses the file before the app sees it'),
+            . ($perFile >= $largest
+                ? ''
+                : '; raise it or PHP refuses the file before the app sees it.'
+                    . ' Run "sudo tracker php-limits". ' . iniSourceHint()),
     ];
 
     $checks[] = [
         'post_max_size',
         $wholeBody > $largest ? 'ok' : 'fail',
         $mb($wholeBody) . ' — must exceed ' . $mb($largest) . ' to carry the file plus the rest of the form'
-            . ($wholeBody > $largest ? '' : '; below this an upload fails as "session expired"'),
+            . ($wholeBody > $largest
+                ? ''
+                : '; below this an upload fails as "session expired". Run "sudo tracker php-limits"'),
     ];
 
     $checks[] = ['Composer packages', class_exists(\PHPMailer\PHPMailer\PHPMailer::class) ? 'ok' : 'warn',
@@ -319,6 +364,29 @@ function cmdPdfWarm(array $argv): int
     }
 
     echo "PDF font cache warm ({$ms} ms). " . PdfService::fontCachePath() . "\n";
+
+    return 0;
+}
+
+/**
+ * The PHP limits this application needs, in megabytes: per file, then per request.
+ *
+ * Printed as two plain numbers because the callers are shell scripts —
+ * `install.sh` and `tracker php-limits` both write PHP's ini from this, so the
+ * limits PHP enforces and the limits the application offers come from the same
+ * config rather than from a number copied into a script and left behind.
+ *
+ * The headroom on the second one is the point of it: post_max_size carries the
+ * whole form, not just the file, and several of the upload screens take more
+ * than one file at a time.
+ */
+function cmdUploadLimits(array $argv): int
+{
+    [$largest] = largestAllowedUpload();
+
+    $perFileMb = max(1, (int) ceil($largest / 1048576));
+
+    echo $perFileMb . ' ' . ($perFileMb + 32) . "\n";
 
     return 0;
 }
@@ -757,6 +825,7 @@ $commands = [
     'doctor' => ['Environment, config, storage and database health check', 'cmdDoctor'],
     'stats' => ['Row counts across the tracker', 'cmdStats'],
     'pdf-warm' => ['Build the PDF font cache so the first PDF is not the slow one', 'cmdPdfWarm'],
+    'upload-limits' => ['Print the PHP upload limits this application needs, in MB', 'cmdUploadLimits'],
     'key:generate' => ['Print a fresh APP_KEY for .env', 'cmdKeyGenerate'],
 
     'user:list' => ['List accounts  [--active-only]', 'cmdUserList'],

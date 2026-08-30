@@ -40,6 +40,10 @@ die()  { printf '\n%sError:%s %s\n' "$C_RED" "$C_RESET" "$*" >&2; exit 1; }
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
+# A whole positive number and nothing else — for values read back out of the
+# application, where half an answer must not become a limit.
+is_number() { case "${1:-}" in "") return 1 ;; *[!0-9]*) return 1 ;; *) return 0 ;; esac; }
+
 # Is there a systemd unit by this name?
 #
 # The output is captured and tested, never piped into `grep -q`. This script
@@ -105,6 +109,8 @@ Server
   update [SOURCE_DIR]         copy in a new version and migrate
                               (no SOURCE_DIR: pull from the project repository)
   permissions                 re-apply ownership and file modes
+  php-limits                  set PHP's upload limits to match the application
+  pdf-warm                    build the PDF font cache
   package [FILE]              build a distributable archive of this install
   cron-install                daily backup and the reminder digest
   cron-remove                 remove them again
@@ -260,6 +266,16 @@ web_service() {
 db_service() {
     local candidate
     for candidate in mariadb mysqld mysql; do
+        if unit_exists "$candidate"; then
+            printf '%s' "$candidate"; return 0
+        fi
+    done
+    printf ''
+}
+
+fpm_service() {
+    local candidate
+    for candidate in php-fpm php8.4-fpm php8.3-fpm php8.2-fpm php8.1-fpm; do
         if unit_exists "$candidate"; then
             printf '%s' "$candidate"; return 0
         fi
@@ -1026,6 +1042,9 @@ cmd_update() {
     cmd_composer_install || true
 
     cmd_permissions
+    # A new version can raise what the application accepts — the tooling files
+    # went to 50 MB in one — and PHP's own limits do not follow on their own.
+    cmd_php_limits
     cmd_migrate
     # So the first PDF after an update is not the one that pays to build the
     # font cache -- see AppServicesPdfService. Not fatal: an update that has
@@ -1038,6 +1057,100 @@ cmd_update() {
     local svc; svc="$(web_service)"
     [ -n "$svc" ] && have systemctl && systemctl reload "$svc" >/dev/null 2>&1 || true
     ok "Done"
+}
+
+#
+# Set PHP's upload limits to what the application actually offers.
+#
+# These are two numbers in two places that have to agree, and nothing kept them
+# in step: install.sh wrote them once, and the application's own limits then
+# moved — tooling files went to 50 MB while PHP was still refusing anything over
+# 25. PHP throws the request body away when that happens, so the CSRF token goes
+# with it and the user is told their session expired, which is nothing like the
+# truth.
+#
+# The numbers come from the application rather than from a copy kept here, so
+# raising a limit in config/config.php and running an update is enough.
+#
+cmd_php_limits() {
+    require_root php-limits
+
+    step "Setting PHP's upload limits to match the application"
+
+    local limits per post
+    limits="$(console upload-limits 2>/dev/null | tail -1 || true)"
+    per="$(printf '%s' "$limits" | awk '{print $1}')"
+    post="$(printf '%s' "$limits" | awk '{print $2}')"
+
+    # A config that cannot be read must not quietly install a zero, which would
+    # refuse every upload rather than merely the large ones.
+    if ! is_number "${per:-}" || ! is_number "${post:-}"; then
+        warn "Could not read the application's own limits; using 50M/82M."
+        per=50
+        post=82
+    fi
+
+    local timezone; timezone="$(env_get APP_TIMEZONE)"
+    [ -n "$timezone" ] || timezone="Europe/London"
+
+    php_ini_body() {
+        cat <<INI
+; Written by Production Tracker. Delete this file to revert.
+; These must be at least as large as the limits the application enforces, or
+; PHP rejects the upload before the application ever sees it.
+upload_max_filesize = ${per}M
+post_max_size = ${post}M
+max_file_uploads = 20
+; dompdf holds the whole document in memory while it renders.
+memory_limit = 256M
+date.timezone = ${timezone}
+INI
+    }
+
+    # Every SAPI, because they each have their own copy and the one that matters
+    # is whichever is serving: apache2 or fpm for the site, cli for this script's
+    # own checks.
+    local dir written=0
+    for dir in /etc/php/*/apache2/conf.d /etc/php/*/fpm/conf.d /etc/php/*/cli/conf.d \
+               /etc/php.d /etc/php8/conf.d /etc/php/conf.d; do
+        [ -d "$dir" ] || continue
+        php_ini_body > "$dir/99-production-tracker.ini"
+        chmod 644 "$dir/99-production-tracker.ini"
+        say "  $dir/99-production-tracker.ini"
+        written=$((written + 1))
+    done
+
+    if [ "$written" -eq 0 ]; then
+        local scan_dir
+        scan_dir="$("$PHP_BIN" -i 2>/dev/null | awk -F'=> ' '/Scan this dir/ {print $2}' | tr -d ' ' || true)"
+        if [ -n "$scan_dir" ] && [ -d "$scan_dir" ]; then
+            php_ini_body > "$scan_dir/99-production-tracker.ini"
+            written=1
+            say "  $scan_dir/99-production-tracker.ini"
+        else
+            warn "No PHP conf.d directory was found. Set upload_max_filesize and post_max_size by hand."
+            return 0
+        fi
+    fi
+
+    ok "upload_max_filesize ${per}M, post_max_size ${post}M — $written file(s)"
+
+    # A conf.d file is read when the process starts, so fpm keeps the old
+    # numbers until it is restarted. Apache's mod_php picks them up on a reload.
+    local fpm; fpm="$(fpm_service)"
+    if [ -n "$fpm" ] && have systemctl; then
+        systemctl restart "$fpm" >/dev/null 2>&1 \
+            && ok "$fpm restarted to pick them up" \
+            || warn "Could not restart $fpm — do it by hand or the new limits will not apply."
+    fi
+
+    # What PHP reports now, rather than what was just written: a value that will
+    # not move usually means a second file setting it again further down.
+    local effective
+    effective="$("$PHP_BIN" -r 'echo ini_get("upload_max_filesize"), "/", ini_get("post_max_size");' 2>/dev/null || true)"
+    [ -n "$effective" ] && say "  PHP now reports $effective on the command line"
+
+    return 0
 }
 
 cmd_permissions() {
@@ -1133,13 +1246,12 @@ cmd_restart() {
         systemctl restart "$svc" && ok "$svc restarted"
     fi
 
-    local fpm
-    for fpm in php-fpm php8.4-fpm php8.3-fpm php8.2-fpm php8.1-fpm; do
-        if unit_exists "$fpm"; then
-            systemctl restart "$fpm" && ok "$fpm restarted"
-            break
-        fi
-    done
+    local fpm; fpm="$(fpm_service)"
+    if [ -n "$fpm" ]; then
+        systemctl restart "$fpm" && ok "$fpm restarted" || warn "Could not restart $fpm."
+    fi
+
+    return 0
 }
 
 # ---------------------------------------------------------------------------
@@ -1219,6 +1331,8 @@ case "$COMMAND" in
     restore)            cmd_restore "${1:-}" "${2:-}" ;;
     update)             cmd_update "${1:-}" ;;
     permissions)        cmd_permissions ;;
+    php-limits)         cmd_php_limits ;;
+    pdf-warm)           console pdf-warm ;;
     package)            cmd_package "${1:-}" ;;
     cron-install)       cmd_cron_install ;;
     cron-remove)        cmd_cron_remove ;;

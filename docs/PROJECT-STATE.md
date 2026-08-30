@@ -634,9 +634,25 @@ is not always installed.
 
 **PHP's `post_max_size` must exceed the largest of these**, or PHP discards the
 request body and the missing CSRF token is reported as an expired session.
-`install.sh` derives `upload_max_filesize`, `post_max_size` and nginx's
-`client_max_body_size` from the application's own config; `tracker doctor`
-checks the two PHP limits against it and fails when they disagree.
+
+Three places need those numbers and they must not drift, so only one works them
+out: `tracker upload-limits` prints the largest upload the application offers
+and the request size that carries it (that one plus 32 MB of headroom, since a
+form carries more than its file and several screens take more than one). Both
+`install.sh` and `tracker php-limits` write PHP's `99-production-tracker.ini`
+from it, into every SAPI's `conf.d` — apache2, fpm and cli each keep their own
+copy — and `doctor` compares the running values against the same figure.
+
+`php-limits` runs from `install.sh` and from `tracker update`, because raising a
+limit in `config/config.php` is a code change that PHP knows nothing about: the
+tooling files went to 50 MB while PHP was still refusing anything over 25, and
+the upload died before any application code ran. It restarts php-fpm, which
+reads `conf.d` only at startup, and then prints what PHP *reports* rather than
+what was written — a limit that will not move is nearly always a second file
+setting it again further down, and `doctor` names the files in play when the
+check fails.
+
+`install.sh` also derives nginx's `client_max_body_size` from the same config.
 
 `Upload::store()`, `Image::process()` and `PdfService` all create their
 directories on demand, so the per-kind directories under `storage/uploads` are

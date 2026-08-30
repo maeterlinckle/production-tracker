@@ -283,6 +283,10 @@ choose() { # choose VARNAME "Question" "opt1:description" "opt2:description" ...
 # ---------------------------------------------------------------------------
 have() { command -v "$1" >/dev/null 2>&1; }
 
+# A whole positive number and nothing else — for values read back out of the
+# application, where half an answer must not become a limit.
+is_number() { case "${1:-}" in "") return 1 ;; *[!0-9]*) return 1 ;; *) return 0 ;; esac; }
+
 unit_exists() { # unit_exists NAME — is there a systemd unit by this name?
     have systemctl || return 1
 
@@ -1357,25 +1361,28 @@ step "Raising PHP's upload limits to match the application"
 # tooling files — so PHP threw away the body of an upload the app had just
 # promised to accept, and the CSRF check downstream reported it as an expired
 # session. `tracker doctor` now compares the two on a running install.
-APP_MAX_UPLOAD_MB="$(PT_ROOT="$INSTALL_DIR" "$PHP_BIN" -r '
-    require getenv("PT_ROOT") . "/src/bootstrap.php";
-    $max = 0;
-    foreach ((array) App\Core\Config::get("uploads", []) as $rules) {
-        $max = max($max, (int) ($rules["max_bytes"] ?? 0));
-    }
-    echo (int) ceil($max / 1048576);
-' 2>/dev/null || true)"
+#
+# Both numbers come from the application: `upload-limits` prints the largest
+# upload it offers and the request size that carries it, and `tracker
+# php-limits` writes the same two into the same file later on. One definition,
+# so the limits cannot drift apart again.
+PT_UPLOAD_LIMITS="$(php_app bin/console.php upload-limits 2>/dev/null | tail -1 || true)"
+APP_MAX_UPLOAD_MB="$(printf '%s' "$PT_UPLOAD_LIMITS" | awk '{print $1}')"
+POST_MAX_MB="$(printf '%s' "$PT_UPLOAD_LIMITS" | awk '{print $2}')"
 
-# A fallback, so a config that cannot be read does not quietly install a zero.
-case "$APP_MAX_UPLOAD_MB" in
-    ''|*[!0-9]*) APP_MAX_UPLOAD_MB=50 ;;
-esac
-[ "$APP_MAX_UPLOAD_MB" -ge "$UPLOAD_MAX_DRAWING_MB" ] || APP_MAX_UPLOAD_MB="$UPLOAD_MAX_DRAWING_MB"
+# A fallback, so a config that cannot be read does not quietly install a zero,
+# which would refuse every upload rather than merely the large ones. Both are
+# checked separately: half an answer is no more usable than none.
+if ! is_number "${APP_MAX_UPLOAD_MB:-}" || ! is_number "${POST_MAX_MB:-}"; then
+    APP_MAX_UPLOAD_MB=50
+    POST_MAX_MB=82
+fi
 
-# post_max_size carries the whole form, not just the file, and several of the
-# upload screens take more than one at a time. The headroom is what stops a
-# second ordinary-sized file tipping a request over the edge.
-POST_MAX_MB=$((APP_MAX_UPLOAD_MB + 32))
+# The answer given during setup, if it asked for more than the application does.
+if [ "$APP_MAX_UPLOAD_MB" -lt "$UPLOAD_MAX_DRAWING_MB" ]; then
+    APP_MAX_UPLOAD_MB="$UPLOAD_MAX_DRAWING_MB"
+    POST_MAX_MB=$((APP_MAX_UPLOAD_MB + 32))
+fi
 info "Largest upload the application allows: ${APP_MAX_UPLOAD_MB}M (post_max_size ${POST_MAX_MB}M)"
 
 php_ini_body() {

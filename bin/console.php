@@ -95,6 +95,89 @@ function table(array $headers, array $rows): void
     echo "\n" . count($rows) . " row(s).\n";
 }
 
+/**
+ * Who this process is, for a permissions message that can be acted on.
+ *
+ * `tracker` runs the console as the web user, but the console can also be run
+ * by hand as somebody else — and "not writable" means something quite different
+ * depending on which of those you did.
+ */
+function currentUser(): string
+{
+    if (function_exists('posix_geteuid')) {
+        $uid = posix_geteuid();
+        $info = function_exists('posix_getpwuid') ? posix_getpwuid($uid) : false;
+
+        return is_array($info) ? $info['name'] . " (uid {$uid})" : "uid {$uid}";
+    }
+
+    return (string) (getenv('USERNAME') ?: getenv('USER') ?: 'this user');
+}
+
+/** "owned by www-data:www-data, mode 0755" — the two facts a fix needs. */
+function describeOwnership(string $path): string
+{
+    $name = static function (?int $id, string $function): string {
+        if ($id === null) {
+            return '?';
+        }
+        $info = function_exists($function) ? $function($id) : false;
+
+        return is_array($info) ? (string) $info['name'] : (string) $id;
+    };
+
+    $uid = @fileowner($path);
+    $gid = @filegroup($path);
+    $mode = @fileperms($path);
+
+    return 'owned by ' . $name($uid === false ? null : $uid, 'posix_getpwuid')
+        . ':' . $name($gid === false ? null : $gid, 'posix_getgrgid')
+        . ($mode === false ? '' : ', mode ' . substr(sprintf('%o', $mode), -4));
+}
+
+/**
+ * The state of the PDF font cache, as a [status, detail] pair for `doctor`.
+ *
+ * "Writable" is only meaningful together with *who is asking*. `tracker` runs
+ * this as the web user, which is the account whose answer matters — but run the
+ * console by hand as yourself and the same healthy directory reads as
+ * unwritable, because it belongs to the web server and you are not in its
+ * group. Reporting that as a failure would send somebody to fix a working
+ * installation, so it is a warning that says how to check it properly.
+ *
+ * @return array{0:string,1:string}
+ */
+function fontCacheCheck(string $path): array
+{
+    if (!is_dir($path)) {
+        return ['fail', $path . ' does not exist, so every PDF re-parses every font.'
+            . ' Create it with "sudo tracker permissions"'];
+    }
+
+    if (is_writable($path)) {
+        return PdfService::fontCacheIsWarm()
+            ? ['ok', 'warm']
+            : ['warn', 'writable but empty — run "tracker pdf-warm"; until then every PDF is about a second slower'];
+    }
+
+    $owner = @fileowner($path);
+    $euid = function_exists('posix_geteuid') ? posix_geteuid() : null;
+    $somebodyElsesDirectory = $euid !== null && $euid !== 0 && $owner !== false && $owner !== $euid;
+
+    if ($somebodyElsesDirectory) {
+        return ['warn', 'cannot be checked as ' . currentUser() . ' — it is ' . describeOwnership($path)
+            . '. Run "sudo tracker doctor" to check it as the web server does'];
+    }
+
+    return ['fail', $path . ' is not writable, so every PDF re-parses every font. It is '
+        . describeOwnership($path) . ', and this check ran as ' . currentUser()
+        . '. Fix it with "sudo tracker permissions"'
+        // Without the posix extension there is no way to ask which user this
+        // is, so the reassurance above cannot be offered — say so rather than
+        // sending somebody to fix something that may not be broken.
+        . ($euid === null ? ', or run "sudo tracker doctor" if you are not the web server user' : '')];
+}
+
 // ---------------------------------------------------------------------------
 // Checking
 // ---------------------------------------------------------------------------
@@ -190,16 +273,7 @@ function cmdDoctor(array $argv): int
     // appearing eventually: dompdf re-parses every font on every request until
     // it can write the parsed metrics down. See App\Services\PdfService.
     $fontCache = PdfService::fontCachePath();
-    $cacheWritable = is_dir($fontCache) && is_writable($fontCache);
-    $checks[] = [
-        'PDF font cache',
-        $cacheWritable ? (PdfService::fontCacheIsWarm() ? 'ok' : 'warn') : 'fail',
-        $cacheWritable
-            ? (PdfService::fontCacheIsWarm()
-                ? 'warm'
-                : 'writable but empty — run "tracker pdf-warm"; until then every PDF is about a second slower')
-            : $fontCache . ' is not writable, so every PDF re-parses every font',
-    ];
+    $checks[] = array_merge(['PDF font cache'], fontCacheCheck($fontCache));
 
     $mailProblems = Mailer::problems();
     $checks[] = ['Email', Mailer::isReady() ? 'ok' : 'warn',
@@ -236,8 +310,12 @@ function cmdPdfWarm(array $argv): int
     $ms = (int) round((microtime(true) - $started) * 1000);
 
     if (!$warm) {
-        fail('Could not write the font cache at ' . PdfService::fontCachePath()
-            . '. Check its ownership — until it is writable every PDF re-parses every font.');
+        $cache = PdfService::fontCachePath();
+        fail('Could not write the font cache at ' . $cache . '.'
+            . (is_dir($cache) ? ' It is ' . describeOwnership($cache) . ',' : ' It does not exist,')
+            . ' and this ran as ' . currentUser() . '.'
+            . ' Run "sudo tracker permissions" to put it right — until it is writable'
+            . ' every PDF re-parses every font.');
     }
 
     echo "PDF font cache warm ({$ms} ms). " . PdfService::fontCachePath() . "\n";

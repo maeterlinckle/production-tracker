@@ -906,8 +906,13 @@ cmd_backup() {
 
     # The uploads cannot be regenerated from the database — it only holds paths.
     # Drawings, purchase orders and the generated delivery notes all live here.
+    #
+    # The font cache is the one thing under uploads that can be regenerated, by
+    # "tracker pdf-warm" in a second or so, so it is left out: keeping it would
+    # put half a megabyte of derived files into every backup and restore them
+    # over the top of a perfectly good cache.
     local uploads="$dir/uploads-${stamp}.tar.gz"
-    tar -czf "$uploads" -C "$APP_DIR/storage" uploads
+    tar -czf "$uploads" --exclude=uploads/cache -C "$APP_DIR/storage" uploads
     chmod 600 "$uploads"
     ok "Uploads   $(basename "$uploads")  ($(du -h "$uploads" | cut -f1))"
 
@@ -965,6 +970,9 @@ cmd_restore() {
     fi
 
     cmd_permissions
+    # A restore replaces storage/uploads wholesale, so the font cache goes with
+    # it. Rebuilt here for the same reason it is rebuilt after an update.
+    console pdf-warm || warn "The PDF font cache could not be built; PDFs will be slower until it can be."
     console doctor || true
 
     say ""
@@ -1020,8 +1028,11 @@ cmd_update() {
     cmd_permissions
     cmd_migrate
     # So the first PDF after an update is not the one that pays to build the
-    # font cache -- see AppServicesPdfService.
-    console pdf-warm || true
+    # font cache -- see AppServicesPdfService. Not fatal: an update that has
+    # otherwise worked should not stop here. But it is not silent either, since
+    # a cache that cannot be written makes every PDF about a second slower for
+    # good, and the message says which directory and who tried.
+    console pdf-warm || warn "The PDF font cache could not be built; PDFs will be slower until it can be."
     console doctor || true
 
     local svc; svc="$(web_service)"
@@ -1037,6 +1048,13 @@ cmd_permissions() {
     chown -R root:"$WEB_GROUP" "$APP_DIR"
     find "$APP_DIR" -type d -exec chmod 750 {} +
     find "$APP_DIR" -type f -exec chmod 640 {} +
+
+    # dompdf writes its parsed font metrics here, and it is the one directory
+    # the application needs that nothing creates on the way in: it appears the
+    # first time a PDF is rendered, as whoever rendered it. Made here so it is
+    # always web-owned, and so that running this command fixes a cache left
+    # behind by a console command someone ran as root.
+    mkdir -p "$APP_DIR/storage/uploads/cache/dompdf-fonts"
 
     chown -R "$WEB_USER":"$WEB_GROUP" "$APP_DIR/storage"
     find "$APP_DIR/storage" -type d -exec chmod 2775 {} +

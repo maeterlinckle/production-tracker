@@ -1143,14 +1143,22 @@ else
     ok "Files copied"
 fi
 
-# Just the two roots. The per-kind directories underneath are made by the
+# The two roots, and one directory underneath. The per-kind directories are
+# made by the
 # application as files arrive -- Upload, Image and PdfService all mkdir
 # recursively -- and listing them here only creates something to go stale.
 # It already had: part-photos and order-photos were still being created long
 # after the schema change that retired both, and part-media, which replaced
 # them, was never in the list at all.
+#
+# The font cache is the exception, and belongs here for the opposite reason:
+# nothing creates it on the way in. dompdf writes its parsed font metrics there
+# the first time a PDF is rendered, as whoever renders it, and a cache it cannot
+# write costs about a second on every PDF forever. Made now so the ownership
+# pass below hands it to the web user like the rest of storage.
 mkdir -p "$INSTALL_DIR/storage/logs" \
-         "$INSTALL_DIR/storage/uploads"
+         "$INSTALL_DIR/storage/uploads" \
+         "$INSTALL_DIR/storage/uploads/cache/dompdf-fonts"
 
 # PHPMailer sends the mail, dompdf renders every delivery note and route card,
 # and endroid/qr-code draws the code the workshop scans to check material in.

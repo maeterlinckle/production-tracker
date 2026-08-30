@@ -639,7 +639,9 @@ request body and the missing CSRF token is reported as an expired session.
 checks the two PHP limits against it and fails when they disagree.
 
 `Upload::store()`, `Image::process()` and `PdfService` all create their
-directories on demand, so no pre-created list is needed anywhere.
+directories on demand, so the per-kind directories under `storage/uploads` are
+not pre-created anywhere. The font cache below is the single exception, and for
+the opposite reason: what matters is not that it exists but *who owns it*.
 
 **PDFs and the font cache.** Dompdf parses DejaVu's metrics and caches the
 parsed result; with a cache it can reuse a render is roughly twenty times
@@ -652,9 +654,27 @@ request.
 `PdfService` points `fontCache` at `storage/uploads/cache/dompdf-fonts`
 instead — `storage/` is the one tree the web user owns. The fonts themselves are
 still read from dompdf's own directory, which only needs to be readable, so
-nothing breaks when composer replaces `vendor/`. `tracker pdf-warm` builds the
-cache and runs from both `install.sh` and `manage.sh update`; `doctor` reports
-it as cold, warm or unwritable.
+nothing breaks when composer replaces `vendor/`.
+
+The directory is created by `install.sh` and by `tracker permissions`, before
+the ownership pass that hands `storage/` to the web user. That is deliberate:
+left to appear on its own it is created by whoever renders the first PDF, and a
+console command run directly as root leaves a root-owned directory the web
+server cannot write — the original problem in a new place. Creating it up front
+means it is always web-owned, and `tracker permissions` repairs one that is not.
+
+`tracker pdf-warm` builds the cache, and runs from `install.sh`, `manage.sh
+update` and `manage.sh restore` — a restore replaces `storage/uploads` wholesale,
+so the cache goes with it. Backups exclude `uploads/cache`, being the one thing
+under there that can be regenerated. The cache is per *face*, not per family, so
+the warm document uses the faces the PDF templates use — DejaVu Sans regular and
+bold, no italic — or it warms files nothing reads and leaves the real ones cold.
+
+`doctor` reports four states: warm, writable but empty, missing, and not
+writable. "Not writable" depends on who is asking: `tracker` runs the console as
+the web user, but run it by hand as yourself and a healthy directory reads as
+unwritable because it belongs to the web server. That case is a warning naming
+the owner and suggesting `sudo tracker doctor`, not a failure.
 
 Photos are normalised to a 2400px longest edge with a 480px thumbnail beside
 them; `thumb_path` is nullable and the file controller falls back to the full

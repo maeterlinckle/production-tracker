@@ -324,10 +324,18 @@ delivery to be argued about before anything moves.
 | `009_photo_thumbnails.sql` | `thumb_path` on `part_media` and `order_photos`. |
 | `010_rejected_parts_returns.sql` | The `parts_return` note type, `delivery_notes.related_note_id`, and `parts_return_receipts` — booking finished parts back in when a client returns them. |
 | `011_clearbooks_sync_and_manual_invoices.sql` | `clients.address_county`, `vat_number`, `company_number` and the `clearbooks_synced_at`/`_by` stamp, so a pull from Clear Books has somewhere to put everything their record holds; `invoices.source` and a nullable `clearbooks_invoice_id`, for an invoice raised outside the API. |
+| `016_clearbooks_per_client_posting.sql` | The Clear Books posting details, moved off `settings` and onto `clients`: business, account code, VAT treatment and rate, payment terms, whether a due date is sent at all, and the invoice summary template. Copies the old global values onto every existing client, then deletes the settings rows. |
 
 `005` is the one migration that is genuinely forward-only: it reads
 `production_status_log` and then drops it, so a second run has nothing to read.
 The `migrations` table is what stops that happening.
+
+`016` deletes rows too, but only after copying them, and every backfill in it is
+guarded on the client's column still being NULL — so a second run cannot
+overwrite a per-client choice made since. Worth knowing because the deletion is
+the one part of it that is not reversible from inside the application: an
+installation that has run `016` has no global posting settings left to fall back
+to, by design.
 
 ---
 
@@ -344,7 +352,7 @@ The `migrations` table is what stops that happening.
 | Partial/batched delivery at line level | Done |
 | Delivery notes (in and out) with PDF | Done |
 | Route cards with QR | Done |
-| Clear Books invoicing | OAuth done; **payload unverified** — see §5 |
+| Clear Books invoicing | OAuth done; payload built from the spec and exercised against a local stand-in, **never against a live account** — see §5 |
 | Light/dark theme | Done |
 | Install/maintenance notes | Done — `docs/INSTALL.md` |
 
@@ -915,6 +923,73 @@ taller height whether or not it has a picture: sizing rows to their contents gav
 a list of 50px rows with the occasional 69px one, and the eye reads that
 unevenness before it reads any of the text.
 
+### Clear Books, per client (2 September 2026)
+
+| # | Item | Status |
+|---|---|---|
+| 1 | Posting details move from Settings to the client | Done — plus a new "send a due date at all?" option |
+| 2 | Attach the PO PDF to the Clear Books invoice | Done — Sales Attachments, checked against the same spec |
+| 3 | Per-client invoice summary with placeholders | Done — five placeholders, listed in the UI |
+
+**Why the posting details moved.** They were one global set applied to every
+client, which is only correct for a business with one customer. Junction's do
+not agree with each other: different nominal codes for different kinds of work,
+different VAT treatments for the export customers, and payment terms that are a
+negotiation rather than a house rule. The connection stays global — one Clear
+Books account, one client secret, one token pair, still under Settings — and
+everything about the *document* is now on the client, under `staff.invoicing`.
+
+That capability split is deliberate. Editing an address is `manage_clients`;
+choosing the nominal code every invoice lands on is `push_invoices`. They are
+separate forms hitting separate endpoints, so whoever corrects a postcode cannot
+silently re-save the VAT treatment as a side effect of the same submit button.
+
+The business moving per client had a consequence worth recording: nominal codes
+and VAT rates belong to a business, so the lists offered on the client page are
+now read under *that client's* business. Reading them under a different one
+would offer values the invoice would then be rejected for using. The same
+applies to the customer lookup behind "Update from Clear Books".
+
+**Migration 016 carries the old values forward** onto every existing client
+before deleting the settings rows. Without that, moving the setting would have
+silently stopped invoicing working for everybody until somebody visited every
+client page. A client created *after* the migration starts with nothing set, and
+both the client page and the settings page say exactly what is outstanding —
+there is no house default, because there is no sensible default for a nominal
+code or a VAT treatment and inventing one is how an invoice gets posted to the
+wrong place for a quarter before anybody notices.
+
+**Sending no due date.** New option, and the reason for it is a limitation
+rather than a preference: the due-date rules in the Clear Books interface are
+richer than the single `dateDue` the API accepts — end of the month following,
+and the like. Where the API cannot reproduce a client's real terms, a date this
+application worked out is worse than none. Unticked, `dateDue` is left off the
+payload entirely and Clear Books applies that contact's own default, which is
+where the correct rule already lives.
+
+**The PO on the invoice.** Every PO document on every order the delivery note
+covers goes up as a sales attachment — amendments included, because Junction
+never replaces a purchase order and an invoice raised after an amendment is
+authorised by both pieces of paper. Names are prefixed with the order number and
+de-duplicated, since an invoice covering two orders otherwise arrives as two
+files called `rc.pdf`.
+
+The upload runs *after* the invoice is recorded locally and cannot throw: by
+then the invoice exists at both ends, and losing that record over a missing file
+on disk would be far worse than an invoice with nothing attached. A failure
+comes back as a second, warning flash naming what did not go up.
+
+**The summary template.** Written into the invoice's `description`, which the
+Clear Books interface labels Summary — their own spec says so in as many words.
+A template rather than a fixed string, because the useful version names *this*
+invoice. Five placeholders, all of them already in hand when the invoice is
+raised so that filling one costs no extra API call: `{po_number}`,
+`{order_number}`, `{delivery_note}`, `{client_name}`, `{invoice_date}`. The list
+lives in `ClearBooksPosting::PLACEHOLDERS` and is rendered into the hint under
+the field, so the documentation and the substitution cannot drift apart. An
+unrecognised placeholder is left on the invoice exactly as typed — blanking it
+would hide the typo.
+
 ---
 
 ## 5. Clear Books — what the verification found
@@ -954,10 +1029,32 @@ Consequences worth remembering:
   application, so reconnecting revokes the current token. Both are handled and
   both are documented on the settings page.
 
+### Checked again for the attachments and the summary (2 September 2026)
+
+Same source, re-fetched. Three things confirmed rather than assumed:
+
+| | Per the spec |
+|---|---|
+| Attachment endpoint | `POST /accounting/sales/{salesType}/{salesId}/attachments/{fileName}`, `salesType` ∈ `invoices`/`creditNotes`/`quotes` |
+| Attachment body | `application/octet-stream`, the raw file; the filename is a **path segment**, not a field |
+| Attachment scope | `accounting.sales:write` — already requested, so no re-consent is needed |
+| Attachment response | 201 with `{id, name, size, dateUploaded}` |
+| `description` | Optional string on `SalesDocument`, documented as *"Referred to as 'summary' in the Clear Books UI"* |
+| `dateDue` | Optional, on `SalesInvoice` rather than `SalesDocument` — so omitting it is valid, which is what makes "leave it to Clear Books" possible |
+
+Because the filename is in the path it is sanitised before it gets near the
+request — no separators, no control characters, no runs of whitespace — and
+URL-encoded on the way out.
+
 Still not done: **no invoice has been raised against a live Clear Books
-account from this code.** The request is built from the published spec rather
-than guessed, which is a different thing from proven. Raise one real invoice
-against a low-value delivery note before trusting it.
+account from this code.** What the request looks like has now been exercised end
+to end against a local stand-in shaped from the spec, which caught nothing but
+did prove the payloads: `X-Business-ID` on every call, the per-client account
+code and VAT rate on each line, `dateDue` present or absent according to the
+client's setting, `description` carrying the rendered summary, and five PO PDFs
+arriving as octet-streams under distinct names. That is a different thing from
+proven against the real service. Raise one real invoice against a low-value
+delivery note before trusting it.
 
 Since then: the customer *read* has a second caller, the on-demand client sync,
 mapped from the same spec and equally unproven against a live account. And there
@@ -1018,8 +1115,17 @@ somebody hits it cold.
 ## 7. Immediate next steps
 
 1. **Raise one real Clear Books invoice** against a low-value delivery note.
-   The only part of the system never exercised against the live service.
-2. **Configure real SMTP** and re-run the invitation and reminder flows. Both
+   The only part of the system never exercised against the live service. Check
+   three things while you are in there: that the PO attachments arrived and are
+   readable, that the Summary field reads the way the client wants it, and — for
+   any client left with "send a due date" unticked — that Clear Books applied
+   the contact's own default rather than leaving the invoice with no due date at
+   all. That last one is the assumption behind the whole option.
+2. **Set the posting details on every client** that will be invoiced. Migration
+   016 carried the old global values onto the clients that existed when it ran;
+   anybody added since starts with nothing set. `tracker clearbooks:status`
+   lists who is ready and who is not, and so does the settings page.
+3. **Configure real SMTP** and re-run the invitation and reminder flows. Both
    are proven end to end locally, but every send so far has failed at the
    connection, by design of the test.
-3. **Run `install.sh --dry-run` on the target server**, then the real thing.
+4. **Run `install.sh --dry-run` on the target server**, then the real thing.

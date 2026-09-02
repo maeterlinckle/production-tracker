@@ -15,11 +15,14 @@ use App\Models\Order;
 use App\Models\Part;
 use App\Models\Role;
 use App\Models\User;
+use App\Services\ClearBooksClient;
 use App\Services\ClearBooksCustomerSync;
+use App\Services\ClearBooksPosting;
 use App\Services\ClientPurge;
 use App\Services\ClientUsers;
 use App\Services\Invitations;
 use RuntimeException;
+use Throwable;
 
 final class StaffClientController
 {
@@ -172,9 +175,18 @@ final class StaffClientController
         }
         unset($user);
 
+        // Invoicing is its own job under staff.invoicing, so the posting panel
+        // and everything read to fill it are behind that capability rather than
+        // shown to whoever can edit an address.
+        $canInvoice = Auth::can('push_invoices');
+        $posting = ClearBooksPosting::fromRow($client);
+
         View::render('staff/clients/show', [
             'title' => $client['name'],
             'client' => $client,
+            'canInvoice' => $canInvoice,
+            'posting' => $posting,
+            'clearbooks' => $canInvoice ? $this->clearBooksLists($posting) : null,
             'deactivation' => Client::deactivationDetail((int) $client['id']),
             // What deleting them would remove. Only counted for a switched-off
             // account, because that is the only page that offers it.
@@ -184,6 +196,86 @@ final class StaffClientController
             'orders' => Order::forClient($client['id']),
             'clientRoles' => Role::forSide('client'),
         ]);
+    }
+
+    /**
+     * The lists the posting panel is filled from, read live out of Clear Books.
+     *
+     * Read under *this client's* business, because the business is itself a per
+     * client choice: nominal codes and VAT rates belong to a business, and
+     * offering the list from a different one is offering a set of values the
+     * invoice would then be rejected for using. Change the business, save, and
+     * the lists below it are re-read — the same "save this first" the VAT
+     * treatment and its rates already had.
+     *
+     * A failure here must not take the client page down. The page carries the
+     * client's users, parts and orders as well, and none of that should
+     * disappear because an access token expired.
+     *
+     * @return array{connected:bool,businesses:array,accountCodes:array,vatTreatments:array,vatRates:array,lookupError:?string}
+     */
+    private function clearBooksLists(ClearBooksPosting $posting): array
+    {
+        $lists = [
+            'connected' => ClearBooksClient::isConnected(),
+            'businesses' => [],
+            'accountCodes' => [],
+            'vatTreatments' => [],
+            'vatRates' => [],
+            'lookupError' => null,
+        ];
+
+        if (!$lists['connected']) {
+            return $lists;
+        }
+
+        try {
+            $lists['businesses'] = ClearBooksClient::businesses();
+            $lists['accountCodes'] = ClearBooksClient::salesAccountCodes($posting->businessId);
+            $lists['vatTreatments'] = ClearBooksClient::vatTreatments($posting->businessId);
+            $lists['vatRates'] = ClearBooksClient::vatRates($posting->businessId, $posting->vatTreatment);
+        } catch (Throwable $e) {
+            $lists['lookupError'] = $e->getMessage();
+        }
+
+        return $lists;
+    }
+
+    /**
+     * Save how this client's invoices are posted to Clear Books.
+     *
+     * Under `push_invoices` — staff.invoicing and staff.admin — rather than
+     * `manage_clients`, because choosing the nominal code every invoice lands
+     * on is accounts work, not address-book work. It is also why this is a
+     * separate form and a separate endpoint from the details above it: one
+     * submit button carrying both would mean whoever corrects a postcode
+     * silently re-saves the VAT treatment as well.
+     */
+    public function updateClearBooksPosting(string $id): void
+    {
+        Auth::authorize('push_invoices');
+
+        $client = Client::find((int) $id);
+        if ($client === null) {
+            View::renderError(404, 'Client not found', 'That client does not exist.');
+
+            return;
+        }
+
+        $terms = (int) Request::post('payment_terms_days', 30);
+
+        Client::saveClearBooksPosting((int) $id, [
+            'business_id' => trim((string) Request::post('business_id', '')) ?: null,
+            'account_code' => trim((string) Request::post('account_code', '')) ?: null,
+            'vat_treatment' => trim((string) Request::post('vat_treatment', '')) ?: null,
+            'vat_rate_key' => trim((string) Request::post('vat_rate_key', '')) ?: null,
+            'payment_terms_days' => max(0, min(365, $terms)),
+            'send_due_date' => Request::post('send_due_date') === '1',
+            'invoice_summary' => trim((string) Request::post('invoice_summary', '')) ?: null,
+        ]);
+
+        Flash::success('Clear Books posting details saved for ' . $client['name'] . '.');
+        Response::redirect('/staff/clients/' . $id);
     }
 
     public function update(string $id): void

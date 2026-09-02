@@ -6,7 +6,13 @@
  * @var array      $orders
  * @var array|null $deactivation who switched the account off, and why
  * @var array      $purgeSummary what deleting the client would remove
+ * @var bool       $canInvoice   whether the viewer holds staff.invoicing
+ * @var \App\Services\ClearBooksPosting $posting how this client's invoices are posted
+ * @var array|null $clearbooks   the live lists to choose from, or null without the role
  */
+
+use App\Services\ClearBooksPosting;
+
 $isActive = (bool) $client['is_active'];
 ?>
 <?= partial("partials/back-link", ["href" => "/staff/clients", "label" => "Back to clients"]) ?>
@@ -40,6 +46,9 @@ $isActive = (bool) $client['is_active'];
 <?php endif; ?>
 
 <div class="grid grid-2">
+    <?php /* The left column is a wrapper rather than a single card: the details
+       and the invoicing settings are two cards that belong under each other. */ ?>
+    <div>
     <div class="card">
         <h2 class="mt-0">Details</h2>
         <form method="post" action="<?= url('/staff/clients/' . $client['id']) ?>">
@@ -104,6 +113,190 @@ $isActive = (bool) $client['is_active'];
                 <button type="submit" class="btn">Update from Clear Books</button>
             <?php endif; ?>
         </form>
+    </div>
+
+    <?php /*
+        How this client's invoices are posted.
+
+        These were one global set under Settings until it turned out that
+        Junction's clients do not agree with each other about any of it —
+        different nominal codes for different kinds of work, different VAT
+        treatments for the export customers, and payment terms that are a
+        negotiation rather than a house rule. One set of values applied to
+        everybody was wrong for everybody but whoever it was first set up for.
+
+        Its own form and its own endpoint, under staff.invoicing rather than
+        manage_clients: choosing the nominal code every invoice lands on is
+        accounts work. Sharing the details form's submit button would have meant
+        whoever corrects a postcode silently re-saving the VAT treatment too.
+    */ ?>
+    <?php if ($canInvoice): ?>
+    <div class="card">
+        <h2 class="mt-0">Clear Books invoicing</h2>
+
+        <?php if ($clearbooks['connected'] === false): ?>
+            <p class="text-muted mb-0">
+                Clear Books is not connected. A staff administrator connects it once, under
+                <a href="<?= url('/staff/settings/clearbooks') ?>">Settings</a>, and the lists to choose
+                from below are then read from your own account.
+            </p>
+        <?php else: ?>
+            <?php if ($clearbooks['lookupError'] !== null): ?>
+                <div class="callout callout-warn">
+                    <p class="mb-0">
+                        Could not read your Clear Books setup: <?= e($clearbooks['lookupError']) ?>
+                        The saved values below are still what will be sent.
+                    </p>
+                </div>
+            <?php endif; ?>
+
+            <?php if ($posting->problems() !== []): ?>
+                <div class="callout callout-warn">
+                    <p class="mb-1"><strong>Before this client can be invoiced</strong></p>
+                    <ul class="plain-list mb-0">
+                        <?php foreach ($posting->problems() as $problem): ?>
+                            <li><?= e($problem) ?></li>
+                        <?php endforeach; ?>
+                    </ul>
+                </div>
+            <?php else: ?>
+                <p class="mb-2"><span class="badge badge-ok">Ready</span> Invoices can be raised for this client.</p>
+            <?php endif; ?>
+
+            <form method="post" action="<?= url('/staff/clients/' . $client['id'] . '/clearbooks') ?>">
+                <?= csrf_field() ?>
+
+                <div class="field">
+                    <label for="business_id">Business</label>
+                    <select id="business_id" name="business_id">
+                        <option value="">Not set — only works if the login has a single business</option>
+                        <?php foreach ($clearbooks['businesses'] as $business): ?>
+                            <option value="<?= (int) $business['id'] ?>" <?= $posting->businessId === (int) $business['id'] ? 'selected' : '' ?>>
+                                <?= e($business['name'] ?? ('Business ' . $business['id'])) ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                    <div class="hint">
+                        Sent as the X-Business-ID header. Save a change here first — the codes and rates
+                        below belong to a business, so they are re-read once this is stored.
+                    </div>
+                </div>
+
+                <div class="field">
+                    <label for="account_code">Sales account code</label>
+                    <select id="account_code" name="account_code">
+                        <option value="">Choose a nominal code</option>
+                        <?php foreach ($clearbooks['accountCodes'] as $code): ?>
+                            <option value="<?= (int) $code['id'] ?>" <?= $posting->accountCode === (int) $code['id'] ? 'selected' : '' ?>>
+                                <?= e($code['name'] ?? ('Code ' . $code['id'])) ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                    <div class="hint">Every line of this client's invoices is posted to this code. Only sales codes are listed.</div>
+                </div>
+
+                <div class="form-row">
+                    <div class="field">
+                        <label for="vat_treatment">VAT treatment</label>
+                        <select id="vat_treatment" name="vat_treatment">
+                            <option value="">Choose a treatment</option>
+                            <?php foreach ($clearbooks['vatTreatments'] as $treatment): ?>
+                                <option value="<?= e($treatment['key'] ?? '') ?>" <?= $posting->vatTreatment === ($treatment['key'] ?? '') ? 'selected' : '' ?>>
+                                    <?= e($treatment['name'] ?? $treatment['key'] ?? '') ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                        <div class="hint">Save this first — the rates beside it are the ones valid for the treatment.</div>
+                    </div>
+
+                    <div class="field">
+                        <label for="vat_rate_key">VAT rate</label>
+                        <select id="vat_rate_key" name="vat_rate_key">
+                            <option value="">Choose a rate</option>
+                            <?php foreach ($clearbooks['vatRates'] as $rate): ?>
+                                <option value="<?= e($rate['key'] ?? '') ?>" <?= $posting->vatRateKey === ($rate['key'] ?? '') ? 'selected' : '' ?>>
+                                    <?= e($rate['name'] ?? $rate['key'] ?? '') ?><?= isset($rate['rate']) ? ' (' . e((string) $rate['rate']) . '%)' : '' ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                </div>
+
+                <?php /*
+                    Whether to send a due date at all.
+
+                    The due-date rules in the Clear Books interface are richer
+                    than the single date the API accepts — end of month
+                    following, and the like. Where the API cannot reproduce what
+                    this client's terms actually are, a date worked out here is
+                    worse than none: leaving it off lets Clear Books apply that
+                    contact's own default, which is where the real rule lives.
+                */ ?>
+                <h3 class="line-section-title">Due date</h3>
+                <div class="field">
+                    <label class="checkbox">
+                        <input type="checkbox" name="send_due_date" value="1" <?= $posting->sendDueDate ? 'checked' : '' ?>>
+                        <span>Send a due date on the invoice</span>
+                    </label>
+                    <div class="hint">
+                        Unticked, no due date is sent and Clear Books falls back to this contact's own
+                        default over there. That is the better answer for a client whose terms are
+                        something the API cannot express — end of the month following, say — because the
+                        rule is already set up correctly in Clear Books.
+                    </div>
+                </div>
+
+                <div class="field">
+                    <label for="payment_terms_days">Payment terms</label>
+                    <input type="number" id="payment_terms_days" name="payment_terms_days"
+                           min="0" max="365" value="<?= (int) $posting->paymentTermsDays ?>">
+                    <div class="hint">Days from the invoice date to the due date. Ignored while the box above is unticked.</div>
+                </div>
+
+                <?php /*
+                    The invoice summary. Clear Books calls this field
+                    `description` in the API and "Summary" in their interface —
+                    their own spec says so — and it is the line the client's
+                    accounts payable reads before anything else.
+
+                    A template rather than a fixed string, because the useful
+                    version of it names this invoice: their PO number, the order
+                    it came from. Written once here and rendered per invoice.
+                */ ?>
+                <h3 class="line-section-title">Invoice summary</h3>
+                <div class="field">
+                    <label for="invoice_summary">Summary written on every invoice</label>
+                    <input type="text" id="invoice_summary" name="invoice_summary" maxlength="255"
+                           value="<?= e($client['clearbooks_invoice_summary'] ?? '') ?>"
+                           placeholder="<?= e(ClearBooksPosting::exampleSummary()) ?>">
+                    <div class="hint">
+                        Goes into the invoice's <strong>Summary</strong> field in Clear Books. Leave it
+                        blank and no summary is sent. Placeholders in curly brackets are replaced when
+                        the invoice is raised:
+                    </div>
+                    <dl class="merge-fields">
+                        <?php foreach (ClearBooksPosting::PLACEHOLDERS as $token => $meaning): ?>
+                            <dt class="mono">{<?= e($token) ?>}</dt>
+                            <dd><?= e($meaning) ?></dd>
+                        <?php endforeach; ?>
+                    </dl>
+                    <div class="hint">
+                        Anything else in curly brackets is left on the invoice exactly as typed, so a
+                        misspelt placeholder shows up rather than quietly disappearing.
+                    </div>
+                </div>
+
+                <p class="text-muted">
+                    The purchase orders behind an invoice are attached to it in Clear Books
+                    automatically — every PO document on every order the delivery note covers, the
+                    amendments included.
+                </p>
+
+                <button type="submit" class="btn btn-primary">Save Clear Books settings</button>
+            </form>
+        <?php endif; ?>
+    </div>
+    <?php endif; ?>
     </div>
 
     <div>

@@ -135,6 +135,11 @@ $router->group(['staff'], function (Router $router): void {
     $router->get('/staff/clients/{id:\d+}', [StaffClientController::class, 'show']);
     $router->post('/staff/clients/{id:\d+}', [StaffClientController::class, 'update'], ['csrf']);
     $router->post('/staff/clients/{id:\d+}/from-clearbooks', [StaffClientController::class, 'pullFromClearBooks'], ['csrf']);
+    // How this client's invoices are posted: business, nominal code, VAT, terms,
+    // whether a due date is sent at all, and the invoice summary. Under
+    // staff.invoicing rather than manage_clients -- accounts work, not
+    // address-book work -- which is why it is not part of the details form.
+    $router->post('/staff/clients/{id:\d+}/clearbooks', [StaffClientController::class, 'updateClearBooksPosting'], ['csrf']);
     // Switching a whole account off, and back on. Its own action rather than a
     // checkbox on the details form -- see StaffClientController::setActive().
     $router->post('/staff/clients/{id:\d+}/active', [StaffClientController::class, 'setActive'], ['csrf']);
@@ -282,7 +287,6 @@ $router->group(['staff'], function (Router $router): void {
     $router->get('/staff/settings/clearbooks', [ClearBooksController::class, 'status']);
     $router->post('/staff/settings/clearbooks', [ClearBooksController::class, 'update'], ['csrf']);
     $router->get('/staff/settings/clearbooks/connect', [ClearBooksController::class, 'connect']);
-    $router->post('/staff/settings/clearbooks/posting', [ClearBooksController::class, 'updatePosting'], ['csrf']);
     $router->post('/staff/settings/clearbooks/disconnect', [ClearBooksController::class, 'disconnect'], ['csrf']);
     $router->get('/staff/settings/clearbooks/callback', [ClearBooksController::class, 'callback']);
 });

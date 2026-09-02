@@ -141,7 +141,7 @@ machine where `manage.sh` has not been installed.
 | Client | `client.purchaser` | Create/edit parts, place orders |
 | Client | `client.production` | View orders, raise/answer queries, return rejected parts — no pricing, no ordering |
 | Staff | `staff.admin` | Everything, including Settings |
-| Staff | `staff.invoicing` | Raise Clear Books invoices |
+| Staff | `staff.invoicing` | Raise Clear Books invoices, set a client's posting details, and see prices |
 | Staff | `staff.quoting` | Set part pricing, raise parts for a client, decide quantity changes |
 | Staff | `staff.raise_orders` | Place an order on a client's behalf, and amend one when the PO changes |
 | Staff | `staff.production` | Check in free issue and returned parts, update production status, generate paperwork |
@@ -159,8 +159,9 @@ order are looking at the same thing, with different parts of it switched on.
 
 Pricing (quoted prices, invoice amounts) is only ever sent to the browser or
 an email for users holding `view_pricing` (`client.purchaser`/`client.admin`
-on the client side, `staff.quoting`/`staff.admin` on the staff side) — it's
-omitted from the response entirely for everyone else, not just hidden by CSS.
+on the client side, `staff.quoting`/`staff.invoicing`/`staff.admin` on the
+staff side) — it's omitted from the response entirely for everyone else, not
+just hidden by CSS.
 
 ### 5a. Invitations
 
@@ -270,28 +271,64 @@ with PKCE**. There is no static API key. Three things have to happen once:
    **Settings → Clear Books** (or in `.env` — see §3), then click **Connect
    Clear Books**. That runs the consent flow and stores the token pair in
    `clearbooks_tokens`, refreshed automatically from then on.
-3. **Choose the posting details.** Once connected, the same page reads your
-   own chart of accounts and offers four things an invoice cannot be raised
-   without:
+3. **Choose the posting details, per client.** These are *not* on the settings
+   page — they are on each client's own page, at **Clients → a client → Clear
+   Books invoicing**, and they need the `staff.invoicing` role. Junction's
+   clients do not agree with each other about any of them, so one global set
+   would be right for at most one of them.
 
    | Setting | Why it is needed |
    |---|---|
-   | Business | Sent as `X-Business-ID`. Only required when the login has more than one business. |
-   | Sales account code | The nominal every invoice line posts to. Required on each line; only codes flagged as sales codes are offered. |
+   | Clear Books customer ID | The numeric ID of that company's *customer* record. Nothing can be raised without it. |
+   | Business | Sent as `X-Business-ID`. Only required when the login has more than one business. The account codes and VAT rates offered below belong to it, so save a change here first. |
+   | Sales account code | The nominal every invoice line for this client posts to. Required on each line; only codes flagged as sales codes are offered. |
    | VAT treatment | Required on the document itself. |
    | VAT rate | Required on each line. The list is the rates valid for the chosen treatment, so save the treatment first. |
+   | Due date | Whether to send one at all, and how many days from the invoice date if so. See below. |
+   | Invoice summary | Optional. Written into the invoice's Summary field, with placeholders filled in. See below. |
 
-   Payment terms (days from issue to due date) is also set here; it defaults
-   to 30.
+   `sudo tracker clearbooks-status` prints the connection *and* a per-client
+   table of who is ready and what each one is still missing. So does the
+   settings page.
 
-`sudo tracker clearbooks-status` prints all of this from the command line,
-including exactly what is still missing.
+**The customer mapping is a number.** It is the number in the Clear Books URL
+when you open that customer — not their name, not an account code. Raising an
+invoice for a client without one is refused with a message saying so.
 
-**The customer mapping is a number.** Each client company needs the numeric ID
-of its Clear Books *customer* record, set at **Settings → Clients → a client →
-Clear Books customer ID**. It is the number in the Clear Books URL when you
-open that customer — not their name, not an account code. Raising an invoice
-for a client without one is refused with a message saying so.
+**Leaving the due date unset.** The due-date rules available in the Clear Books
+interface — end of the month following, and the like — are richer than the
+single date the API accepts. For a client whose real terms are one of those,
+untick **Send a due date on the invoice**: nothing is sent, and Clear Books
+applies that contact's own default, which is where the correct rule already
+lives. Ticked, the invoice carries the invoice date plus the payment terms.
+
+**The invoice summary** is a template written once per client and rendered for
+each invoice into the field the Clear Books interface labels Summary. These
+placeholders are substituted; the same list is shown under the field:
+
+| Placeholder | Becomes |
+|---|---|
+| `{po_number}` | The client's PO number(s) on the note — all of them where it covers several orders |
+| `{order_number}` | The Junction order number(s) |
+| `{delivery_note}` | The delivery note reference |
+| `{client_name}` | The client company name |
+| `{invoice_date}` | The date raised, dd/mm/yyyy |
+
+Anything else in curly brackets is left on the invoice exactly as typed, so a
+misspelt placeholder is visible rather than silently blank. Leave the field
+empty and no summary is sent at all.
+
+**The purchase orders go up with the invoice.** Every PO document on every order
+the delivery note covers is attached to the Clear Books invoice as a sales
+attachment, amendments included, named after the order it belongs to. Nothing
+needs configuring. If a file cannot be attached — missing from disk, or refused
+by Clear Books — the invoice still stands and a warning names what did not go
+up, to be attached in Clear Books by hand.
+
+**Upgrading from a version before this.** Migration `016` copies the old global
+posting settings onto every client that existed when it ran, so nothing changes
+for them. Clients added afterwards start with nothing set and have to be
+configured before they can be invoiced.
 
 Two behaviours of theirs the application works around, worth knowing if
 something looks odd:

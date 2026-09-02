@@ -26,12 +26,14 @@ use App\Core\Database;
 use App\Core\Request;
 use App\Mail\EmailTemplate;
 use App\Mail\Mailer;
+use App\Models\Client;
 use App\Models\EmailLog;
 use App\Models\Invite;
 use App\Models\Role;
 use App\Models\Setting;
 use App\Models\User;
 use App\Services\ClearBooksClient;
+use App\Services\ClearBooksPosting;
 use App\Services\PdfService;
 use App\Services\Reminders;
 
@@ -800,14 +802,36 @@ function cmdClearBooksStatus(array $argv): int
         ['Client secret', ClearBooksClient::clientSecret() !== '' ? '(set — hidden)' : '(not set)'],
         ['Redirect URI', ClearBooksClient::redirectUri() ?: '(not set)'],
         ['Connected', ClearBooksClient::isConnected() ? 'yes' : 'no'],
-        ['Business ID', (string) (ClearBooksClient::businessId() ?? '(not set)')],
-        ['Sales account code', (string) (ClearBooksClient::accountCode() ?? '(not set)')],
-        ['VAT treatment', ClearBooksClient::vatTreatment() ?: '(not set)'],
-        ['VAT rate', ClearBooksClient::vatRateKey() ?: '(not set)'],
-        ['Payment terms', ClearBooksClient::paymentTermsDays() . ' days'],
-        ['Ready to invoice', $problems === [] ? 'yes' : 'no'],
-        ['Problems', $problems === [] ? 'none' : implode(' ', $problems)],
+        ['Connection problems', $problems === [] ? 'none' : implode(' ', $problems)],
     ]);
+
+    // How an invoice is posted is per client, not per installation: nominal
+    // code, VAT and terms all belong to the customer relationship. So "ready to
+    // invoice" is a question about a client, and the honest answer is a list.
+    echo "\nPosting details, per client\n\n";
+
+    $rows = [];
+    $notReady = 0;
+
+    foreach (Client::all(true) as $client) {
+        $posting = ClearBooksPosting::fromRow($client);
+        $clientProblems = $posting->problems();
+        $notReady += $clientProblems === [] ? 0 : 1;
+
+        $rows[] = [
+            (string) $client['name'],
+            (string) ($posting->businessId ?? '-'),
+            (string) ($posting->accountCode ?? '-'),
+            $posting->vatTreatment ?: '-',
+            $posting->vatRateKey ?: '-',
+            $posting->sendDueDate ? $posting->paymentTermsDays . ' days' : 'left to Clear Books',
+            $clientProblems === [] ? 'ready' : count($clientProblems) . ' to set',
+        ];
+    }
+
+    $rows === []
+        ? print("  No active clients.\n")
+        : table(['Client', 'Business', 'Code', 'VAT treatment', 'VAT rate', 'Due date', 'Status'], $rows);
 
     echo "\nEndpoints (fixed, from the published Clear Books OpenAPI description)\n\n";
     table(['What', 'URL'], [
@@ -816,7 +840,7 @@ function cmdClearBooksStatus(array $argv): int
         ['API', ClearBooksClient::API_BASE],
     ]);
 
-    return $problems === [] ? 0 : 1;
+    return $problems === [] && $notReady === 0 ? 0 : 1;
 }
 
 // ---------------------------------------------------------------------------

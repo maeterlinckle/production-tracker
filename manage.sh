@@ -101,7 +101,7 @@ Email and integrations
   mail-status                 show the mail configuration and the send log
   mail-test EMAIL             send a test message and report the result
   send-reminders [--force]    run the outstanding-parts digest now
-  clearbooks-status           Clear Books connection and posting settings
+  clearbooks-status           Clear Books connection, and each client's posting settings
 
 Server
   backup [DIR]                dump the database and archive the uploads

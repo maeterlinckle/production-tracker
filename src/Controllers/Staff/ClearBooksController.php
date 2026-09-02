@@ -11,8 +11,10 @@ use App\Core\Response;
 use App\Core\Session;
 use App\Core\View;
 use App\Models\ClearBooksToken;
+use App\Models\Client;
 use App\Models\Setting;
 use App\Services\ClearBooksClient;
+use App\Services\ClearBooksPosting;
 use Throwable;
 
 final class ClearBooksController
@@ -21,43 +23,29 @@ final class ClearBooksController
     {
         Auth::authorize('manage_settings');
 
-        $connected = ClearBooksClient::isConnected();
-
-        // The reference lists only exist once there is a token to read them
-        // with, and a failure here must not take the settings page down — that
-        // is the page you go to in order to fix a broken connection.
-        $businesses = $accountCodes = $vatTreatments = $vatRates = [];
-        $lookupError = null;
-
-        if ($connected) {
-            try {
-                $businesses = ClearBooksClient::businesses();
-                $accountCodes = ClearBooksClient::salesAccountCodes();
-                $vatTreatments = ClearBooksClient::vatTreatments();
-                $vatRates = ClearBooksClient::vatRates();
-            } catch (Throwable $e) {
-                $lookupError = $e->getMessage();
-            }
+        // Which clients could actually be invoiced right now. The connection
+        // being healthy is only half the answer since the posting details moved
+        // onto the clients themselves, and "connected, ready" on this page while
+        // every client is unconfigured would be the more misleading half.
+        $clients = [];
+        foreach (Client::all(true) as $client) {
+            $posting = ClearBooksPosting::fromRow($client);
+            $clients[] = [
+                'id' => (int) $client['id'],
+                'name' => (string) $client['name'],
+                'problems' => $posting->problems(),
+            ];
         }
 
         View::render('staff/settings/clearbooks', [
             'title' => 'Clear Books connection',
-            'connected' => $connected,
+            'connected' => ClearBooksClient::isConnected(),
             'configured' => ClearBooksClient::isConfigured(),
             'problems' => ClearBooksClient::problems(),
             'clientId' => ClearBooksClient::clientId(),
             'redirectUri' => ClearBooksClient::redirectUri(),
             'hasSecret' => ClearBooksClient::clientSecret() !== '',
-            'businessId' => ClearBooksClient::businessId(),
-            'accountCode' => ClearBooksClient::accountCode(),
-            'vatTreatment' => ClearBooksClient::vatTreatment(),
-            'vatRateKey' => ClearBooksClient::vatRateKey(),
-            'paymentTermsDays' => ClearBooksClient::paymentTermsDays(),
-            'businesses' => $businesses,
-            'accountCodes' => $accountCodes,
-            'vatTreatments' => $vatTreatments,
-            'vatRates' => $vatRates,
-            'lookupError' => $lookupError,
+            'clients' => $clients,
             'scopes' => ClearBooksClient::SCOPES,
             'authorizeUrl' => ClearBooksClient::AUTHORIZE_URL,
             'apiBase' => ClearBooksClient::API_BASE,
@@ -82,27 +70,6 @@ final class ClearBooksController
         Setting::put('clearbooks_redirect_uri', trim((string) Request::post('redirect_uri', '')) ?: null);
 
         Flash::success('Clear Books API client settings saved.');
-        Response::redirect('/staff/settings/clearbooks');
-    }
-
-    /**
-     * The posting details: which business, which nominal code, which VAT
-     * treatment and rate. Separate from the credentials because they can only
-     * be chosen once a connection exists to read the lists through.
-     */
-    public function updatePosting(): void
-    {
-        Auth::authorize('manage_settings');
-
-        Setting::put('clearbooks_business_id', trim((string) Request::post('business_id', '')) ?: null);
-        Setting::put('clearbooks_account_code', trim((string) Request::post('account_code', '')) ?: null);
-        Setting::put('clearbooks_vat_treatment', trim((string) Request::post('vat_treatment', '')) ?: null);
-        Setting::put('clearbooks_vat_rate_key', trim((string) Request::post('vat_rate_key', '')) ?: null);
-
-        $terms = (int) Request::post('payment_terms_days', 30);
-        Setting::put('clearbooks_payment_terms_days', (string) max(0, min(365, $terms)));
-
-        Flash::success('Clear Books posting settings saved.');
         Response::redirect('/staff/settings/clearbooks');
     }
 
@@ -163,7 +130,10 @@ final class ClearBooksController
             Response::redirect('/staff/settings/clearbooks');
         }
 
-        Flash::success('Clear Books connected. Choose the business and posting details below.');
+        Flash::success(
+            'Clear Books connected. Each client now needs its own posting details — business, nominal '
+            . 'code, VAT treatment and rate — set on that client\'s page before an invoice can be raised for them.'
+        );
         Response::redirect('/staff/settings/clearbooks');
     }
 

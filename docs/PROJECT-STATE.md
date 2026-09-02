@@ -90,7 +90,7 @@ shared include. Patterns may be copied; code may not.
 | Table | Columns |
 |---|---|
 | `clearbooks_tokens` | **id**, access_token, refresh_token, expires_at, updated_at |
-| `clients` | **id**, name, clearbooks_entity_id, address_line1, address_line2, address_city, address_county, address_postcode, address_country, main_contact_name, main_contact_email, main_contact_phone, billing_email, vat_number, company_number, clearbooks_synced_at, clearbooks_synced_by, notes, is_active, deactivated_at, deactivated_by, deactivated_reason, created_at, updated_at |
+| `clients` | **id**, name, clearbooks_entity_id, clearbooks_business_id, clearbooks_account_code, clearbooks_vat_treatment, clearbooks_vat_rate_key, clearbooks_payment_terms_days, clearbooks_send_due_date, clearbooks_invoice_summary, address_line1, address_line2, address_city, address_county, address_postcode, address_country, main_contact_name, main_contact_email, main_contact_phone, billing_email, vat_number, company_number, clearbooks_synced_at, clearbooks_synced_by, notes, is_active, deactivated_at, deactivated_by, deactivated_reason, created_at, updated_at |
 | `delivery_notes` | **id**, type, client_id, related_note_id, reference, pdf_file_path, issued_by, issued_at, invoiced, invoiced_at, notes, created_at |
 | `delivery_note_lines` | **id**, delivery_note_id, order_line_id, qty |
 | `email_log` | **id**, to_email, subject, template_key, related_type, related_id, status, error, sent_at |
@@ -234,7 +234,7 @@ capability listing at least one `staff.*` role, and `client.admin` any listing a
 
 | Capability | Roles |
 |---|---|
-| `view_pricing` | client.purchaser, client.admin, staff.quoting, staff.admin |
+| `view_pricing` | client.purchaser, client.admin, staff.quoting, staff.invoicing, staff.admin |
 | `manage_parts` | client.purchaser, client.admin |
 | `place_orders` | client.purchaser, client.admin |
 | `manage_client_users` | client.admin |
@@ -348,7 +348,8 @@ error message is.
 | `theme-init.php` | Sets `data-theme` before first paint. |
 
 **Services** (`src/Services/`): `Branding`, `ClearBooksClient`,
-`ClearBooksCustomerSync`, `ClientPurge`, `ClientUsers`, `DrawingUpload`,
+`ClearBooksCustomerSync`, `ClearBooksPoAttachments`, `ClearBooksPosting`,
+`ClientPurge`, `ClientUsers`, `DrawingUpload`,
 `FreeIssueNoteService`, `Invitations`, `Notifications`, `OrderPlacement`,
 `OrderView`, `PartForm`, `PartView`, `PartsOnOrder`, `PartsReturnService`,
 `PdfService`, `QrCodeService`, `ReferenceNumber`, `Reminders`,
@@ -548,7 +549,7 @@ group disappears when nothing under it does.
 | Orders | Place an order (`raise_orders`), All orders (`view_orders`), Delivery notes (`view_orders`) |
 | Parts | New part (`create_client_parts`), All parts (—) |
 | Reports | *(top-level, `view_orders`)* |
-| Settings | Clients (`manage_clients`), Users, Logo, Email, Email templates, Quoting, Reminders, Clear Books (all `manage_settings`) |
+| Settings | Clients (`manage_clients`), Users, Logo, Email, Email templates, Quoting, Reminders, Clear Books connection (all `manage_settings`). The Clear Books **posting details** are not here — they are per client, on the client's own page, under `push_invoices`. |
 
 **Client:**
 
@@ -912,7 +913,10 @@ form.
   role levels plus browser measurement of layout.
 - **No invoice has been raised against a live Clear Books account**, and the
   customer read behind the client sync is equally unproven against live data.
-  Both are built from the published spec rather than guessed.
+  Both are built from the published spec rather than guessed, and the invoice
+  create and the PO attachment upload have been exercised end to end against a
+  local stand-in shaped from that spec — which proves the request, not the
+  service's reaction to it.
 - **SMTP is not configured** in any environment used so far, so every send has
   failed at the connection by design.
 - `exif_read_data` is unavailable on the Windows development machine, so EXIF

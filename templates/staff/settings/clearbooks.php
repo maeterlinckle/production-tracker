@@ -1,11 +1,8 @@
 <?php
 /** @var bool $connected */ /** @var bool $configured */ /** @var array $problems */
 /** @var string $clientId */ /** @var string $redirectUri */ /** @var bool $hasSecret */
-/** @var int|null $businessId */ /** @var int|null $accountCode */
-/** @var string $vatTreatment */ /** @var string $vatRateKey */ /** @var int $paymentTermsDays */
-/** @var array $businesses */ /** @var array $accountCodes */
-/** @var array $vatTreatments */ /** @var array $vatRates */
-/** @var string|null $lookupError */ /** @var array $scopes */
+/** @var array $clients each active client with the posting problems still outstanding on it */
+/** @var array $scopes */
 /** @var string $authorizeUrl */ /** @var string $apiBase */ /** @var array|null $token */
 ?>
 <div class="page-head">
@@ -18,7 +15,7 @@
 
 <?php if ($problems !== []): ?>
     <div class="card card-warn">
-        <h2 class="mt-0">Before an invoice can be raised</h2>
+        <h2 class="mt-0">Before anything can be raised</h2>
         <ul class="plain-list">
             <?php foreach ($problems as $problem): ?>
                 <li><?= e($problem) ?></li>
@@ -27,7 +24,11 @@
     </div>
 <?php else: ?>
     <div class="card card-ok">
-        <p class="mb-0"><span class="badge badge-ok">Ready</span> Invoices can be raised from a delivery note.</p>
+        <p class="mb-0">
+            <span class="badge badge-ok">Connected</span>
+            The connection is healthy. Whether a particular client can be invoiced depends on their own
+            posting details — listed below.
+        </p>
     </div>
 <?php endif; ?>
 
@@ -106,97 +107,53 @@
     <?php endif; ?>
 </div>
 
-<?php if ($connected): ?>
-    <?php if ($lookupError !== null): ?>
-        <div class="card card-danger">
-            <h2 class="mt-0">Could not read your Clear Books setup</h2>
-            <p class="mb-0"><?= e($lookupError) ?></p>
-        </div>
-    <?php endif; ?>
 
-    <form method="post" action="<?= url('/staff/settings/clearbooks/posting') ?>" class="card form">
-        <?= csrf_field() ?>
-        <h2 class="mt-0">Posting details</h2>
-        <p class="muted">
-            An invoice line cannot be posted without a nominal code and a VAT rate, and the API rejects
-            the document without a VAT treatment. These lists come from your own Clear Books account.
-        </p>
+<?php /*
+    Posting details used to live here, as one set of values applied to every
+    client. They are per client now -- see the client's own page -- because
+    Junction's customers do not agree with each other about the nominal code the
+    work belongs to, the VAT treatment, or how long they have to pay. What is
+    still global is above: one Clear Books account, one client secret, one token
+    pair.
 
-        <div class="field">
-            <label class="label" for="business_id">Business</label>
-            <select class="input" id="business_id" name="business_id">
-                <option value="">Not set — only works if the login has a single business</option>
-                <?php foreach ($businesses as $business): ?>
-                    <option value="<?= (int) $business['id'] ?>" <?= $businessId === (int) $business['id'] ? 'selected' : '' ?>>
-                        <?= e($business['name'] ?? ('Business ' . $business['id'])) ?>
-                    </option>
-                <?php endforeach; ?>
-            </select>
-            <p class="field-hint">Sent as the X-Business-ID header. Required only where the login has access to more than one.</p>
-        </div>
-
-        <div class="field">
-            <label class="label" for="account_code">Sales account code</label>
-            <select class="input" id="account_code" name="account_code">
-                <option value="">Choose a nominal code</option>
-                <?php foreach ($accountCodes as $code): ?>
-                    <option value="<?= (int) $code['id'] ?>" <?= $accountCode === (int) $code['id'] ? 'selected' : '' ?>>
-                        <?= e($code['name'] ?? ('Code ' . $code['id'])) ?>
-                    </option>
-                <?php endforeach; ?>
-            </select>
-            <p class="field-hint">Every invoice line is posted to this code. Only codes marked as sales codes are listed.</p>
-        </div>
-
-        <div class="field-row">
-            <div class="field">
-                <label class="label" for="vat_treatment">VAT treatment</label>
-                <select class="input" id="vat_treatment" name="vat_treatment">
-                    <option value="">Choose a treatment</option>
-                    <?php foreach ($vatTreatments as $treatment): ?>
-                        <option value="<?= e($treatment['key'] ?? '') ?>" <?= $vatTreatment === ($treatment['key'] ?? '') ? 'selected' : '' ?>>
-                            <?= e($treatment['name'] ?? $treatment['key'] ?? '') ?>
-                        </option>
-                    <?php endforeach; ?>
-                </select>
-                <p class="field-hint">Save this first — the rates below are the ones valid for the treatment.</p>
-            </div>
-
-            <div class="field">
-                <label class="label" for="vat_rate_key">VAT rate</label>
-                <select class="input" id="vat_rate_key" name="vat_rate_key">
-                    <option value="">Choose a rate</option>
-                    <?php foreach ($vatRates as $rate): ?>
-                        <option value="<?= e($rate['key'] ?? '') ?>" <?= $vatRateKey === ($rate['key'] ?? '') ? 'selected' : '' ?>>
-                            <?= e($rate['name'] ?? $rate['key'] ?? '') ?><?= isset($rate['rate']) ? ' (' . e((string) $rate['rate']) . '%)' : '' ?>
-                        </option>
-                    <?php endforeach; ?>
-                </select>
-            </div>
-        </div>
-
-        <div class="field">
-            <label class="label" for="payment_terms_days">Payment terms</label>
-            <input class="input" type="number" id="payment_terms_days" name="payment_terms_days"
-                   min="0" max="365" value="<?= (int) $paymentTermsDays ?>">
-            <p class="field-hint">Days from the invoice date to the due date.</p>
-        </div>
-
-        <div class="form-actions">
-            <button type="submit" class="btn btn-primary">Save posting details</button>
-        </div>
-    </form>
-<?php endif; ?>
-
+    This card is the index of that. Somebody who has just connected wants to
+    know who can be invoiced, and the honest answer is "these clients, not
+    those" rather than a single Ready badge.
+*/ ?>
 <div class="card">
-    <h2 class="mt-0">Per-client customer mapping</h2>
+    <h2 class="mt-0">Posting details, per client</h2>
     <p class="muted">
-        Each client company needs the numeric ID of its Clear Books <em>customer</em> record before an
-        invoice can be raised for it — set that on
-        <a href="<?= url('/staff/clients') ?>">the client's own page</a>. It is the number in the Clear
+        Which business, which nominal code, which VAT treatment and rate, how long they have to pay,
+        whether to send a due date at all, and the invoice summary are all set on
+        <a href="<?= url('/staff/clients') ?>">the client's own page</a>, under Clear Books invoicing.
+        So is the numeric ID of their Clear Books <em>customer</em> record — the number in the Clear
         Books URL when you open that customer, not their name or account code.
     </p>
+
+    <?php if (!$connected): ?>
+        <p class="field-hint mb-0">Connect above and the lists to choose from can be read from your own account.</p>
+    <?php elseif ($clients === []): ?>
+        <p class="field-hint mb-0">There are no active clients yet.</p>
+    <?php else: ?>
+        <ul class="file-list">
+            <?php foreach ($clients as $row): ?>
+                <li>
+                    <span>
+                        <?= e($row['name']) ?>
+                        <?php if ($row['problems'] === []): ?>
+                            <span class="badge badge-ok">Ready to invoice</span>
+                        <?php else: ?>
+                            <span class="badge badge-warn"><?= count($row['problems']) ?> to set</span>
+                            <span class="muted"><?= e(implode(' ', $row['problems'])) ?></span>
+                        <?php endif; ?>
+                    </span>
+                    <a href="<?= url('/staff/clients/' . $row['id']) ?>" class="btn btn-sm">Open</a>
+                </li>
+            <?php endforeach; ?>
+        </ul>
+    <?php endif; ?>
 </div>
+
 
 <div class="card">
     <h2 class="mt-0">What this talks to</h2>
@@ -207,6 +164,8 @@
         <dd class="mono"><?= e($apiBase) ?></dd>
         <dt>Invoices</dt>
         <dd class="mono">POST <?= e($apiBase) ?>/accounting/sales/invoices</dd>
+        <dt>PO attachments</dt>
+        <dd class="mono">POST <?= e($apiBase) ?>/accounting/sales/invoices/{id}/attachments/{filename}</dd>
     </dl>
     <p class="field-hint mb-0">
         Taken from the published Clear Books OpenAPI description

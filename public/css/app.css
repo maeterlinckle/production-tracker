@@ -2043,6 +2043,11 @@ legend.label { padding: 0; }
     margin-bottom: var(--space-3);
 }
 .callout-ok { border-left-color: var(--ok); }
+/* Something that has to be read before the rest of the panel is acted on --
+   an account switched off, a client that cannot be invoiced yet. The edge
+   carries the meaning; the fill stays quiet so a page with two of these does
+   not turn into a wall of yellow. */
+.callout-warn { border-left-color: var(--warn); }
 
 /* ---------------------------------------------------------------------------
    Part media library

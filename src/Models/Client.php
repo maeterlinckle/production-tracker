@@ -145,6 +145,42 @@ final class Client
         );
     }
 
+    /**
+     * How this client's invoices are posted to Clear Books.
+     *
+     * Its own method rather than columns on update(), because it is a different
+     * job done by different people: the details form is address-book work under
+     * `manage_clients`, and this is accounts work under `staff.invoicing`. One
+     * form carrying both would mean whoever corrects a postcode also has to be
+     * trusted with the nominal code every invoice is posted to.
+     *
+     * @param array<string,mixed> $data
+     */
+    public static function saveClearBooksPosting(int $id, array $data): void
+    {
+        Database::query(
+            'UPDATE clients SET
+                clearbooks_business_id = :business_id,
+                clearbooks_account_code = :account_code,
+                clearbooks_vat_treatment = :vat_treatment,
+                clearbooks_vat_rate_key = :vat_rate_key,
+                clearbooks_payment_terms_days = :payment_terms_days,
+                clearbooks_send_due_date = :send_due_date,
+                clearbooks_invoice_summary = :invoice_summary
+             WHERE id = :id',
+            [
+                'id' => $id,
+                'business_id' => $data['business_id'],
+                'account_code' => $data['account_code'],
+                'vat_treatment' => $data['vat_treatment'],
+                'vat_rate_key' => $data['vat_rate_key'],
+                'payment_terms_days' => $data['payment_terms_days'],
+                'send_due_date' => !empty($data['send_due_date']) ? 1 : 0,
+                'invoice_summary' => $data['invoice_summary'],
+            ]
+        );
+    }
+
     public static function recordClearBooksSync(int $id, int $userId): void
     {
         Database::query(

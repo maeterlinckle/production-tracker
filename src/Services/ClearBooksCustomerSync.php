@@ -43,7 +43,19 @@ final class ClearBooksCustomerSync
             );
         }
 
-        $customer = ClearBooksClient::customer($customerId);
+        // Read under this client's own business where there is one. The business
+        // is a per-client posting setting now, and a customer belongs to a
+        // business — looking one up under a different business is how a valid
+        // ID comes back as "no such customer".
+        //
+        // A brand-new client has no row and therefore no business yet, so the
+        // prefill on the create form asks without the header, which is what a
+        // single-business login does anyway.
+        $businessId = isset($client['clearbooks_business_id']) && $client['clearbooks_business_id'] !== ''
+            ? (int) $client['clearbooks_business_id']
+            : null;
+
+        $customer = ClearBooksClient::customer($customerId, $businessId);
         if ($customer === null) {
             throw new RuntimeException(
                 'Clear Books has no customer with ID ' . $customerId . ', or the connection could not read it. '

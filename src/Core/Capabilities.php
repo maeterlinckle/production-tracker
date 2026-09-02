@@ -20,7 +20,14 @@ final class Capabilities
     public const MATRIX = [
         // Pricing must be genuinely absent from the response for anyone
         // without one of these roles, not just hidden in the template.
-        'view_pricing' => ['client.purchaser', 'client.admin', 'staff.quoting', 'staff.admin'],
+        //
+        // staff.invoicing is here because the job is billing: the invoicing
+        // panels, the delivery note's own Invoicing card and the amount on a
+        // raised invoice are all price-bearing, and gating them away from the
+        // one role whose whole purpose is raising invoices left somebody able
+        // to configure a client for Clear Books but not to see the button that
+        // invoices them.
+        'view_pricing' => ['client.purchaser', 'client.admin', 'staff.quoting', 'staff.invoicing', 'staff.admin'],
 
         // Client side.
         'manage_parts' => ['client.purchaser', 'client.admin'],

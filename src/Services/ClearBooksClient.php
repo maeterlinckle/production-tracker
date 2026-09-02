@@ -16,8 +16,8 @@ use RuntimeException;
  * Written against the published OpenAPI description at
  * https://api.clearbooks.co.uk/spec/v1.yaml (v1.0.0) and the reference at
  * https://api-docs.clearbooks.co.uk/. Everything below — the authorisation and
- * token endpoints, the scope names, the invoice path and every field in the
- * payload — is taken from that spec rather than inferred.
+ * token endpoints, the scope names, the invoice and attachment paths and every
+ * field in the payloads — is taken from that spec rather than inferred.
  *
  * Authentication is OAuth 2, authorization-code grant, confidential client.
  * There is no static API key. PKCE is supported by Clear Books and is used
@@ -35,7 +35,12 @@ use RuntimeException;
  *
  * Requests are rate limited above roughly 5/second and answer 429. Reads retry
  * with exponential backoff; the invoice POST does not, because a retried create
- * is a duplicate invoice.
+ * is a duplicate invoice, and neither does an attachment upload, for the same
+ * reason.
+ *
+ * What this class does *not* hold is how any particular invoice should be
+ * posted. Nominal code, VAT treatment, VAT rate, business and payment terms are
+ * per client and live on the client's own record — see ClearBooksPosting.
  */
 final class ClearBooksClient
 {
@@ -54,9 +59,11 @@ final class ClearBooksClient
     /**
      * The least this application can ask for and still do its job.
      *
-     * `businesses:read` is what makes the business picker on the settings page
-     * possible; the rest are the invoice itself and the reference data an
-     * invoice line has to name.
+     * `businesses:read` is what makes the business picker possible; the rest
+     * are the invoice itself and the reference data an invoice line has to
+     * name. Attachments need no scope of their own — the spec secures
+     * `POST /accounting/sales/{salesType}/{salesId}/attachments/{fileName}`
+     * with `accounting.sales:write`, which is already here.
      */
     public const SCOPES = [
         'businesses:read',
@@ -67,9 +74,19 @@ final class ClearBooksClient
         'accounting.vat:read',
     ];
 
+    /**
+     * The most this application will push into an invoice attachment.
+     *
+     * The spec sets no limit, so this is Junction's own: a PO is a page or two
+     * of PDF, and anything past a few megabytes is a scan somebody should fix
+     * rather than something to spend an invoice-raising timeout on.
+     */
+    public const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+
     // -- Configuration -------------------------------------------------------
-    // The Settings-table value wins when set, so a staff.admin can configure
-    // this without a redeploy; .env is the fallback for a fresh install.
+    // The connection, and only the connection. The Settings-table value wins
+    // when set, so a staff.admin can configure this without a redeploy; .env is
+    // the fallback for a fresh install.
 
     public static function clientId(): string
     {
@@ -86,53 +103,6 @@ final class ClearBooksClient
         return Setting::get('clearbooks_redirect_uri') ?: (string) Config::get('clearbooks.redirect_uri');
     }
 
-    /**
-     * Which Clear Books business to post to.
-     *
-     * Sent as X-Business-ID. The spec marks it optional — required only for a
-     * multi-business authorisation — so an empty value is left off the request
-     * entirely rather than sent as 0.
-     */
-    public static function businessId(): ?int
-    {
-        $value = Setting::get('clearbooks_business_id');
-
-        return $value === null || $value === '' ? null : (int) $value;
-    }
-
-    /**
-     * The sales nominal every invoice line is posted to.
-     *
-     * Required on a line item, and there is no sensible default: which code
-     * machining income belongs to is Junction's own chart of accounts. The
-     * settings page lists the codes from the API so it can be picked rather
-     * than typed.
-     */
-    public static function accountCode(): ?int
-    {
-        $value = Setting::get('clearbooks_account_code');
-
-        return $value === null || $value === '' ? null : (int) $value;
-    }
-
-    /** VAT treatment for the document, e.g. standard UK sales. Required by the API. */
-    public static function vatTreatment(): string
-    {
-        return (string) (Setting::get('clearbooks_vat_treatment') ?? '');
-    }
-
-    /** VAT rate key applied to each line, from /accounting/vatRates/sales. */
-    public static function vatRateKey(): string
-    {
-        return (string) (Setting::get('clearbooks_vat_rate_key') ?? '');
-    }
-
-    /** Days from issue to due date on the invoice. */
-    public static function paymentTermsDays(): int
-    {
-        return max(0, (int) (Setting::get('clearbooks_payment_terms_days', '30') ?? '30'));
-    }
-
     public static function isConfigured(): bool
     {
         return self::clientId() !== '' && self::clientSecret() !== '' && self::redirectUri() !== '';
@@ -144,9 +114,11 @@ final class ClearBooksClient
     }
 
     /**
-     * Everything still standing between this install and a working invoice
-     * push. Shown on the settings page, so the answer to "why is the button
-     * greyed out" is on the screen rather than in a log.
+     * What is wrong with the connection itself.
+     *
+     * Only the global half: credentials and consent. What is wrong with a
+     * particular client's posting details is ClearBooksPosting::problems(),
+     * shown on that client's page, because that is where it gets fixed.
      *
      * @return array<int,string>
      */
@@ -164,18 +136,6 @@ final class ClearBooksClient
 
         if (!self::isConnected()) {
             $problems[] = 'Nobody has completed the Clear Books consent flow yet.';
-        }
-
-        if (self::accountCode() === null) {
-            $problems[] = 'No sales account code has been chosen — an invoice line cannot be posted without one.';
-        }
-
-        if (self::vatTreatment() === '') {
-            $problems[] = 'No VAT treatment has been chosen.';
-        }
-
-        if (self::vatRateKey() === '') {
-            $problems[] = 'No VAT rate has been chosen.';
         }
 
         return $problems;
@@ -284,36 +244,46 @@ final class ClearBooksClient
     }
 
     // -- Reference data ------------------------------------------------------
-    // Read by the settings page so the business, nominal code, VAT treatment
-    // and VAT rate are picked from live lists rather than typed from memory.
+    // Read by the client page so the business, nominal code, VAT treatment and
+    // VAT rate are picked from live lists rather than typed from memory.
+    //
+    // Every one of these takes the business explicitly, because the business is
+    // itself a per-client choice now: the codes and rates that come back are the
+    // ones belonging to whichever business this client's invoices are posted to,
+    // and reading them under a different business would offer a list that the
+    // invoice would then be rejected for using.
 
     /** @return array<int,array<string,mixed>> */
     public static function businesses(): array
     {
-        return self::httpGet('/businesses');
+        // Deliberately no business header: this is the call that tells you what
+        // the businesses are.
+        return self::httpGet('/businesses', null);
     }
 
     /** @return array<int,array<string,mixed>> */
-    public static function salesAccountCodes(): array
+    public static function salesAccountCodes(?int $businessId): array
     {
         return array_values(array_filter(
-            self::httpGet('/accounting/accountCodes'),
+            self::httpGet('/accounting/accountCodes', $businessId),
             static fn (array $code): bool => ($code['sales'] ?? false) === true
         ));
     }
 
     /** @return array<int,array<string,mixed>> */
-    public static function vatTreatments(): array
+    public static function vatTreatments(?int $businessId): array
     {
-        return self::httpGet('/accounting/vatTreatments/sales');
+        return self::httpGet('/accounting/vatTreatments/sales', $businessId);
     }
 
     /** @return array<int,array<string,mixed>> */
-    public static function vatRates(): array
+    public static function vatRates(?int $businessId, string $vatTreatment = ''): array
     {
-        $query = self::vatTreatment() !== '' ? ['vatTreatment' => self::vatTreatment()] : [];
-
-        return self::httpGet('/accounting/vatRates/sales', $query);
+        return self::httpGet(
+            '/accounting/vatRates/sales',
+            $businessId,
+            $vatTreatment !== '' ? ['vatTreatment' => $vatTreatment] : []
+        );
     }
 
     /**
@@ -325,10 +295,10 @@ final class ClearBooksClient
      *
      * @return array<string,mixed>|null
      */
-    public static function customer(int $customerId): ?array
+    public static function customer(int $customerId, ?int $businessId = null): ?array
     {
         try {
-            $customer = self::httpGet('/accounting/customers/' . $customerId);
+            $customer = self::httpGet('/accounting/customers/' . $customerId, $businessId);
         } catch (RuntimeException) {
             return null;
         }
@@ -344,36 +314,45 @@ final class ClearBooksClient
      * The payload is the spec's SalesInvoice: `date`, `customerId`,
      * `vatTreatment` and `lineItems` are required, and each line item requires
      * `description`, `unitPrice`, `quantity`, `accountCode` and `vatRateKey`.
+     * `reference`, `description` and `dateDue` are all optional.
+     *
+     * `description` is the field the Clear Books interface labels **Summary** —
+     * the spec says so in as many words — so that is where this client's
+     * summary template ends up once its placeholders are filled in.
+     *
+     * `dateDue` is left off entirely when the client is set to let Clear Books
+     * decide. The API exposes a single date where the interface has a set of
+     * rules, so for a client on anything more elaborate than "n days from the
+     * invoice" the honest option is to send nothing and let the contact's own
+     * default in Clear Books apply.
      *
      * @param array<int,array{description:string,quantity:int|float,unit_price:float}> $lines
      * @return array{id:string,number:string,amount:float}
      */
-    public static function createSalesInvoice(string $customerId, array $lines, string $reference): array
-    {
-        $problems = self::problems();
+    public static function createSalesInvoice(
+        ClearBooksPosting $posting,
+        array $lines,
+        string $reference,
+        ?string $summary = null
+    ): array {
+        $problems = array_merge(self::problems(), $posting->problems());
         if ($problems !== []) {
             throw new RuntimeException('Clear Books is not ready: ' . implode(' ', $problems));
-        }
-
-        if (!ctype_digit($customerId) || (int) $customerId <= 0) {
-            throw new RuntimeException(
-                "'{$customerId}' is not a Clear Books customer ID. It is the numeric id of the customer record in Clear Books — set it on the client's own page."
-            );
         }
 
         if ($lines === []) {
             throw new RuntimeException('An invoice needs at least one line.');
         }
 
-        $accountCode = (int) self::accountCode();
-        $vatRateKey = self::vatRateKey();
+        $accountCode = (int) $posting->accountCode;
+        $vatRateKey = $posting->vatRateKey;
+        $date = date('Y-m-d');
 
         $payload = [
-            'date' => date('Y-m-d'),
-            'dateDue' => date('Y-m-d', strtotime('+' . self::paymentTermsDays() . ' days')),
+            'date' => $date,
             'reference' => $reference,
-            'customerId' => (int) $customerId,
-            'vatTreatment' => self::vatTreatment(),
+            'customerId' => (int) $posting->customerId,
+            'vatTreatment' => $posting->vatTreatment,
             'lineItems' => array_map(static fn (array $line): array => [
                 'description' => (string) $line['description'],
                 'quantity' => (float) $line['quantity'],
@@ -383,9 +362,18 @@ final class ClearBooksClient
             ], array_values($lines)),
         ];
 
+        $dueDate = $posting->dueDate($date);
+        if ($dueDate !== null) {
+            $payload['dateDue'] = $dueDate;
+        }
+
+        if ($summary !== null && $summary !== '') {
+            $payload['description'] = $summary;
+        }
+
         // Deliberately no retry: a 429 or a timeout on a create is ambiguous,
         // and the wrong guess raises the same invoice twice.
-        $response = self::request('POST', '/accounting/sales/invoices', $payload, false);
+        $response = self::request('POST', '/accounting/sales/invoices', $posting->businessId, $payload, false);
 
         return [
             'id' => (string) ($response['id'] ?? ''),
@@ -407,19 +395,99 @@ final class ClearBooksClient
         ];
     }
 
+    /**
+     * Attach a file to a sales invoice.
+     *
+     * Per the spec's Sales Attachments tag:
+     * `POST /accounting/sales/{salesType}/{salesId}/attachments/{fileName}`,
+     * where `salesType` is one of `invoices`, `creditNotes` or `quotes`, and
+     * the body is the raw file as `application/octet-stream`. The filename is
+     * part of the path rather than a field, which is why it is URL-encoded
+     * here and sanitised before it ever gets this far. A 201 comes back with
+     * the created Attachment — `id`, `name`, `size`, `dateUploaded`.
+     *
+     * Not retried, for the same reason the create is not: a timeout on a POST
+     * is ambiguous, and the wrong guess puts the same PO on the invoice twice.
+     *
+     * @return array{id:int,name:string,size:int}
+     */
+    public static function attachToSalesInvoice(
+        ?int $businessId,
+        int $invoiceId,
+        string $fileName,
+        string $contents
+    ): array {
+        if ($invoiceId <= 0) {
+            throw new RuntimeException('Clear Books did not return an invoice id, so there is nothing to attach to.');
+        }
+
+        if ($contents === '') {
+            throw new RuntimeException('The file is empty, so there is nothing to attach.');
+        }
+
+        if (strlen($contents) > self::MAX_ATTACHMENT_BYTES) {
+            throw new RuntimeException(sprintf(
+                '%s is %s, over the %s limit this application puts on an invoice attachment.',
+                $fileName,
+                self::formatBytes(strlen($contents)),
+                self::formatBytes(self::MAX_ATTACHMENT_BYTES)
+            ));
+        }
+
+        $path = '/accounting/sales/invoices/' . $invoiceId . '/attachments/' . rawurlencode($fileName);
+
+        $headers = self::headers($businessId);
+        $headers[] = 'Content-Type: application/octet-stream';
+
+        [$status, $decoded, $raw] = self::send('POST', self::API_BASE . $path, $headers, null, $contents);
+
+        if ($status >= 400) {
+            throw new RuntimeException(self::describeError($status, $decoded, $raw));
+        }
+
+        return [
+            'id' => (int) ($decoded['id'] ?? 0),
+            'name' => (string) ($decoded['name'] ?? $fileName),
+            'size' => (int) ($decoded['size'] ?? strlen($contents)),
+        ];
+    }
+
     // -- Transport -----------------------------------------------------------
 
     /**
      * @param array<string,mixed> $query
      * @return array<mixed>
      */
-    private static function httpGet(string $path, array $query = []): array
+    private static function httpGet(string $path, ?int $businessId, array $query = []): array
     {
         if ($query !== []) {
             $path .= '?' . http_build_query($query);
         }
 
-        return self::request('GET', $path);
+        return self::request('GET', $path, $businessId);
+    }
+
+    /**
+     * The bearer token, and the business header when there is a business to name.
+     *
+     * X-Business-ID is optional per the spec — required only for a
+     * multi-business authorisation — so an unset business is left off the
+     * request entirely rather than sent as 0.
+     *
+     * @return array<int,string>
+     */
+    private static function headers(?int $businessId): array
+    {
+        $headers = [
+            'Authorization: Bearer ' . self::accessToken(),
+            'Accept: application/json',
+        ];
+
+        if ($businessId !== null && $businessId > 0) {
+            $headers[] = 'X-Business-ID: ' . $businessId;
+        }
+
+        return $headers;
     }
 
     /**
@@ -428,17 +496,14 @@ final class ClearBooksClient
      * @param array<string,mixed>|null $body
      * @return array<mixed>
      */
-    private static function request(string $method, string $path, ?array $body = null, bool $retry = true): array
-    {
-        $headers = [
-            'Authorization: Bearer ' . self::accessToken(),
-            'Accept: application/json',
-        ];
-
-        $businessId = self::businessId();
-        if ($businessId !== null) {
-            $headers[] = 'X-Business-ID: ' . $businessId;
-        }
+    private static function request(
+        string $method,
+        string $path,
+        ?int $businessId,
+        ?array $body = null,
+        bool $retry = true
+    ): array {
+        $headers = self::headers($businessId);
 
         if ($body !== null) {
             $headers[] = 'Content-Type: application/json';
@@ -570,5 +635,12 @@ final class ClearBooksClient
         };
 
         return $detail === '' ? $prefix : $prefix . ' ' . $detail;
+    }
+
+    private static function formatBytes(int $bytes): string
+    {
+        return $bytes >= 1048576
+            ? round($bytes / 1048576, 1) . ' MB'
+            : max(1, (int) round($bytes / 1024)) . ' KB';
     }
 }

@@ -13,6 +13,8 @@ use App\Models\Client;
 use App\Models\DeliveryNote;
 use App\Models\Invoice;
 use App\Services\ClearBooksClient;
+use App\Services\ClearBooksPoAttachments;
+use App\Services\ClearBooksPosting;
 use App\Services\Notifications;
 
 final class StaffInvoiceController
@@ -38,8 +40,21 @@ final class StaffInvoiceController
         }
 
         $client = Client::find((int) $note['client_id']);
-        if ($client === null || empty($client['clearbooks_entity_id'])) {
-            Flash::error('Set the Clear Books customer ID on this client before raising an invoice.');
+        if ($client === null) {
+            Flash::error('That delivery note has no client on it.');
+            Response::redirect('/staff/delivery-notes/' . $deliveryNoteId);
+        }
+
+        // Nominal code, VAT, terms and the summary template are all this
+        // client's own now rather than one set applied to everybody. Checked
+        // here rather than left to the API call, so the answer is "set the VAT
+        // treatment on this client" with a link to the page it is set on.
+        $posting = ClearBooksPosting::fromRow($client);
+        if ($posting->problems() !== []) {
+            Flash::error(
+                'Clear Books is not set up for ' . $client['name'] . ' yet: '
+                . implode(' ', $posting->problems())
+            );
             Response::redirect('/staff/clients/' . $note['client_id']);
         }
 
@@ -52,9 +67,10 @@ final class StaffInvoiceController
 
         try {
             $result = ClearBooksClient::createSalesInvoice(
-                $client['clearbooks_entity_id'],
+                $posting,
                 $invoiceLines,
-                $this->invoiceReference($note, $lines)
+                $this->invoiceReference($note, $lines),
+                $posting->summaryFor($this->summaryValues($client, $note, $lines))
             );
         } catch (\Throwable $e) {
             Flash::error('Could not raise the Clear Books invoice: ' . $e->getMessage());
@@ -72,7 +88,27 @@ final class StaffInvoiceController
         );
         Notifications::invoiceRaised(Invoice::find($invoiceId), $note, (int) $note['client_id']);
 
-        Flash::success('Invoice ' . $result['number'] . ' raised in Clear Books.');
+        // Only now, with the invoice recorded: the PO goes up alongside it so
+        // that whoever at their end has to match the bill against what they
+        // authorised has both in one place. Deliberately after the record is
+        // written, and deliberately incapable of throwing — an invoice that
+        // exists in Clear Books but not here is a far worse outcome than one
+        // with nothing attached.
+        $attachments = ClearBooksPoAttachments::push($posting, (int) $result['id'], $lines);
+
+        Flash::success('Invoice ' . $result['number'] . ' raised in Clear Books'
+            . ($attachments['attached'] === []
+                ? '.'
+                : ', with ' . count($attachments['attached']) . ' purchase order document(s) attached.'));
+
+        if ($attachments['problems'] !== []) {
+            Flash::warning(
+                'The invoice was raised, but not everything could be attached to it: '
+                . implode(' ', $attachments['problems'])
+                . ' Attach what is missing in Clear Books directly.'
+            );
+        }
+
         Response::redirect('/staff/delivery-notes/' . $deliveryNoteId);
     }
 
@@ -159,15 +195,62 @@ final class StaffInvoiceController
      */
     private function invoiceReference(array $note, array $lines): string
     {
-        $poNumbers = array_values(array_unique(array_filter(
-            array_map(static fn (array $line): string => trim((string) ($line['po_number'] ?? '')), $lines),
-            static fn (string $poNumber): bool => $poNumber !== ''
-        )));
+        $poNumbers = $this->distinct($lines, 'po_number');
 
-        if ($poNumbers === []) {
+        if ($poNumbers === '') {
             return (string) $note['reference'];
         }
 
-        return implode(', ', $poNumbers);
+        return $poNumbers;
+    }
+
+    /**
+     * What the placeholders in a client's invoice summary stand for.
+     *
+     * Everything here is already in hand at the moment the invoice is raised —
+     * the delivery note, the lines and the client — so filling the template
+     * costs no extra API call and cannot fail halfway through. The set is
+     * declared once in ClearBooksPosting::PLACEHOLDERS, which is also what the
+     * hint on the client page lists, so the two cannot drift apart.
+     *
+     * A placeholder with nothing behind it comes back as an empty string rather
+     * than being left out: an order placed before PO numbers were recorded
+     * should produce a summary missing its PO, not a summary with `{po_number}`
+     * printed on the invoice.
+     *
+     * @param array<string,mixed>            $client
+     * @param array<string,mixed>            $note
+     * @param array<int,array<string,mixed>> $lines
+     * @return array<string,string>
+     */
+    private function summaryValues(array $client, array $note, array $lines): array
+    {
+        return [
+            'po_number' => $this->distinct($lines, 'po_number'),
+            'order_number' => $this->distinct($lines, 'order_number'),
+            'delivery_note' => (string) $note['reference'],
+            'client_name' => (string) $client['name'],
+            'invoice_date' => date('d/m/Y'),
+        ];
+    }
+
+    /**
+     * One field off the note's lines, deduplicated and joined.
+     *
+     * A delivery note can cover lines from more than one order, so more than
+     * one PO and more than one order number can apply. All of them go in rather
+     * than an arbitrary first — an invoice naming one of two purchase orders is
+     * worse than one naming both.
+     *
+     * @param array<int,array<string,mixed>> $lines
+     */
+    private function distinct(array $lines, string $field): string
+    {
+        $values = array_values(array_unique(array_filter(
+            array_map(static fn (array $line): string => trim((string) ($line[$field] ?? '')), $lines),
+            static fn (string $value): bool => $value !== ''
+        )));
+
+        return implode(', ', $values);
     }
 }
